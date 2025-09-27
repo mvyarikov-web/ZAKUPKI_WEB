@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Результат обработки файла</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+    <style>
+        .highlight {
+            background-color: #fff3cd;
+            padding: 2px 4px;
+            border-radius: 3px;
+            font-weight: bold;
+            color: #856404;
+        }
+        .search-info {
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 20px;
+        }
+        .context-snippet {
+            line-height: 1.6;
+            margin-bottom: 15px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Результат обработки файла</h1>
+            <a href="/" class="btn btn-secondary">← Назад</a>
+        </header>
+        <main>
+            <section>
+                <h2>Файл: {{ filename }}</h2>
+                <div>
+                    <strong>Статус:</strong>
+                    {% if status == 'contains_keywords' %}
+                        <span style="color: #2ecc71;">Содержит ключевые слова</span>
+                    {% elif status == 'no_keywords' %}
+                        <span style="color: #f39c12;">Не содержит ключевые слова</span>
+                    {% elif status == 'processing' %}
+                        <span style="color: #3498db;">В обработке</span>
+                    {% elif status == 'error' %}
+                        <span style="color: #e74c3c;">Ошибка</span>
+                    {% else %}
+                        <span style="color: #95a5a6;">Не проверено</span>
+                    {% endif %}
+                </div>
+                
+                {% if search_terms %}
+                    <div class="search-info">
+                        <strong>Последний поисковый запрос:</strong> {{ search_terms }}
+                    </div>
+                {% endif %}
+                
+                {% if data %}
+                    <div style="margin-top: 20px;">
+                        <h3>Найденные ключевые слова:</h3>
+                        <div class="found-terms">
+                            {% for term in data.found_terms %}
+                                <span class="found-term">{{ term }}</span>
+                            {% endfor %}
+                        </div>
+                        <h3 style="margin-top: 20px;">Предложения с ключевыми словами:</h3>
+                        <div class="context-snippets">
+                            {% for snippet in data.context %}
+                                <div class="context-snippet" data-search-terms="{{ search_terms }}">{{ snippet }}</div>
+                            {% endfor %}
+                        </div>
+                    </div>
+                {% elif status == 'contains_keywords' %}
+                    <div style="margin-top: 20px; color: #7f8c8d;">Ключевые слова не найдены в этом файле.</div>
+                {% elif status == 'no_keywords' %}
+                    <div style="margin-top: 20px; color: #7f8c8d;">Ключевые слова не найдены в этом файле.</div>
+                {% elif status == 'error' %}
+                    <div style="margin-top: 20px; color: #e74c3c;">Ошибка обработки файла.</div>
+                {% else %}
+                    <div style="margin-top: 20px; color: #95a5a6;">Файл ожидает обработки.</div>
+                {% endif %}
+            </section>
+        </main>
+    </div>
+    
+    <script>
+        // Подсветка ключевых слов в контексте
+        document.addEventListener('DOMContentLoaded', function() {
+            const snippets = document.querySelectorAll('.context-snippet');
+            snippets.forEach(snippet => {
+                const searchTerms = snippet.getAttribute('data-search-terms');
+                if (searchTerms) {
+                    let content = snippet.innerHTML;
+                    const terms = searchTerms.split(',').map(term => term.trim()).filter(term => term);
+                    
+                    terms.forEach(term => {
+                        const regex = new RegExp(`(${term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+                        content = content.replace(regex, '<span class="highlight">$1</span>');
+                    });
+                    
+                    snippet.innerHTML = content;
+                }
+            });
+        });
+    </script>
+</body>
+</html>
