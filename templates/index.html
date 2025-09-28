@@ -3,13 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Файловый менеджер с поиском</title>
+    <title>Автоматический поиск по содержимому</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
 </head>
 <body>
     <div class="container">
-        <header>
-            <h1>Файловый менеджер с поиском по содержимому</h1>
+        <h1>Автоматический поиск по содержимому</h1>
             <p>Поддерживаемые форматы: PDF, DOC, DOCX, XLS, XLSX, TXT</p>
         </header>
 
@@ -29,14 +28,7 @@
                     </button>
                 </div>
 
-                <!-- Область для drag & drop -->
-                <div id="dropArea" class="drop-area">
-                    <div class="drop-content">
-                        <i class="icon">⬆️</i>
-                        <p>Перетащите файлы сюда или нажмите "Выбрать файлы"</p>
-                        <p class="file-types">PDF, DOC, DOCX, XLS, XLSX, TXT</p>
-                    </div>
-                </div>
+
 
                 <!-- Прогресс загрузки -->
                 <div id="uploadProgress" class="progress-container" style="display: none;">
@@ -55,10 +47,14 @@
                     <button id="searchBtn" class="btn btn-primary">
                         <i class="icon">🔍</i> Найти
                     </button>
+                    <button id="buildIndexBtn" class="btn btn-secondary" style="margin-left: 10px;">
+                        <i class="icon">🧱</i> Построить индекс
+                    </button>
                     <button id="clearResultsBtn" class="btn btn-danger" style="margin-left: 10px;">
                         <i class="icon">🧹</i> Очистить результаты
                     </button>
                 </div>
+                <div id="indexStatus" style="margin-top:8px; font-size: 14px; color: #555;">Индекс: проверяется…</div>
                 
                 <!-- Результаты поиска -->
                 <div id="searchResults" class="search-results"></div>
@@ -107,6 +103,7 @@
                                         {% endif %}
                                     </span>
                                 </div>
+                                <a href="/download/{{ file.path | urlencode }}" class="btn btn-secondary" style="font-size: 12px; padding: 6px 12px; margin-right: 10px;">Скачать</a>
                                 <a href="/result/{{ file.path | urlencode }}" class="btn btn-secondary" style="font-size: 12px; padding: 6px 12px; margin-right: 10px;">Результат</a>
                                 <button class="delete-btn" onclick="deleteFile('{{ file.path }}')">
                                     <i class="icon">🗑️</i>

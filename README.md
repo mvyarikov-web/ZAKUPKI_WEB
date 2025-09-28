@@ -89,7 +89,7 @@ ZAKUPKI_WEB/
 - **Папка загрузок**: uploads/
 
 ### Поддерживаемые форматы
-- **PDF**: Извлечение текста с помощью PyPDF2 и pdfplumber
+- **PDF**: Извлечение текста с помощью pypdf и pdfplumber
 - **DOCX**: Обработка через python-docx
 - **XLS/XLSX**: Чтение через openpyxl
 - **TXT**: Поддержка различных кодировок (UTF-8, CP1251, Latin-1)

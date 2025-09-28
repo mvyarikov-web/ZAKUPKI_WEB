@@ -103,38 +103,6 @@ section h2 {
     margin-bottom: 20px;
 }
 
-.drop-area {
-    border: 2px dashed #bdc3c7;
-    border-radius: 10px;
-    padding: 40px;
-    text-align: center;
-    transition: all 0.3s ease;
-    cursor: pointer;
-}
-
-.drop-area:hover,
-.drop-area.dragover {
-    border-color: #3498db;
-    background-color: #ecf7fd;
-}
-
-.drop-content .icon {
-    font-size: 48px;
-    margin-bottom: 15px;
-    display: block;
-}
-
-.drop-content p {
-    font-size: 16px;
-    color: #7f8c8d;
-    margin-bottom: 5px;
-}
-
-.file-types {
-    font-size: 12px;
-    color: #95a5a6;
-}
-
 /* Прогресс бар */
 .progress-container {
     margin-top: 20px;

@@ -1,0 +1,135 @@
+from __future__ import annotations
+import io
+import os
+import re
+import logging
+from typing import List, Dict, Any
+
+HEADER_BAR_RE = re.compile(r"^=+\s*$")
+HEADER_PREFIXES = (
+    "ЗАГОЛОВОК:",
+    "Формат:",
+    "Источник:",
+)
+
+class Searcher:
+    def search(self, index_path: str, keywords: List[str], *, context: int = 80) -> List[Dict]:
+        if not os.path.isfile(index_path):
+            raise FileNotFoundError(index_path)
+        log = logging.getLogger(__name__)
+        log.info("Поиск по индексу: %s, terms=%s, context=%d", index_path, keywords, context)
+        text = self._read_index(index_path)
+        entries = self._parse_entries(text)
+        results: List[Dict[str, Any]] = []
+        for entry in entries:
+            body = entry.get("body", "")
+            for kw in [k.strip() for k in keywords if k and k.strip()]:
+                if not kw:
+                    continue
+                for m in re.finditer(re.escape(kw), body, flags=re.IGNORECASE):
+                    start = max(0, m.start() - context)
+                    end = min(len(body), m.end() + context)
+                    snippet = body[start:end]
+                    results.append({
+                        "keyword": kw,
+                        "position": m.start(),
+                        "snippet": snippet,
+                        "title": entry.get("title"),
+                        "source": entry.get("source"),
+                        "format": entry.get("format"),
+                    })
+        # naive ranking: order by keyword then position
+        results.sort(key=lambda r: (r.get("title") or "", r["keyword"].lower(), r["position"]))
+        log.info("Поиск завершён: найдено %d совпадений", len(results))
+        return results
+
+    def _read_index(self, path: str) -> str:
+        with io.open(path, "r", encoding="utf-8") as f:
+            return f.read()
+
+    def _strip_headers(self, text: str) -> List[str]:
+        lines = text.splitlines()
+        out: List[str] = []
+        i = 0
+        n = len(lines)
+        while i < n:
+            ln = lines[i]
+            if HEADER_BAR_RE.match(ln):
+                # Expect a header block of fixed structure:
+                # bar, title, meta, source, bar
+                i += 1  # move to title
+                # skip title/meta/source lines if present
+                for _ in range(3):
+                    if i < n:
+                        i += 1
+                # skip the closing bar if present
+                if i < n and HEADER_BAR_RE.match(lines[i]):
+                    i += 1
+                # Now consume body until a blank line (separator) or next bar
+                body: List[str] = []
+                while i < n and not HEADER_BAR_RE.match(lines[i]):
+                    body.append(lines[i])
+                    i += 1
+                # Trim trailing empty lines from body
+                while body and not body[-1].strip():
+                    body.pop()
+                if body:
+                    out.extend(body)
+                # do not increment i here; next loop will process next bar or EOF
+                continue
+            else:
+                # Lines outside any header block (unlikely) are considered content
+                if not ln.startswith(HEADER_PREFIXES):
+                    out.append(ln)
+                i += 1
+        return out
+
+    def _parse_entries(self, text: str) -> List[Dict[str, Any]]:
+        """Разбирает индекс на записи с заголовком, метаданными и телом.
+        Возвращает список словарей: {title, source, format, body}.
+        """
+        lines = text.splitlines()
+        i = 0
+        n = len(lines)
+        entries: List[Dict[str, Any]] = []
+        while i < n:
+            if not HEADER_BAR_RE.match(lines[i]):
+                i += 1
+                continue
+            # header start
+            i += 1
+            title = ""
+            fmt = ""
+            source = ""
+            if i < n and lines[i].startswith("ЗАГОЛОВОК:"):
+                title = lines[i].split(":", 1)[1].strip()
+                i += 1
+            if i < n and lines[i].startswith("Формат:"):
+                # Формат: XXX | Символов: N | Дата: ... | OCR: ... | Качество: ...
+                meta_line = lines[i]
+                # извлечём первое поле после "Формат: " до разделителя |
+                m = re.match(r"Формат:\s*([^|]+)", meta_line)
+                if m:
+                    fmt = m.group(1).strip()
+                i += 1
+            if i < n and lines[i].startswith("Источник:"):
+                source = lines[i].split(":", 1)[1].strip()
+                i += 1
+            # closing bar
+            if i < n and HEADER_BAR_RE.match(lines[i]):
+                i += 1
+            # body until blank line or next bar
+            body_lines: List[str] = []
+            while i < n and not HEADER_BAR_RE.match(lines[i]):
+                body_lines.append(lines[i])
+                i += 1
+            # trim trailing blanks
+            while body_lines and not body_lines[-1].strip():
+                body_lines.pop()
+            entries.append({
+                "title": title,
+                "format": fmt,
+                "source": source or title,
+                "body": "\n".join(body_lines)
+            })
+        return entries

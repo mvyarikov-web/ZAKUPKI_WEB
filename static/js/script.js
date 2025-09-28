@@ -1,5 +1,4 @@
 // --- Drag & Drop ---
-const dropArea = document.getElementById('dropArea');
 const fileInput = document.getElementById('fileInput');
 const selectFilesBtn = document.getElementById('selectFilesBtn');
 const selectFolderBtn = document.getElementById('selectFolderBtn');
@@ -10,27 +9,17 @@ const filesList = document.getElementById('filesList');
 const fileCount = document.getElementById('fileCount');
 const searchInput = document.getElementById('searchInput');
 const searchBtn = document.getElementById('searchBtn');
+const buildIndexBtn = document.getElementById('buildIndexBtn');
 const clearResultsBtn = document.getElementById('clearResultsBtn');
 const searchResults = document.getElementById('searchResults');
 const messageModal = document.getElementById('messageModal');
 const modalMessage = document.getElementById('modalMessage');
 const closeModal = document.querySelector('.close');
+const indexStatus = document.getElementById('indexStatus');
 
 // --- File Select ---
 selectFilesBtn.addEventListener('click', () => fileInput.click());
 fileInput.addEventListener('change', handleFiles);
-
-// --- Drag & Drop Events ---
-dropArea.addEventListener('dragover', (e) => {
-    e.preventDefault();
-    dropArea.classList.add('dragover');
-});
-dropArea.addEventListener('dragleave', () => dropArea.classList.remove('dragover'));
-dropArea.addEventListener('drop', (e) => {
-    e.preventDefault();
-    dropArea.classList.remove('dragover');
-    handleFiles({ target: { files: e.dataTransfer.files } });
-});
 
 // --- Folder Select (experimental, works in Chromium browsers) ---
 selectFolderBtn.addEventListener('click', () => {
@@ -64,7 +53,12 @@ function handleFiles(e) {
         method: 'POST',
         body: formData
     })
-    .then(res => res.json())
+    .then(res => {
+        if (res.status === 413) {
+            return res.json().then(j => { throw new Error(j.error || 'Файл слишком большой'); });
+        }
+        return res.json();
+    })
     .then(data => {
         if (data.success) {
             showMessage('Файлы успешно загружены!');
@@ -74,8 +68,8 @@ function handleFiles(e) {
         }
         uploadProgress.style.display = 'none';
     })
-    .catch(() => {
-        showMessage('Ошибка загрузки файлов');
+    .catch((err) => {
+        showMessage(err && err.message ? err.message : 'Ошибка загрузки файлов');
         uploadProgress.style.display = 'none';
     });
 }
@@ -188,19 +182,31 @@ searchBtn.addEventListener('click', () => {
             data.results.forEach(result => {
                 const item = document.createElement('div');
                 item.className = 'search-result-item';
+                const linkTarget = result.path ? `/result/${encodeURIComponent(result.path)}` : '#';
                 item.innerHTML = `
                     <div class="result-header">
-                        <span class="result-filename">${result.filename}</span>
+                        <span class="result-filename" title="Источник: ${result.source || ''}">${result.filename}</span>
                         <div class="found-terms">
                             ${result.found_terms.map(term => `<span class="found-term">${term}</span>`).join(' ')}
                         </div>
-                        <a class="result-link" href="/result/${encodeURIComponent(result.filename)}" target="_blank">Страница результата</a>
+                        ${result.path ? `<a class="result-link" href="${linkTarget}" target="_blank">Страница результата</a>` : '<span class="result-link disabled" title="Файл из архива, нет прямой страницы результата">Виртуальный источник</span>'}
                     </div>
                     <div class="context-snippets">
-                        ${result.context.map(snippet => `<div class="context-snippet">${snippet}</div>`).join('')}
+                        ${result.context.map(snippet => `<div class="context-snippet" data-search-terms="${terms}">${snippet}</div>`).join('')}
                     </div>
                 `;
                 searchResults.appendChild(item);
+            });
+            // Подсветка ключевых слов в сниппетах результатов
+            const snippets = searchResults.querySelectorAll('.context-snippet');
+            const termsList = terms.split(',').map(t => t.trim()).filter(Boolean);
+            snippets.forEach(sn => {
+                let html = sn.innerHTML;
+                termsList.forEach(term => {
+                    const rx = new RegExp(`(${term.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\$&')})`, 'gi');
+                    html = html.replace(rx, '<span class="highlight">$1</span>');
+                });
+                sn.innerHTML = html;
             });
         } else {
             searchResults.innerHTML = '<div>Ничего не найдено по этим ключевым словам.</div>';
@@ -240,6 +246,25 @@ clearResultsBtn.addEventListener('click', () => {
         showMessage('Ошибка очистки результатов');
     });
 });
+
+// --- Build Index ---
+if (buildIndexBtn) {
+    buildIndexBtn.addEventListener('click', () => {
+        buildIndexBtn.disabled = true;
+        fetch('/build_index', { method: 'POST' })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    showMessage(`Индекс создан: ${data.index_path}\nРазмер: ${data.size} байт`);
+                    refreshIndexStatus();
+                } else {
+                    showMessage(data.message || 'Ошибка построения индекса');
+                }
+            })
+            .catch(() => showMessage('Ошибка построения индекса'))
+            .finally(() => { buildIndexBtn.disabled = false; });
+    });
+}
 
 // --- Modal ---
 function showMessage(msg) {
@@ -287,5 +312,36 @@ function restoreFolderStates() {
 }
 
 // --- Initial ---
+document.addEventListener('DOMContentLoaded', function() {
+    restoreFolderStates();
+    refreshIndexStatus();
+    // периодический автопул статуса индекса
+    setInterval(refreshIndexStatus, 8000);
+});
+
+// Для обратной совместимости
 updateFilesList();
 restoreFolderStates();
+
+// --- Index status ---
+function refreshIndexStatus() {
+    if (!indexStatus) return;
+    fetch('/index_status')
+        .then(res => res.json())
+        .then(data => {
+            if (!data.exists) {
+                indexStatus.textContent = 'Индекс: отсутствует';
+                indexStatus.style.color = '#a00';
+            } else {
+                const size = (data.size || 0);
+                const sizeKb = (size / 1024).toFixed(1);
+                const entries = (data.entries == null) ? '—' : data.entries;
+                indexStatus.textContent = `Индекс: есть, ${sizeKb} KB, записей: ${entries}`;
+                indexStatus.style.color = '#2a2';
+            }
+        })
+        .catch(() => {
+            indexStatus.textContent = 'Индекс: ошибка запроса';
+            indexStatus.style.color = '#a00';
+        });
+}
