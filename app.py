@@ -780,61 +780,20 @@ def index_status():
 def request_entity_too_large(e):
     return jsonify({'error': 'Файл слишком большой. Лимит 100MB.'}), 413
 
-# Страница с результатом обработки файла
-@app.route('/result/<path:filepath>')
-def result_page(filepath):
-    """Отображение результатов обработки файла"""
-    # Декодируем путь к файлу
-    from urllib.parse import unquote
-    decoded_filepath = unquote(filepath)
-    
-    app.logger.info(f"Ищем результаты для файла: {decoded_filepath}")
-    
-    # Пробуем найти результат по полному пути
-    result = file_status.get(decoded_filepath, {})
-    
-    # Если не найден, пробуем по короткому имени файла
-    if not result:
-        short_filename = os.path.basename(decoded_filepath)
-        result = file_status.get(short_filename, {})
-        app.logger.debug(f"Поиск по короткому имени {short_filename}: найдено={bool(result)}")
-    
-    # Если все еще не найден, пробуем найти любой файл с таким же именем
-    if not result:
-        for key, data in file_status.items():
-            if os.path.basename(key) == os.path.basename(decoded_filepath):
-                result = data
-                decoded_filepath = key  # Обновляем путь на найденный
-                app.logger.debug(f"Найден результат по базовому имени: {key}")
-                break
-    
-    status = result.get('status', 'not_checked')
-    
-    # Получаем данные результата в зависимости от структуры
-    if 'found_terms' in result:
-        # Новая структура
-        found_terms = result.get('found_terms', [])
-        context = result.get('context', [])
-        data = {
-            'filename': os.path.basename(decoded_filepath),
-            'found_terms': found_terms,
-            'context': context
-        }
-    else:
-        # Старая структура
-        data = result.get('result', None)
-    
-    # Получаем последние ключевые слова для подсветки
-    last_terms = getattr(save_search_results, 'last_terms', '')
-    
-    app.logger.info(f"Результат для {decoded_filepath}: status={status}, data={bool(data)}")
-    
-    return render_template('result.html', 
-                         filename=os.path.basename(decoded_filepath), 
-                         filepath=decoded_filepath,
-                         status=status, 
-                         data=data, 
-                         search_terms=last_terms)
+# Просмотр сводного файла индекса в отдельной вкладке
+@app.get('/view_index')
+def view_index():
+    idx = _index_file_path()
+    if not os.path.exists(idx):
+        return jsonify({'error': 'Индекс не найден'}), 404
+    try:
+        with open(idx, 'r', encoding='utf-8', errors='ignore') as f:
+            content = f.read()
+        from flask import Response
+        return Response(content, mimetype='text/plain; charset=utf-8')
+    except Exception as e:
+        app.logger.exception('Ошибка чтения сводного файла индекса')
+        return jsonify({'error': str(e)}), 500
 
 # Логирование HTTP-запросов: время, путь, статус
 @app.before_request

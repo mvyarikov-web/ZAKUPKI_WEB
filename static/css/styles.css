@@ -168,6 +168,17 @@ section h2 {
     padding: 20px;
     margin-bottom: 15px;
 }
+.context-snippet { 
+    line-height: 1.5; 
+    margin: 6px 0; 
+}
+.highlight { 
+    background-color: #fff3cd; 
+    padding: 0 2px; 
+    border-radius: 3px; 
+    color: #856404; 
+    font-weight: 600; 
+}
 
 .result-header {
     display: flex;

@@ -1,6 +1,5 @@
 // --- Drag & Drop ---
-const fileInput = document.getElementById('fileInput');
-const selectFilesBtn = document.getElementById('selectFilesBtn');
+// Отключаем выбор одиночных файлов — только папки
 const selectFolderBtn = document.getElementById('selectFolderBtn');
 const uploadProgress = document.getElementById('uploadProgress');
 const progressFill = document.getElementById('progressFill');
@@ -9,7 +8,7 @@ const filesList = document.getElementById('filesList');
 const fileCount = document.getElementById('fileCount');
 const searchInput = document.getElementById('searchInput');
 const searchBtn = document.getElementById('searchBtn');
-const buildIndexBtn = document.getElementById('buildIndexBtn');
+// Кнопки построения индекса нет — индекс строится автоматически
 const clearResultsBtn = document.getElementById('clearResultsBtn');
 const searchResults = document.getElementById('searchResults');
 const messageModal = document.getElementById('messageModal');
@@ -17,9 +16,7 @@ const modalMessage = document.getElementById('modalMessage');
 const closeModal = document.querySelector('.close');
 const indexStatus = document.getElementById('indexStatus');
 
-// --- File Select ---
-selectFilesBtn.addEventListener('click', () => fileInput.click());
-fileInput.addEventListener('change', handleFiles);
+// --- File Select --- (удалено: выбор одиночных файлов)
 
 // --- Folder Select (experimental, works in Chromium browsers) ---
 selectFolderBtn.addEventListener('click', () => {
@@ -61,13 +58,14 @@ function handleFiles(e) {
     })
     .then(data => {
         if (data.success) {
-            showMessage('Файлы успешно загружены!');
-            updateFilesList();
+            showMessage('Папка загружена. Строим индекс...');
+            // Автоперестройка индекса сразу после загрузки папки
+            return rebuildIndexWithProgress();
         } else {
-            showMessage(data.error || 'Ошибка загрузки файлов');
+            throw new Error(data.error || 'Ошибка загрузки папки');
         }
-        uploadProgress.style.display = 'none';
     })
+    .then(() => { uploadProgress.style.display = 'none'; })
     .catch((err) => {
         showMessage(err && err.message ? err.message : 'Ошибка загрузки файлов');
         uploadProgress.style.display = 'none';
@@ -156,68 +154,46 @@ searchBtn.addEventListener('click', () => {
         showMessage('Введите ключевые слова для поиска');
         return;
     }
+    // Перед поиском — гарантируем, что индекс свежий
     searchResults.style.display = 'block';
-    searchResults.innerHTML = '<div>Поиск...</div>';
-    
-    // Обновляем статусы файлов на "обрабатывается"
-    const fileItems = document.querySelectorAll('.file-item');
-    fileItems.forEach(item => {
-        const statusIndicator = item.querySelector('.status-indicator');
-        const statusText = item.querySelector('.status-text');
-        if (statusIndicator && statusText) {
-            statusIndicator.className = 'status-indicator status-processing';
-            statusText.textContent = 'Обработка...';
-        }
-    });
-    
-    fetch('/search', {
+    searchResults.innerHTML = '<div>Обновляем индекс...</div>';
+    rebuildIndexWithProgress()
+    .then(() => {
+        searchResults.innerHTML = '<div>Поиск...</div>';
+        return fetch('/search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ search_terms: terms })
+        });
     })
     .then(res => res.json())
     .then(data => {
         if (data.results && data.results.length > 0) {
             searchResults.innerHTML = '';
+            const terms = termsFromInput();
             data.results.forEach(result => {
                 const item = document.createElement('div');
                 item.className = 'search-result-item';
-                const linkTarget = result.path ? `/result/${encodeURIComponent(result.path)}` : '#';
+                const snippetsHtml = (result.context || []).slice(0, 3).map(s => `<div class="context-snippet">${escapeHtml(s)}</div>`).join('');
                 item.innerHTML = `
                     <div class="result-header">
                         <span class="result-filename" title="Источник: ${result.source || ''}">${result.filename}</span>
                         <div class="found-terms">
                             ${result.found_terms.map(term => `<span class="found-term">${term}</span>`).join(' ')}
                         </div>
-                        ${result.path ? `<a class="result-link" href="${linkTarget}" target="_blank">Страница результата</a>` : '<span class="result-link disabled" title="Файл из архива, нет прямой страницы результата">Виртуальный источник</span>'}
                     </div>
-                    <div class="context-snippets">
-                        ${result.context.map(snippet => `<div class="context-snippet" data-search-terms="${terms}">${snippet}</div>`).join('')}
-                    </div>
+                    <div class="context-snippets">${snippetsHtml || '<div class="context-empty">Нет сниппетов</div>'}</div>
                 `;
                 searchResults.appendChild(item);
             });
-            // Подсветка ключевых слов в сниппетах результатов
-            const snippets = searchResults.querySelectorAll('.context-snippet');
-            const termsList = terms.split(',').map(t => t.trim()).filter(Boolean);
-            snippets.forEach(sn => {
-                let html = sn.innerHTML;
-                termsList.forEach(term => {
-                    const rx = new RegExp(`(${term.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\$&')})`, 'gi');
-                    html = html.replace(rx, '<span class="highlight">$1</span>');
-                });
-                sn.innerHTML = html;
-            });
+            // Подсветка терминов в сниппетах
+            highlightSnippets(terms);
         } else {
             searchResults.innerHTML = '<div>Ничего не найдено по этим ключевым словам.</div>';
         }
-        
-        // Обновляем список файлов со статусами
-        updateFilesList();
     })
     .catch(() => {
         searchResults.innerHTML = '<div>Ошибка поиска.</div>';
-        updateFilesList();
     });
 });
 
@@ -247,22 +223,45 @@ clearResultsBtn.addEventListener('click', () => {
     });
 });
 
-// --- Build Index ---
-if (buildIndexBtn) {
-    buildIndexBtn.addEventListener('click', () => {
-        buildIndexBtn.disabled = true;
-        fetch('/build_index', { method: 'POST' })
-            .then(res => res.json())
-            .then(data => {
-                if (data.success) {
-                    showMessage(`Индекс создан: ${data.index_path}\nРазмер: ${data.size} байт`);
-                    refreshIndexStatus();
-                } else {
-                    showMessage(data.message || 'Ошибка построения индекса');
-                }
-            })
-            .catch(() => showMessage('Ошибка построения индекса'))
-            .finally(() => { buildIndexBtn.disabled = false; });
+// --- Build Index auto ---
+function rebuildIndexWithProgress() {
+    const bar = document.getElementById('indexBuildProgress');
+    const fill = document.getElementById('indexBuildFill');
+    const text = document.getElementById('indexBuildText');
+    if (bar) bar.style.display = 'flex';
+    if (fill) fill.style.width = '10%';
+    if (text) text.textContent = 'Построение индекса…';
+    return fetch('/build_index', { method: 'POST' })
+        .then(res => res.json())
+        .then(data => {
+            if (!data.success) throw new Error(data.message || 'Ошибка построения индекса');
+            if (fill) fill.style.width = '100%';
+            if (text) text.textContent = 'Готово';
+            refreshIndexStatus();
+        })
+        .finally(() => {
+            setTimeout(() => { if (bar) bar.style.display = 'none'; if (fill) fill.style.width = '0%'; }, 600);
+        });
+}
+
+function termsFromInput() {
+    return searchInput.value.split(',').map(t => t.trim()).filter(Boolean);
+}
+
+function escapeHtml(s) {
+    return s.replace(/[&<>"]+/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[ch]));
+}
+
+function highlightSnippets(terms) {
+    const snippets = document.querySelectorAll('.context-snippet');
+    if (!terms || terms.length === 0) return;
+    snippets.forEach(sn => {
+        let html = sn.innerHTML;
+        terms.forEach(term => {
+            const re = new RegExp('(' + term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'gi');
+            html = html.replace(re, '<span class="highlight">$1</span>');
+        });
+        sn.innerHTML = html;
     });
 }
 
@@ -313,15 +312,9 @@ function restoreFolderStates() {
 
 // --- Initial ---
 document.addEventListener('DOMContentLoaded', function() {
-    restoreFolderStates();
     refreshIndexStatus();
-    // периодический автопул статуса индекса
     setInterval(refreshIndexStatus, 8000);
 });
-
-// Для обратной совместимости
-updateFilesList();
-restoreFolderStates();
 
 // --- Index status ---
 function refreshIndexStatus() {

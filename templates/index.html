@@ -13,23 +13,14 @@
         </header>
 
         <main>
-            <!-- Секция загрузки файлов -->
+            <!-- Секция загрузки папки -->
             <section class="upload-section">
-                <h2>Загрузка файлов</h2>
-                
-                <!-- Кнопка выбора файлов -->
+                <h2>Загрузка папки</h2>
                 <div class="upload-buttons">
-                    <input type="file" id="fileInput" multiple accept=".pdf,.doc,.docx,.xls,.xlsx,.txt" style="display: none;">
-                    <button id="selectFilesBtn" class="btn btn-primary">
-                        <i class="icon">📁</i> Выбрать файлы
-                    </button>
                     <button id="selectFolderBtn" class="btn btn-secondary">
                         <i class="icon">📂</i> Выбрать папку
                     </button>
                 </div>
-
-
-
                 <!-- Прогресс загрузки -->
                 <div id="uploadProgress" class="progress-container" style="display: none;">
                     <div class="progress-bar">
@@ -47,74 +38,26 @@
                     <button id="searchBtn" class="btn btn-primary">
                         <i class="icon">🔍</i> Найти
                     </button>
-                    <button id="buildIndexBtn" class="btn btn-secondary" style="margin-left: 10px;">
-                        <i class="icon">🧱</i> Построить индекс
-                    </button>
+                    <a id="viewIndexBtn" class="btn btn-secondary" href="/view_index" target="_blank" style="margin-left: 10px;">
+                        <i class="icon">📜</i> Сводный файл в TXT
+                    </a>
                     <button id="clearResultsBtn" class="btn btn-danger" style="margin-left: 10px;">
                         <i class="icon">🧹</i> Очистить результаты
                     </button>
                 </div>
                 <div id="indexStatus" style="margin-top:8px; font-size: 14px; color: #555;">Индекс: проверяется…</div>
+                <!-- Прогресс построения индекса перед поиском -->
+                <div id="indexBuildProgress" class="progress-container" style="display: none; margin-top:10px;">
+                    <div class="progress-bar">
+                        <div id="indexBuildFill" class="progress-fill" style="width: 25%;"></div>
+                    </div>
+                    <span id="indexBuildText">Построение индекса…</span>
+                </div>
                 
-                <!-- Результаты поиска -->
+                <!-- Результаты поиска (с подсветкой в сниппетах) -->
                 <div id="searchResults" class="search-results"></div>
             </section>
-
-            <!-- Список файлов -->
-            <section class="files-section">
-                <h2>Загруженные файлы (<span id="fileCount">{{ total_files or 0 }}</span>)</h2>
-                <div id="filesList" class="files-list">
-                    {% for folder_key, folder_data in files_by_folder.items() %}
-                    <div class="folder-container">
-                        <div class="folder-header" onclick="toggleFolder('{{ folder_key }}')">
-                            <i class="folder-icon expand-icon">📁</i>
-                            <span class="folder-name">{{ folder_data.display_name }}</span>
-                            <span class="file-count-badge">{{ folder_data.files|length }} файл(ов)</span>
-                            <button class="delete-folder-btn" onclick="event.stopPropagation(); deleteFolder('{{ folder_key }}', '{{ folder_data.display_name }}')" title="Удалить папку">
-                                <i class="icon">🗑️</i>
-                            </button>
-                            <i class="toggle-icon">▼</i>
-                        </div>
-                        <div class="folder-content" id="folder-{{ folder_key }}">
-                            {% for file in folder_data.files %}
-                            <div class="file-item" data-filename="{{ file.name }}" data-filepath="{{ file.path }}">
-                                <div class="file-info">
-                                    <i class="file-icon">📄</i>
-                                    <div class="file-details">
-                                        <span class="file-name">{{ file.name }}</span>
-                                        <span class="file-size">{{ "%.2f"|format(file.size / 1024) }} KB</span>
-                                    </div>
-                                </div>
-                                <div class="file-status">
-                                    <span class="status-indicator status-{{ file.status }}"></span>
-                                    <span class="status-text">
-                                        {% if file.status == 'not_checked' %}
-                                            Не проверено
-                                        {% elif file.status == 'processing' %}
-                                            Обработка...
-                                        {% elif file.status == 'contains_keywords' %}
-                                            Содержит ключевые слова
-                                        {% elif file.status == 'no_keywords' %}
-                                            Не содержит ключевые слова
-                                        {% elif file.status == 'error' %}
-                                            Ошибка
-                                        {% else %}
-                                            Неизвестный статус
-                                        {% endif %}
-                                    </span>
-                                </div>
-                                <a href="/download/{{ file.path | urlencode }}" class="btn btn-secondary" style="font-size: 12px; padding: 6px 12px; margin-right: 10px;">Скачать</a>
-                                <a href="/result/{{ file.path | urlencode }}" class="btn btn-secondary" style="font-size: 12px; padding: 6px 12px; margin-right: 10px;">Результат</a>
-                                <button class="delete-btn" onclick="deleteFile('{{ file.path }}')">
-                                    <i class="icon">🗑️</i>
-                                </button>
-                            </div>
-                            {% endfor %}
-                        </div>
-                    </div>
-                    {% endfor %}
-                </div>
-            </section>
+            <!-- Список файлов скрыт по требованиям -->
         </main>
     </div>
 
