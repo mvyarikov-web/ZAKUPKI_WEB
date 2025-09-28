@@ -118,7 +118,8 @@ class Indexer:
             elif ext == "pdf":
                 text = self._extract_pdf(abs_path)
                 if not text.strip():
-                    ocr_text = self._ocr_pdf_first_page(abs_path)
+                    # OCR первых страниц (best effort)
+                    ocr_text = self._ocr_pdf_pages(abs_path, max_pages=3)
                     if ocr_text:
                         text = ocr_text
                         ocr_used = True
@@ -225,6 +226,18 @@ class Indexer:
                 txt = []
                 with open(path, "rb") as f:
                     r = pypdf.PdfReader(f)
+                    # Попробуем расшифровать без пароля (часто помогает для "безопасных" PDF)
+                    try:
+                        if getattr(r, "is_encrypted", False):
+                            try:
+                                r.decrypt("")
+                            except Exception:
+                                try:
+                                    r.decrypt(None)  # type: ignore[arg-type]
+                                except Exception:
+                                    pass
+                    except Exception:
+                        pass
                     for p in r.pages:
                         t = p.extract_text() or ""
                         if t:
@@ -233,23 +246,36 @@ class Indexer:
             except Exception:
                 return ""
 
-    def _ocr_pdf_first_page(self, path: str) -> str:
-        # Best-effort: OCR first page only, if deps installed
+    def _ocr_pdf_pages(self, path: str, max_pages: int = 3) -> str:
+        """Best-effort OCR: конвертирует первые N страниц в изображения и распознаёт текст.
+        Требует системные зависимости (poppler для pdf2image и tesseract для OCR)."""
+        if max_pages <= 0:
+            return ""
         try:
             from pdf2image import convert_from_path  # type: ignore
             import pytesseract  # type: ignore
-            from PIL import Image  # type: ignore
+            from PIL import Image  # type: ignore  # noqa: F401
         except Exception:
+            # Зависимости не установлены — спокойно пропускаем
+            self._log.debug("OCR пропущен: отсутствуют зависимости pdf2image/pytesseract/Pillow")
             return ""
         try:
-            images = convert_from_path(path, first_page=1, last_page=1)
-            if not images:
-                return ""
-            img = images[0]
-            text = pytesseract.image_to_string(img, lang="rus+eng")
-            return text or ""
+            images = convert_from_path(path)
         except Exception:
+            # Возможно, отсутствует poppler (pdftoppm/pdftocairo)
+            self._log.debug("OCR пропущен: не удалось конвертировать PDF в изображения (вероятно, нет poppler)")
             return ""
+        if not images:
+            return ""
+        texts: List[str] = []
+        for img in images[:max_pages]:
+            try:
+                t = pytesseract.image_to_string(img, lang="rus+eng")
+                if t and t.strip():
+                    texts.append(t)
+            except Exception:
+                continue
+        return "\n".join(texts).strip()
 
     def _extract_docx(self, path: str) -> str:
         try:
