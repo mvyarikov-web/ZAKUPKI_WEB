@@ -977,7 +977,8 @@ def view_file(filepath: str):
         if not os.path.isfile(full_path):
             return jsonify({'error': 'Файл не найден'}), 404
         ext = os.path.splitext(full_path)[1].lower().lstrip('.')
-        if not allowed_file(full_path):
+        # Разрешаем просмотр, если файл поддерживается для индексации ИЛИ безопасен для inline просмотра
+        if not allowed_file(full_path) and ext not in PREVIEW_INLINE_EXTENSIONS:
             return jsonify({'error': 'Неподдерживаемый тип файла'}), 403
 
         title = os.path.basename(decoded)
@@ -988,14 +989,14 @@ def view_file(filepath: str):
                 html_body = f.read()
             return render_template('view.html', title=title, content=Markup(html_body))
 
-        # Для PDF по умолчанию сразу отдаём оригинал inline штатным просмотрщиком браузера
-        # (чтобы избежать долгих попыток извлечения текста и "вечной" загрузки).
-        # Текстовый режим можно включить, передав ?mode=text в URL.
-        if ext == 'pdf' and request.args.get('mode') != 'text':
+        # Для изображений всегда отдаём inline через браузерный рендерер
+        if ext in {'png','jpg','jpeg','gif','webp','svg'}:
             return redirect(url_for('download_file', filepath=decoded))
 
-        # Для изображений также отдаём сразу inline через браузерный рендерер
-        if ext in {'png','jpg','jpeg','gif','webp','svg'}:
+        # Для PDF проверяем, какой режим запрошен:
+        # - ?mode=inline -> браузерный просмотрщик
+        # - по умолчанию -> текстовый режим с подсветкой
+        if ext == 'pdf' and request.args.get('mode') == 'inline':
             return redirect(url_for('download_file', filepath=decoded))
 
         def _read_text(path: str) -> str:
