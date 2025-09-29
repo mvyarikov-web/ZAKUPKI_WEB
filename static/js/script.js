@@ -24,7 +24,7 @@ selectFolderBtn.addEventListener('click', () => {
     folderInput.type = 'file';
     folderInput.webkitdirectory = true;
     folderInput.multiple = true;
-    folderInput.accept = '.pdf,.doc,.docx,.xls,.xlsx,.txt';
+    folderInput.accept = '.pdf,.doc,.docx,.xls,.xlsx,.txt,.html,.htm,.csv,.tsv,.xml,.json';
     folderInput.style.display = 'none';
     folderInput.addEventListener('change', handleFiles);
     document.body.appendChild(folderInput);
@@ -43,7 +43,15 @@ function handleFiles(e) {
         if (wrp) {
             const parts = wrp.split('/');
             const folderPath = parts.slice(0, -1).join('/');
-            if (selectedFolderPathEl) selectedFolderPathEl.textContent = folderPath;
+            // Попытаемся получить полный путь из webkitdirectory API
+            if (any.webkitdirectory && any.path) {
+                // Если доступен полный путь - используем его
+                const fullPath = any.path.replace('/' + any.name, '').replace(folderPath, '');
+                if (selectedFolderPathEl) selectedFolderPathEl.textContent = fullPath + '/' + folderPath;
+            } else {
+                // Иначе показываем относительный путь как есть
+                if (selectedFolderPathEl) selectedFolderPathEl.textContent = folderPath;
+            }
         }
     } catch (_) {}
     uploadProgress.style.display = 'flex';
@@ -52,7 +60,7 @@ function handleFiles(e) {
     progressText.textContent = '0%';
 
     const formData = new FormData();
-    const allowedExt = new Set(['pdf','doc','docx','xls','xlsx','txt']);
+    const allowedExt = new Set(['pdf','doc','docx','xls','xlsx','txt','html','htm','csv','tsv','xml','json']);
     let skipped = 0;
     for (let i = 0; i < files.length; i++) {
         const f = files[i];
@@ -208,7 +216,7 @@ function performSearch(terms) {
                 const folderRaw = hasPath && result.path.includes('/') ? result.path.split('/').slice(0, -1).pop() : 'Загруженные файлы';
                 const folderLabel = escapeHtml(folderRaw || 'Загруженные файлы');
                 const fileNameHtml = hasPath
-                    ? `<a class="result-file-link" href="/download/${encodeURIComponent(result.path)}" target="_blank" rel="noopener">${escapeHtml(result.filename)}</a>`
+                    ? `<a class="result-file-link" href="/view/${encodeURIComponent(result.path)}" target="_blank" rel="noopener">${escapeHtml(result.filename)}</a>`
                     : `${escapeHtml(result.filename)}`;
                 // Рендер по каждому термину: количество и до 3 сниппетов
                 const perTermHtml = (result.per_term || []).map(entry => {

@@ -17,12 +17,13 @@ import unicodedata
 import docx2txt
 import subprocess
 from document_processor import DocumentProcessor
+from markupsafe import Markup
 
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = 'uploads'
 app.config['INDEX_FOLDER'] = 'index'
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB max file size
-app.config['SEARCH_RESULTS_FILE'] = 'uploads/search_results.json'
+app.config['SEARCH_RESULTS_FILE'] = 'index/search_results.json'
 app.config['JSON_AS_ASCII'] = False  # корректная кириллица в JSON
 
 # Логирование: файл logs/app.log, ежедневная ротация, хранить 7 архивов
@@ -60,7 +61,10 @@ if root_logger.level > logging.INFO:
     root_logger.setLevel(logging.INFO)
 
 # Разрешенные расширения файлов
-ALLOWED_EXTENSIONS = {'pdf', 'doc', 'docx', 'xls', 'xlsx', 'txt'}
+ALLOWED_EXTENSIONS = {'pdf', 'doc', 'docx', 'xls', 'xlsx', 'txt', 'html', 'htm', 'csv', 'tsv', 'xml', 'json'}
+
+# Форматы, которые можно отображать напрямую в браузере или конвертировать в HTML
+WEB_VIEWABLE_EXTENSIONS = {'html', 'htm', 'txt', 'csv', 'tsv', 'xml', 'json', 'pdf', 'doc', 'docx', 'xls', 'xlsx'}
 
 # Статусы обработки файлов
 file_status = {}  # filename: {'status': 'not_checked'|'processing'|'contains_keywords'|'no_keywords'|'error', 'result': {...}}
@@ -372,6 +376,41 @@ def extract_text_from_file(file_path):
         print(f"Общая ошибка при обработке файла {file_path}: {str(e)}")
         return f"Ошибка обработки файла: {str(e)}"
 
+def extract_text_from_excel(file_path: str) -> str:
+    """Извлекает текст из Excel-файлов (.xlsx/.xls) для отображения.
+    - Для .xlsx использует openpyxl (read_only, data_only)
+    - Для .xls пытается использовать xlrd, если доступен; иначе возвращает пустую строку
+    Возвращает простой табличный текст, строки разделены переводами, ячейки — табуляцией.
+    """
+    try:
+        ext = os.path.splitext(file_path)[1].lower()
+        parts: list[str] = []
+        if ext == '.xlsx':
+            wb = openpyxl.load_workbook(file_path, data_only=True, read_only=True)
+            for ws in wb.worksheets:
+                parts.append(f"[Лист] {ws.title}")
+                for row in ws.iter_rows(values_only=True):
+                    vals = []
+                    for v in row:
+                        vals.append('' if v is None else str(v))
+                    parts.append('\t'.join(vals))
+        elif ext == '.xls':
+            try:
+                import xlrd  # type: ignore
+            except Exception:
+                return ''
+            wb = xlrd.open_workbook(file_path, on_demand=True)
+            for s in wb.sheets():
+                parts.append(f"[Лист] {s.name}")
+                for r in range(s.nrows):
+                    vals = []
+                    for c in range(s.ncols):
+                        vals.append(str(s.cell_value(r, c)))
+                    parts.append('\t'.join(vals))
+        return '\n'.join(parts)
+    except Exception:
+        return ''
+
 def search_in_files(search_terms):
     """НОВАЯ логика: поиск по сводному индексу (_search_index.txt), игнорируя заголовки.
     Группирует результаты по файлам и обновляет статусы file_status.
@@ -509,52 +548,49 @@ def index():
                 # Скрываем служебный индексный файл и временные файлы Office
                 if filename == '_search_index.txt' or filename.startswith('~$') or filename.startswith('$'):
                     continue
-                if allowed_file(filename):
-                    file_path = os.path.join(root, filename)
-                    # Определяем относительную папку
-                    relative_folder = os.path.relpath(root, app.config['UPLOAD_FOLDER'])
-                    
-                    # Правильно определяем название папки
-                    if relative_folder == '.':
-                        # Файлы в корневой папке uploads
-                        folder_display_name = '📁 Загруженные файлы'
-                        folder_key = 'root'
-                    else:
-                        # Файлы в подпапках - берем последнюю часть пути и восстанавливаем оригинальное имя
-                        folder_parts = relative_folder.split(os.sep)
-                        original_folder_name = folder_parts[-1]
-                        # Показываем оригинальное имя папки
-                        folder_display_name = f'📂 {original_folder_name}'
-                        folder_key = relative_folder
-                    
-                    file_size = os.path.getsize(file_path)
-                    # Получаем статус файла из новой структуры данных
-                    file_key = os.path.join(relative_folder, filename) if relative_folder != '.' else filename
-                    file_data = file_status.get(file_key, {})
-                    status = file_data.get('status', 'not_checked')
-                    
-                    # Получаем оригинальное имя файла если оно сохранено, иначе используем текущее
-                    display_name = file_data.get('original_name', filename)
-                    
-                    file_info = {
-                        'name': display_name,
-                        'size': file_size,
-                        'status': status,
-                        'path': file_key,
-                        'relative_folder': relative_folder
+                file_path = os.path.join(root, filename)
+                # Определяем относительную папку
+                relative_folder = os.path.relpath(root, app.config['UPLOAD_FOLDER'])
+
+                # Правильно определяем название папки
+                if relative_folder == '.':
+                    folder_display_name = '📁 Загруженные файлы'
+                    folder_key = 'root'
+                else:
+                    folder_parts = relative_folder.split(os.sep)
+                    original_folder_name = folder_parts[-1]
+                    folder_display_name = f'📂 {original_folder_name}'
+                    folder_key = relative_folder
+
+                file_size = os.path.getsize(file_path)
+                file_key = os.path.join(relative_folder, filename) if relative_folder != '.' else filename
+                file_data = file_status.get(file_key, {})
+                status = file_data.get('status', 'not_checked')
+                # Если формат не поддерживается — пометим явно
+                if not allowed_file(filename):
+                    status = 'unsupported'
+                    file_data = {**file_data, 'status': 'unsupported', 'error': 'Неподдерживаемый формат'}
+                    file_status[file_key] = file_data
+
+                display_name = file_data.get('original_name', filename)
+                file_info = {
+                    'name': display_name,
+                    'size': file_size,
+                    'status': status,
+                    'path': file_key,
+                    'relative_folder': relative_folder
+                }
+
+                if folder_key not in files_by_folder:
+                    files_by_folder[folder_key] = {
+                        'display_name': folder_display_name,
+                        'relative_path': relative_folder,
+                        'files': []
                     }
-                    
-                    if folder_key not in files_by_folder:
-                        files_by_folder[folder_key] = {
-                            'display_name': folder_display_name,
-                            'relative_path': relative_folder,
-                            'files': []
-                        }
-                    
-                    files_by_folder[folder_key]['files'].append(file_info)
-                    total_files += 1
-                    
-                    app.logger.debug(f"Добавлен файл: {filename} в папку {folder_display_name}, размер: {file_size}, статус: {status}")
+
+                files_by_folder[folder_key]['files'].append(file_info)
+                total_files += 1
+                app.logger.debug(f"Добавлен файл: {filename} в папку {folder_display_name}, размер: {file_size}, статус: {status}")
     else:
         app.logger.warning("Папка uploads не существует")
     
@@ -846,9 +882,9 @@ def download_file(filepath: str):
         # Запрещаем скачивание скрытых и служебных файлов
         if os.path.basename(decoded).startswith('.'):
             return jsonify({'error': 'Файл недоступен'}), 403
-        # Ограничим типы по whitelist
+        # Блокируем неподдерживаемые расширения (соответствует политике UI и тестам)
         if not allowed_file(decoded):
-            return jsonify({'error': 'Неподдерживаемый тип файла'}), 400
+            return jsonify({'error': 'Неподдерживаемый тип файла'}), 403
         directory = app.config['UPLOAD_FOLDER']
         # Разбиваем путь на каталог и имя
         full_path = os.path.join(directory, decoded)
@@ -856,9 +892,98 @@ def download_file(filepath: str):
             return jsonify({'error': 'Файл не найден'}), 404
         folder = os.path.dirname(decoded)
         fname = os.path.basename(decoded)
-        return send_from_directory(os.path.join(directory, folder) if folder else directory, fname, as_attachment=False)
+        resp = send_from_directory(os.path.join(directory, folder) if folder else directory, fname, as_attachment=False)
+        # Принудительно отдаём как inline
+        try:
+            resp.headers['Content-Disposition'] = f'inline; filename="{fname}"'
+        except Exception:
+            pass
+        return resp
     except Exception as e:
         app.logger.exception('download_file error')
+        return jsonify({'error': str(e)}), 500
+
+
+@app.get('/view/<path:filepath>')
+def view_file(filepath: str):
+    """Отображение содержимого поддерживаемого файла как веб-страницы.
+    Поддержка txt/csv/tsv/json/xml/html напрямую; для офисных/PDF будет предпринята
+    простая текстовая конвертация. Неподдерживаемые — 403.
+    """
+    try:
+        decoded = unquote(filepath)
+        if not _is_safe_subpath(app.config['UPLOAD_FOLDER'], decoded):
+            return jsonify({'error': 'Недопустимый путь'}), 400
+        if os.path.basename(decoded).startswith('.'):
+            return jsonify({'error': 'Файл недоступен'}), 403
+        full_path = os.path.join(app.config['UPLOAD_FOLDER'], decoded)
+        if not os.path.isfile(full_path):
+            return jsonify({'error': 'Файл не найден'}), 404
+        ext = os.path.splitext(full_path)[1].lower().lstrip('.')
+        if not allowed_file(full_path):
+            return jsonify({'error': 'Неподдерживаемый тип файла'}), 403
+
+        title = os.path.basename(decoded)
+        html_body = ''
+        # Прямая отдача HTML/HTM (как есть, безопасно, без исполнения скриптов — браузер сам экранирует источник)
+        if ext in {'html','htm'}:
+            with open(full_path, 'r', encoding='utf-8', errors='ignore') as f:
+                html_body = f.read()
+            return render_template('view.html', title=title, content=Markup(html_body))
+
+        def _read_text(path: str) -> str:
+            try:
+                import chardet
+                raw = open(path, 'rb').read()
+                enc = chardet.detect(raw).get('encoding') or 'utf-8'
+                return raw.decode(enc, errors='ignore')
+            except Exception:
+                try:
+                    return open(path, 'r', encoding='utf-8', errors='ignore').read()
+                except Exception:
+                    return ''
+
+                # (удалено) вложенная extract_text_from_excel — используем одноимённую функцию верхнего уровня
+
+        if ext in {'txt','csv','tsv','xml','json'}:
+            text = _read_text(full_path)
+            # Простая табличная визуализация для CSV/TSV
+            if ext in {'csv','tsv'}:
+                import csv, io
+                delimiter = ',' if ext=='csv' else '\t'
+                reader = csv.reader(io.StringIO(text), delimiter=delimiter)
+                rows = list(reader)
+                table_html = ['<table class="table table-sm" style="width:100%; border-collapse: collapse;">']
+                for r in rows:
+                    table_html.append('<tr>')
+                    for cell in r:
+                        table_html.append(f'<td style="border:1px solid #ddd; padding:4px;">{Markup.escape(cell)}</td>')
+                    table_html.append('</tr>')
+                table_html.append('</table>')
+                html_body = '\n'.join(table_html)
+            else:
+                # Для json/xml экранируем и показываем как pre
+                html_body = f'<pre style="white-space: pre-wrap;">{Markup.escape(text)}</pre>'
+            return render_template('view.html', title=title, content=Markup(html_body))
+
+        # Базовая текстовая конвертация для office/pdf — быстрый рендер в <pre>
+        extracted = ''
+        try:
+            if ext == 'pdf':
+                extracted = extract_text_from_pdf(full_path) or ''
+            elif ext == 'docx':
+                extracted = extract_text_from_docx(full_path) or ''
+            elif ext == 'doc':
+                extracted = extract_text_from_doc(full_path) or ''
+            elif ext in {'xlsx','xls'}:
+                extracted = extract_text_from_excel(full_path) or ''
+        except Exception:
+            app.logger.exception('Ошибка извлечения текста для view')
+        if not extracted:
+            return jsonify({'error': 'Не удалось отобразить файл'}), 500
+        return render_template('view.html', title=title, content=Markup(f'<pre style="white-space: pre-wrap;">{Markup.escape(extracted)}</pre>'))
+    except Exception as e:
+        app.logger.exception('view_file error')
         return jsonify({'error': str(e)}), 500
 
 

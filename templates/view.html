@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ title or 'Просмотр файла' }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+    <style>
+        body { margin: 16px; }
+        .container { max-width: 1200px; margin: 0 auto; }
+        .file-title { font-weight: 600; margin-bottom: 12px; color: #333; }
+        .content { background: #fff; border: 1px solid #e1e1e1; border-radius: 6px; padding: 12px; }
+        pre { white-space: pre-wrap; word-break: break-word; }
+        table { border-collapse: collapse; }
+        td, th { border: 1px solid #ddd; padding: 4px 6px; }
+    </style>
+    <!-- Примечание: контент передаётся как Markup из бэкенда -->
+    <!-- Не выполняем никакие скрипты здесь -->
+    
+    <!-- Защищаемся от навигации в рамках вкладки: все ссылки открываем в новой -->
+    <base target="_blank" rel="noopener">
+</head>
+<body>
+    <div class="container">
+        <div class="file-title">{{ title or '' }}</div>
+        <div class="content">{{ content }}</div>
+    </div>
+</body>
+</html>

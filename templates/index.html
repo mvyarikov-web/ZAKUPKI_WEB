@@ -9,8 +9,8 @@
 <body>
     <div class="container">
         <header>
-            <h1>Автоматический поиск по содержимому</h1>
-            <p>Поддерживаемые форматы: PDF, DOC, DOCX, XLS, XLSX, TXT</p>
+            <h1>Анализ Документов Закупки</h1>
+            <p>Поддерживаемые форматы: PDF, DOC, DOCX, XLS, XLSX, TXT, HTML, CSV, XML, JSON</p>
         </header>
 
         <main>
@@ -86,11 +86,16 @@
                             {% set char_count = meta.get('char_count') %}
                             {% set status = meta.get('status', 'not_checked') %}
                             {% set is_bad = (status == 'unsupported') or (status == 'error') or (char_count is defined and char_count == 0) %}
-                            <div class="file-item{% if is_bad %} file-bad{% endif %}">
+                            {% set is_unsupported = (status == 'unsupported') %}
+                            <div class="file-item{% if is_bad %} file-bad{% endif %}{% if is_unsupported %} file-unsupported{% endif %}">
                                 <div class="file-info">
                                     <span class="file-icon">📄</span>
                                     <div class="file-details">
-                                        <span class="file-name{% if is_bad %} text-danger{% endif %}">{{ file.name }}</span>
+                                        {% if status == 'unsupported' %}
+                                        <span class="file-name{% if is_bad %} text-danger{% endif %}" title="Неподдерживаемый формат">{{ file.name }}</span>
+                                        {% else %}
+                                        <a class="file-name{% if is_bad %} text-danger{% endif %} result-file-link" href="{{ url_for('view_file', filepath=file.path) }}" target="_blank" rel="noopener">{{ file.name }}</a>
+                                        {% endif %}
                                         <span class="file-size">{{ (file.size / 1024)|round(1) }} KB</span>
                                         {% if char_count is not none %}
                                         <span class="file-chars{% if char_count == 0 %} text-danger{% endif %}">Символов: {{ char_count }}</span>

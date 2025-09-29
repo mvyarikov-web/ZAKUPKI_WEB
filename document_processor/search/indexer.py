@@ -7,7 +7,7 @@ from typing import Iterable, Tuple, List
 import logging
 
 HEADER_BAR = "=" * 31
-SUPPORTED_EXT = {"pdf", "doc", "docx", "xls", "xlsx", "txt", "zip", "rar"}
+SUPPORTED_EXT = {"pdf", "doc", "docx", "xls", "xlsx", "txt", "zip", "rar", "html", "htm", "csv", "tsv", "xml", "json"}
 DOC_EXTS = {"doc", "docx"}
 
 class Indexer:
@@ -121,8 +121,31 @@ class Indexer:
         try:
             if ext == "txt":
                 text = self._read_text_with_encoding(abs_path)
+            elif ext in {"html", "htm"}:
+                raw = self._read_text_with_encoding(abs_path)
+                text = self._html_to_text(raw)
+            elif ext in {"xml", "json"}:
+                text = self._read_text_with_encoding(abs_path)
+            elif ext in {"csv", "tsv"}:
+                sep = "," if ext == "csv" else "\t"
+                try:
+                    import csv
+                    with open(abs_path, "r", encoding="utf-8", errors="ignore") as f:
+                        rows = list(csv.reader(f, delimiter=sep))
+                    text = "\n".join([" | ".join(row) for row in rows])
+                except Exception:
+                    text = self._read_text_with_encoding(abs_path)
             elif ext == "pdf":
                 text = self._extract_pdf(abs_path)
+                if not text.strip():
+                    # Fallback: pdfminer.six
+                    try:
+                        from pdfminer.high_level import extract_text  # type: ignore
+                        t2 = extract_text(abs_path) or ""
+                        if t2.strip():
+                            text = t2
+                    except Exception:
+                        pass
                 if not text.strip():
                     # OCR первых страниц (best effort)
                     ocr_text = self._ocr_pdf_pages(abs_path, max_pages=3)
@@ -210,6 +233,20 @@ class Indexer:
         t = re.sub(r"[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F]", " ", t)
         t = re.sub(r"\s+", " ", t)
         return t.strip()
+
+    def _html_to_text(self, html: str) -> str:
+        """Очень простая очистка HTML без внешних зависимостей: убираем теги, скрипты/стили, декодируем сущности."""
+        if not html:
+            return ""
+        import re, html as h
+        # Удаляем содержимое <script> и <style>
+        cleaned = re.sub(r"<script[\s\S]*?</script>", " ", html, flags=re.IGNORECASE)
+        cleaned = re.sub(r"<style[\s\S]*?</style>", " ", cleaned, flags=re.IGNORECASE)
+        # Удаляем остальные теги
+        cleaned = re.sub(r"<[^>]+>", " ", cleaned)
+        # Декодируем HTML-сущности
+        cleaned = h.unescape(cleaned)
+        return cleaned
 
     def _estimate_quality(self, text: str) -> int:
         if not text:
