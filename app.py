@@ -20,6 +20,7 @@ from document_processor import DocumentProcessor
 
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = 'uploads'
+app.config['INDEX_FOLDER'] = 'index'
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB max file size
 app.config['SEARCH_RESULTS_FILE'] = 'uploads/search_results.json'
 app.config['JSON_AS_ASCII'] = False  # корректная кириллица в JSON
@@ -65,6 +66,46 @@ ALLOWED_EXTENSIONS = {'pdf', 'doc', 'docx', 'xls', 'xlsx', 'txt'}
 file_status = {}  # filename: {'status': 'not_checked'|'processing'|'contains_keywords'|'no_keywords'|'error', 'result': {...}}
 
 
+def _parse_index_char_counts(index_path: str) -> dict:
+    """Парсит _search_index.txt и возвращает {relative_path: char_count} только для файлов из ФС (без zip://, rar://).
+    Безопасен к ошибкам формата; игнорирует записи без чисел.
+    """
+    mapping: dict[str, int] = {}
+    if not os.path.exists(index_path):
+        return mapping
+    try:
+        current_title = None
+        with open(index_path, 'r', encoding='utf-8', errors='ignore') as f:
+            for raw in f:
+                line = raw.strip()
+                if line.startswith('ЗАГОЛОВОК:'):
+                    title = line.split(':', 1)[1].strip()
+                    # интересуют только реальные файлы из uploads (без схем)
+                    if title and '://' not in title:
+                        current_title = title
+                    else:
+                        current_title = None
+                elif current_title and line.startswith('Формат:') and 'Символов:' in line:
+                    try:
+                        # ожидание шаблона: Формат: ... | Символов: N | ...
+                        parts = [p.strip() for p in line.split('|')]
+                        for p in parts:
+                            if p.startswith('Символов:'):
+                                n_str = p.split(':', 1)[1].strip()
+                                n = int(''.join(ch for ch in n_str if ch.isdigit())) if n_str else 0
+                                mapping[current_title] = n
+                                break
+                    except Exception:
+                        # пропускаем некорректные строки
+                        pass
+                elif line.startswith('====='):
+                    # разделитель — сбрасываем состояние
+                    current_title = None
+    except Exception:
+        app.logger.exception('Ошибка парсинга индекса для char_count')
+    return mapping
+
+
 def _is_safe_subpath(base_dir: str, user_path: str) -> bool:
     """Проверяет, что путь user_path находится внутри base_dir (без обхода через ..).
     Возвращает True, если безопасно.
@@ -100,8 +141,13 @@ def safe_filename(filename):
     return name + ext
 
 def allowed_file(filename):
-    return '.' in filename and \
-           filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+    """Проверяет поддержку расширения и исключает временные файлы Office (~$*, $*)."""
+    if not filename:
+        return False
+    base = os.path.basename(filename)
+    if base.startswith('~$') or base.startswith('$'):
+        return False
+    return '.' in base and base.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 def save_search_results():
     """Сохранение результатов поиска в JSON файл"""
@@ -137,8 +183,8 @@ def load_search_results():
     return ''
 
 def _index_file_path() -> str:
-    """Путь к файлу индекса внутри папки uploads."""
-    return os.path.join(app.config['UPLOAD_FOLDER'], '_search_index.txt')
+    """Путь к файлу индекса внутри папки index."""
+    return os.path.join(app.config['INDEX_FOLDER'], '_search_index.txt')
 
 def clear_search_results():
     """Очистка файла с результатами поиска"""
@@ -344,6 +390,9 @@ def search_in_files(search_terms):
     files_to_search = []
     for root, dirs, files in os.walk(uploads):
         for fname in files:
+            # Исключаем служебный индекс и временные Office-файлы
+            if fname == '_search_index.txt' or fname.startswith('~$') or fname.startswith('$'):
+                continue
             if allowed_file(fname):
                 rel_path = os.path.relpath(os.path.join(root, fname), uploads)
                 files_to_search.append(rel_path)
@@ -426,6 +475,9 @@ def index():
         # Рекурсивно обходим все файлы и папки
         for root, dirs, files in os.walk(app.config['UPLOAD_FOLDER']):
             for filename in files:
+                # Скрываем служебный индексный файл и временные файлы Office
+                if filename == '_search_index.txt' or filename.startswith('~$') or filename.startswith('$'):
+                    continue
                 if allowed_file(filename):
                     file_path = os.path.join(root, filename)
                     # Определяем относительную папку
@@ -476,7 +528,13 @@ def index():
         app.logger.warning("Папка uploads не существует")
     
     app.logger.info(f"Всего файлов для отображения: {total_files}, папок: {len(files_by_folder)}")
-    return render_template('index.html', files_by_folder=files_by_folder, total_files=total_files, last_search_terms=last_search_terms)
+    return render_template(
+        'index.html',
+        files_by_folder=files_by_folder,
+        total_files=total_files,
+        last_search_terms=last_search_terms,
+        file_status=file_status,
+    )
 
 @app.route('/upload', methods=['POST'])
 def upload_files():
@@ -491,6 +549,11 @@ def upload_files():
         if file and file.filename != '':
             original_filename = file.filename
             app.logger.info(f"Загружается файл: {original_filename}")
+            # Пропускаем временные файлы Office (например, ~$file.docx)
+            base_name = os.path.basename(original_filename)
+            if base_name.startswith('~$') or base_name.startswith('$'):
+                app.logger.info(f"Пропуск временного файла Office: {original_filename}")
+                continue
             
             if allowed_file(original_filename):
                 # Обрабатываем путь из webkitRelativePath если есть (для папок)
@@ -587,9 +650,55 @@ def build_index():
     try:
         dp = DocumentProcessor()
         app.logger.info("Запуск явной сборки индекса для uploads")
-        index_path = dp.create_search_index(uploads)
+        # Создаём индекс в uploads, затем переносим в index/
+        tmp_index_path = dp.create_search_index(uploads)
+        os.makedirs(app.config['INDEX_FOLDER'], exist_ok=True)
+        index_path = _index_file_path()
+        try:
+            if os.path.exists(tmp_index_path):
+                shutil.move(tmp_index_path, index_path)
+            else:
+                # На всякий случай, если реализация уже пишет в index_folder
+                if os.path.exists(index_path):
+                    pass
+        except Exception:
+            app.logger.exception('Не удалось переместить индекс в папку index')
         size = os.path.getsize(index_path) if os.path.exists(index_path) else 0
         app.logger.info(f"Индекс собран: {index_path}, размер: {size} байт")
+        # Обновим количество распознанных символов по каждому реальному файлу и статусы ошибок/неподдержки
+        try:
+            counts = _parse_index_char_counts(index_path)
+            # Список всех файлов в uploads
+            all_files: list[str] = []
+            for root, dirs, files in os.walk(uploads):
+                for fname in files:
+                    if fname == '_search_index.txt' or fname.startswith('~$') or fname.startswith('$'):
+                        continue
+                    rel_path = os.path.relpath(os.path.join(root, fname), uploads)
+                    all_files.append(rel_path)
+            for rel_path in all_files:
+                ext_ok = allowed_file(rel_path)
+                entry = file_status.get(rel_path, {})
+                if not ext_ok:
+                    # Неподдерживаемый формат
+                    entry.update({'status': 'unsupported', 'error': 'Неподдерживаемый формат', 'char_count': 0, 'processed_at': datetime.now().isoformat()})
+                else:
+                    cc = counts.get(rel_path)
+                    if cc is None:
+                        # Поддерживаемый, но нет записи в индексе — ошибка чтения/индексации
+                        entry.update({'status': entry.get('status', 'error' if entry.get('status') in (None, 'not_checked') else entry.get('status')),
+                                      'error': entry.get('error') or 'Ошибка чтения или не проиндексирован',
+                                      'char_count': 0,
+                                      'processed_at': datetime.now().isoformat()})
+                    else:
+                        # Есть счётчик символов — не трогаем статус поиска, только дополняем метрикой
+                        entry.update({'char_count': cc, 'processed_at': datetime.now().isoformat()})
+                        # если 0 символов, оставим это как индикатор качества (UI подсветит)
+                file_status[rel_path] = entry
+            # Сохраним
+            save_search_results()
+        except Exception:
+            app.logger.exception('Не удалось обновить char_count по индексу')
         return jsonify({'success': True, 'index_path': index_path, 'size': size})
     except Exception as e:
         app.logger.exception("Ошибка при сборке индекса")
@@ -733,6 +842,9 @@ def files_json():
     for root, dirs, files in os.walk(uploads):
         rel_dir = os.path.relpath(root, uploads)
         for filename in files:
+            # Скрываем служебный индексный файл и временные файлы Office
+            if filename == '_search_index.txt' or filename.startswith('~$') or filename.startswith('$'):
+                continue
             if not allowed_file(filename):
                 continue
             file_path = os.path.join(root, filename)
@@ -741,10 +853,13 @@ def files_json():
             folder_name = '📁 Загруженные файлы' if rel_dir == '.' else f'📂 {os.path.basename(rel_dir)}'
             if folder_key not in files_by_folder:
                 files_by_folder[folder_key] = {'display_name': folder_name, 'relative_path': rel_dir if rel_dir != '.' else '', 'files': []}
+            meta = file_status.get(rel_path, {})
             files_by_folder[folder_key]['files'].append({
                 'name': filename,
                 'size': os.path.getsize(file_path),
-                'status': file_status.get(rel_path, {}).get('status', 'not_checked'),
+                'status': meta.get('status', 'not_checked'),
+                'char_count': meta.get('char_count'),
+                'error': meta.get('error'),
                 'path': rel_path
             })
             total_files += 1
@@ -753,7 +868,7 @@ def files_json():
 
 @app.get('/index_status')
 def index_status():
-    """Статус индексного файла uploads/_search_index.txt: наличие, размер, mtime, записи."""
+    """Статус индексного файла index/_search_index.txt: наличие, размер, mtime, записи."""
     try:
         idx = _index_file_path()
         exists = os.path.exists(idx)

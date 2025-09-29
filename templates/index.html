@@ -8,7 +8,8 @@
 </head>
 <body>
     <div class="container">
-        <h1>Автоматический поиск по содержимому</h1>
+        <header>
+            <h1>Автоматический поиск по содержимому</h1>
             <p>Поддерживаемые форматы: PDF, DOC, DOCX, XLS, XLSX, TXT</p>
         </header>
 
@@ -41,9 +42,6 @@
                     <a id="viewIndexBtn" class="btn btn-secondary" href="/view_index" target="_blank" style="margin-left: 10px;">
                         <i class="icon">📜</i> Сводный файл в TXT
                     </a>
-                    <button id="clearResultsBtn" class="btn btn-danger" style="margin-left: 10px;">
-                        <i class="icon">🧹</i> Очистить результаты
-                    </button>
                 </div>
                 <div id="indexStatus" style="margin-top:8px; font-size: 14px; color: #555;">Индекс: проверяется…</div>
                 <!-- Прогресс построения индекса перед поиском -->
@@ -57,7 +55,60 @@
                 <!-- Результаты поиска (с подсветкой в сниппетах) -->
                 <div id="searchResults" class="search-results"></div>
             </section>
-            <!-- Список файлов скрыт по требованиям -->
+            <!-- Список файлов с метриками извлечения -->
+            <section class="files-section">
+                <h2>Файлы</h2>
+                <div id="filesList" class="files-list">
+                    {% for folder_key, folder in files_by_folder.items() %}
+                    <div class="folder-container" id="folder-{{ folder.display_name }}">
+                        <div class="folder-header" onclick="toggleFolder('{{ folder.display_name }}')">
+                            <span class="folder-icon">📁</span>
+                            <span class="folder-name">{{ folder.display_name }}</span>
+                            <span class="file-count-badge">{{ folder.files|length }}</span>
+                            <button class="delete-folder-btn" title="Удалить папку" onclick="event.stopPropagation(); deleteFolder('{{ folder_key }}', '{{ folder.display_name }}')">
+                                <svg class="icon-trash" viewBox="0 0 24 24" aria-hidden="true">
+                                    <path d="M9 3h6a1 1 0 0 1 1 1v2h4v2h-1v12a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V8H4V6h4V4a1 1 0 0 1 1-1zm1 3h4V5h-4v1zM7 8v12h10V8H7zm3 3h2v7h-2v-7zm4 0h2v7h-2v-7z"></path>
+                                </svg>
+                            </button>
+                            <span class="toggle-icon">▼</span>
+                        </div>
+                        <div class="folder-content">
+                            {% for file in folder.files %}
+                            {% set meta = file_status.get(file.path, {}) %}
+                            {% set char_count = meta.get('char_count') %}
+                            {% set status = meta.get('status', 'not_checked') %}
+                            {% set is_bad = (status == 'unsupported') or (status == 'error') or (char_count is defined and char_count == 0) %}
+                            <div class="file-item{% if is_bad %} file-bad{% endif %}">
+                                <div class="file-info">
+                                    <span class="file-icon">📄</span>
+                                    <div class="file-details">
+                                        <span class="file-name{% if is_bad %} text-danger{% endif %}">{{ file.name }}</span>
+                                        <span class="file-size">{{ (file.size / 1024)|round(1) }} KB</span>
+                                        {% if char_count is not none %}
+                                        <span class="file-chars{% if char_count == 0 %} text-danger{% endif %}">Символов: {{ char_count }}</span>
+                                        {% endif %}
+                                        {% if meta.get('error') %}
+                                        <span class="file-error text-danger">{{ meta.get('error') }}</span>
+                                        {% elif status == 'unsupported' %}
+                                        <span class="file-error text-danger">Неподдерживаемый формат</span>
+                                        {% endif %}
+                                    </div>
+                                </div>
+                                <div class="file-status">
+                                    <span class="status-indicator status-{{ status }}" title="{{ status }}"></span>
+                                    <button class="delete-btn" title="Удалить файл" onclick="deleteFile('{{ file.path }}')">
+                                        <svg class="icon-trash" viewBox="0 0 24 24" aria-hidden="true">
+                                            <path d="M9 3h6a1 1 0 0 1 1 1v2h4v2h-1v12a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V8H4V6h4V4a1 1 0 0 1 1-1zm1 3h4V5h-4v1zM7 8v12h10V8H7zm3 3h2v7h-2v-7zm4 0h2v7h-2v-7z"></path>
+                                        </svg>
+                                    </button>
+                                </div>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </section>
         </main>
     </div>
 

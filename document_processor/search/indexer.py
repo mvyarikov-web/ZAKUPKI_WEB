@@ -39,6 +39,9 @@ class Indexer:
             if depth > self.max_depth:
                 continue
             for name in sorted(filenames):
+                # Пропускаем временные файлы Office (обычно начинаются с ~$ или $)
+                if name.startswith("~$") or name.startswith("$"):
+                    continue
                 ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
                 if ext in SUPPORTED_EXT:
                     abs_path = os.path.join(dirpath, name)

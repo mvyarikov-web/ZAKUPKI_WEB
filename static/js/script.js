@@ -9,7 +9,6 @@ const fileCount = document.getElementById('fileCount');
 const searchInput = document.getElementById('searchInput');
 const searchBtn = document.getElementById('searchBtn');
 // Кнопки построения индекса нет — индекс строится автоматически
-const clearResultsBtn = document.getElementById('clearResultsBtn');
 const searchResults = document.getElementById('searchResults');
 const messageModal = document.getElementById('messageModal');
 const modalMessage = document.getElementById('modalMessage');
@@ -42,8 +41,27 @@ function handleFiles(e) {
     progressText.textContent = '0%';
 
     const formData = new FormData();
+    const allowedExt = new Set(['pdf','doc','docx','xls','xlsx','txt']);
+    let skipped = 0;
     for (let i = 0; i < files.length; i++) {
-        formData.append('files', files[i]);
+        const f = files[i];
+        const baseName = (f.webkitRelativePath || f.name || '').split('/').pop();
+        if (!baseName) { continue; }
+        // Пропускаем временные файлы Office (~$, $)
+        if (baseName.startsWith('~$') || baseName.startsWith('$')) {
+            skipped++;
+            continue;
+        }
+        // Пропускаем неподдерживаемые расширения
+        const dot = baseName.lastIndexOf('.');
+        const ext = dot >= 0 ? baseName.slice(dot + 1).toLowerCase() : '';
+        if (!allowedExt.has(ext)) {
+            skipped++;
+            continue;
+        }
+        // Сохраняем относительный путь внутри архива папки
+        const relName = f.webkitRelativePath || f.name;
+        formData.append('files', f, relName);
     }
 
     fetch('/upload', {
@@ -58,8 +76,7 @@ function handleFiles(e) {
     })
     .then(data => {
         if (data.success) {
-            showMessage('Папка загружена. Строим индекс...');
-            // Автоперестройка индекса сразу после загрузки папки
+            // Тихо перестраиваем индекс без модальных сообщений
             return rebuildIndexWithProgress();
         } else {
             throw new Error(data.error || 'Ошибка загрузки папки');
@@ -105,8 +122,11 @@ function deleteFile(filename) {
     .then(res => res.json())
     .then(data => {
         if (data.success) {
-            showMessage('Файл удалён');
-            updateFilesList();
+            showMessage('Файл удалён. Перестраиваем индекс…');
+            return rebuildIndexWithProgress().then(() => {
+                showMessage('Индекс перестроен');
+                updateFilesList();
+            });
         } else {
             showMessage(data.error || 'Ошибка удаления файла');
         }
@@ -135,8 +155,10 @@ function deleteFolder(folderKey, folderDisplayName) {
     .then(res => res.json())
     .then(data => {
         if (data.success) {
-            showMessage(data.message || 'Папка удалена успешно');
-            updateFilesList();
+            // Без дополнительных сообщений: молча перестраиваем индекс и обновляем список файлов
+            return rebuildIndexWithProgress().then(() => {
+                updateFilesList();
+            });
         } else {
             showMessage(data.error || 'Ошибка удаления папки');
         }
@@ -151,7 +173,13 @@ function deleteFolder(folderKey, folderDisplayName) {
 searchBtn.addEventListener('click', () => {
     const terms = searchInput.value.trim();
     if (!terms) {
-        showMessage('Введите ключевые слова для поиска');
+        // Пустой запрос = очистка результатов
+        fetch('/clear_results', { method: 'POST', headers: { 'Content-Type': 'application/json' } })
+            .then(() => {
+                searchResults.style.display = 'none';
+                updateFilesList();
+                refreshIndexStatus();
+            });
         return;
     }
     // Перед поиском — гарантируем, что индекс свежий
@@ -197,31 +225,7 @@ searchBtn.addEventListener('click', () => {
     });
 });
 
-// --- Clear Results ---
-clearResultsBtn.addEventListener('click', () => {
-    if (!confirm('Вы уверены, что хотите очистить все результаты поиска? Эта операция необратима.')) {
-        return;
-    }
-    
-    fetch('/clear_results', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
-    })
-    .then(res => res.json())
-    .then(data => {
-        if (data.success) {
-            showMessage('Результаты поиска очищены');
-            searchInput.value = '';
-            searchResults.style.display = 'none';
-            updateFilesList();
-        } else {
-            showMessage(data.message || 'Ошибка очистки результатов');
-        }
-    })
-    .catch(() => {
-        showMessage('Ошибка очистки результатов');
-    });
-});
+// (Кнопка очистки результатов удалена — очистка выполняется при пустом поисковом запросе)
 
 // --- Build Index auto ---
 function rebuildIndexWithProgress() {
@@ -238,6 +242,7 @@ function rebuildIndexWithProgress() {
             if (fill) fill.style.width = '100%';
             if (text) text.textContent = 'Готово';
             refreshIndexStatus();
+            updateFilesList();
         })
         .finally(() => {
             setTimeout(() => { if (bar) bar.style.display = 'none'; if (fill) fill.style.width = '0%'; }, 600);
