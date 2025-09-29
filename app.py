@@ -418,43 +418,74 @@ def search_in_files(search_terms):
         app.logger.exception(f'Ошибка поиска по индексу: {e}')
         matches = []
 
-    # Сгруппируем результаты по файлам (используем key 'title' если появится; fallback — не группировать)
-    grouped = {}
+    # Сгруппируем результаты по файлам и по ключевым словам внутри файла
+    grouped: dict[str, dict] = {}
     for m in matches:
         title = m.get('title') or m.get('source') or 'индекс'
-        d = grouped.setdefault(title, {'found_terms': set(), 'snippets': []})
-        d['found_terms'].add(m.get('keyword', ''))
-        if len(d['snippets']) < 3:
-            d['snippets'].append(m.get('snippet', ''))
+        kw = m.get('keyword', '')
+        snip = m.get('snippet', '')
+        g = grouped.setdefault(title, { 'by_term': {}, 'total': 0 })
+        tinfo = g['by_term'].setdefault(kw, { 'count': 0, 'snippets': [] })
+        tinfo['count'] += 1
+        g['total'] += 1
+        if len(tinfo['snippets']) < 3 and snip:
+            tinfo['snippets'].append(snip)
 
     # Обновим статусы известных файлов и подготовим выдачу
     found_files = set()
     for rel_path, data in grouped.items():
         # Статус обновляем только для реальных файлов из uploads
         if rel_path in files_to_search:
-            file_status[rel_path] = {
+            prev = file_status.get(rel_path, {})
+            # Составим агрегированный список терминов и до 3 сниппетов на термин
+            found_terms = []
+            context = []
+            for term, info in data['by_term'].items():
+                if not term:
+                    continue
+                found_terms.append(f"{term} ({info['count']})")
+                context.extend(info['snippets'][:3])
+            new_entry = {
                 'status': 'contains_keywords',
-                'found_terms': sorted([t for t in data['found_terms'] if t]),
-                'context': data['snippets'],
+                'found_terms': found_terms,
+                'context': context[: max(3, len(context))],
                 'processed_at': datetime.now().isoformat()
             }
+            # Не затираем ранее сохранённые поля (char_count, error, original_name)
+            for k in ('char_count','error','original_name'):
+                if k in prev:
+                    new_entry[k] = prev[k]
+            file_status[rel_path] = new_entry
             found_files.add(rel_path)
         # Добавляем в выдачу, даже если файл виртуальный (например, внутри архива)
+        # Формируем блоки по каждому ключевому слову
+        per_term = []
+        for term, info in data['by_term'].items():
+            per_term.append({
+                'term': term,
+                'count': info['count'],
+                'snippets': info['snippets']
+            })
         results.append({
             'filename': os.path.basename(rel_path) if isinstance(rel_path, str) else str(rel_path),
             'source': rel_path,
             'path': rel_path if rel_path in files_to_search else None,
-            'found_terms': sorted([t for t in data['found_terms'] if t]),
-            'context': data['snippets']
+            'total': data['total'],
+            'per_term': per_term
         })
 
     # Реальным файлам без совпадений — статус "нет ключевых слов"
     for rel_path in files_to_search:
         if rel_path not in found_files:
-            file_status[rel_path] = {
+            prev = file_status.get(rel_path, {})
+            new_entry = {
                 'status': 'no_keywords',
                 'processed_at': datetime.now().isoformat()
             }
+            for k in ('char_count','error','original_name'):
+                if k in prev:
+                    new_entry[k] = prev[k]
+            file_status[rel_path] = new_entry
 
     app.logger.info(f"Поиск завершён: найдено {len(matches)} совпадений, групп: {len(grouped)}")
     return results
@@ -870,6 +901,22 @@ def files_json():
 def index_status():
     """Статус индексного файла index/_search_index.txt: наличие, размер, mtime, записи."""
     try:
+        # Если в текущей папке uploads нет поддерживаемых файлов, считаем индекс отсутствующим
+        uploads = app.config.get('UPLOAD_FOLDER', 'uploads')
+        has_files = False
+        if os.path.exists(uploads):
+            for root, dirs, files in os.walk(uploads):
+                for fname in files:
+                    if fname == '_search_index.txt' or fname.startswith('~$') or fname.startswith('$'):
+                        continue
+                    if allowed_file(fname):
+                        has_files = True
+                        break
+                if has_files:
+                    break
+        if not has_files:
+            return jsonify({'exists': False})
+
         idx = _index_file_path()
         exists = os.path.exists(idx)
         if not exists:

@@ -21,6 +21,7 @@
                     <button id="selectFolderBtn" class="btn btn-secondary">
                         <i class="icon">📂</i> Выбрать папку
                     </button>
+                    <span id="selectedFolderPath" class="folder-path" style="margin-left:12px; color:#555;"></span>
                 </div>
                 <!-- Прогресс загрузки -->
                 <div id="uploadProgress" class="progress-container" style="display: none;">
@@ -28,6 +29,24 @@
                         <div id="progressFill" class="progress-fill"></div>
                     </div>
                     <span id="progressText">0%</span>
+                </div>
+            </section>
+
+            <!-- Секция сводного файла (статус + просмотр) -->
+            <section class="index-section">
+                <h2>Сводный файл</h2>
+                <div class="index-controls" style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+                    <div id="indexStatus" style="font-size:14px; color:#555;">Сводный файл: проверяется…</div>
+                    <a id="viewIndexBtn" class="btn btn-secondary" href="/view_index" target="_blank">
+                        <i class="icon">📜</i> Просмотр
+                    </a>
+                </div>
+                <!-- Прогресс построения индекса -->
+                <div id="indexBuildProgress" class="progress-container" style="display: none; margin-top:10px;">
+                    <div class="progress-bar">
+                        <div id="indexBuildFill" class="progress-fill" style="width: 25%;"></div>
+                    </div>
+                    <span id="indexBuildText">Построение индекса…</span>
                 </div>
             </section>
 
@@ -39,17 +58,6 @@
                     <button id="searchBtn" class="btn btn-primary">
                         <i class="icon">🔍</i> Найти
                     </button>
-                    <a id="viewIndexBtn" class="btn btn-secondary" href="/view_index" target="_blank" style="margin-left: 10px;">
-                        <i class="icon">📜</i> Сводный файл в TXT
-                    </a>
-                </div>
-                <div id="indexStatus" style="margin-top:8px; font-size: 14px; color: #555;">Индекс: проверяется…</div>
-                <!-- Прогресс построения индекса перед поиском -->
-                <div id="indexBuildProgress" class="progress-container" style="display: none; margin-top:10px;">
-                    <div class="progress-bar">
-                        <div id="indexBuildFill" class="progress-fill" style="width: 25%;"></div>
-                    </div>
-                    <span id="indexBuildText">Построение индекса…</span>
                 </div>
                 
                 <!-- Результаты поиска (с подсветкой в сниппетах) -->

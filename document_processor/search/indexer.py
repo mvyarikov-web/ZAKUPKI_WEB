@@ -42,6 +42,9 @@ class Indexer:
                 # Пропускаем временные файлы Office (обычно начинаются с ~$ или $)
                 if name.startswith("~$") or name.startswith("$"):
                     continue
+                # Пропускаем сам сводный индекс
+                if name == "_search_index.txt":
+                    continue
                 ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
                 if ext in SUPPORTED_EXT:
                     abs_path = os.path.join(dirpath, name)
@@ -155,6 +158,9 @@ class Indexer:
         return text, meta
 
     def _write_entry(self, out, rel_path: str, text: str, meta: dict):
+        # Дополнительная защита: не пишем запись для самого индексного файла
+        if os.path.basename(rel_path) == "_search_index.txt":
+            return
         out.write(f"{HEADER_BAR}\n")
         out.write(f"ЗАГОЛОВОК: {rel_path}\n")
         out.write(

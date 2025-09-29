@@ -1,6 +1,7 @@
 // --- Drag & Drop ---
 // Отключаем выбор одиночных файлов — только папки
 const selectFolderBtn = document.getElementById('selectFolderBtn');
+const selectedFolderPathEl = document.getElementById('selectedFolderPath');
 const uploadProgress = document.getElementById('uploadProgress');
 const progressFill = document.getElementById('progressFill');
 const progressText = document.getElementById('progressText');
@@ -35,6 +36,16 @@ selectFolderBtn.addEventListener('click', () => {
 function handleFiles(e) {
     const files = e.target.files;
     if (!files || files.length === 0) return;
+    // Отобразим полный путь выбранной папки по первому файлу
+    try {
+        const any = files[0];
+        const wrp = any && any.webkitRelativePath ? any.webkitRelativePath : '';
+        if (wrp) {
+            const parts = wrp.split('/');
+            const folderPath = parts.slice(0, -1).join('/');
+            if (selectedFolderPathEl) selectedFolderPathEl.textContent = folderPath;
+        }
+    } catch (_) {}
     uploadProgress.style.display = 'flex';
     let uploaded = 0;
     progressFill.style.width = '0%';
@@ -105,6 +116,8 @@ function updateFilesList() {
                 setTimeout(restoreFolderStates, 100);
             }
             if (newFileCount && fileCount) fileCount.textContent = newFileCount.textContent;
+            // Также обновим статус индекса, если он есть на странице
+            refreshIndexStatus();
         });
 }
 
@@ -182,30 +195,36 @@ function performSearch(terms) {
     })
     .then(res => res.json())
     .then(data => {
+        // Критично: сразу обновляем список файлов, чтобы светофоры отобразились на первом поиске
+        updateFilesList();
         if (data.results && data.results.length > 0) {
             searchResults.innerHTML = '';
             const t = termsFromInput();
             data.results.forEach(result => {
                 const item = document.createElement('div');
                 item.className = 'search-result-item';
-                const snippetsHtml = (result.context || []).slice(0, 3).map(s => `<div class="context-snippet">${escapeHtml(s)}</div>`).join('');
-                    // Определяем имя папки (родительский каталог) и делаем имя файла ссылкой, если это реальный файл
-                    const hasPath = !!result.path;
-                    const folderRaw = hasPath && result.path.includes('/') ? result.path.split('/').slice(0, -1).pop() : 'Загруженные файлы';
-                    const folderLabel = escapeHtml(folderRaw || 'Загруженные файлы');
-                    const fileNameHtml = hasPath
-                        ? `<a class="result-file-link" href="/download/${encodeURIComponent(result.path)}" target="_blank" rel="noopener">${escapeHtml(result.filename)}</a>`
-                        : `${escapeHtml(result.filename)}`;
-                    item.innerHTML = `
-                        <div class="result-header">
-                            <span class="result-folder">${folderLabel}</span>
-                            <span class="result-filename" title="Источник: ${result.source || ''}">${fileNameHtml}</span>
-                            <div class="found-terms">
-                                ${result.found_terms.map(term => `<span class="found-term">${term}</span>`).join(' ')}
-                            </div>
-                        </div>
-                        <div class="context-snippets">${snippetsHtml || '<div class="context-empty">Нет сниппетов</div>'}</div>
-                    `;
+                // Определяем имя папки (родительский каталог) и делаем имя файла ссылкой, если это реальный файл
+                const hasPath = !!result.path;
+                const folderRaw = hasPath && result.path.includes('/') ? result.path.split('/').slice(0, -1).pop() : 'Загруженные файлы';
+                const folderLabel = escapeHtml(folderRaw || 'Загруженные файлы');
+                const fileNameHtml = hasPath
+                    ? `<a class="result-file-link" href="/download/${encodeURIComponent(result.path)}" target="_blank" rel="noopener">${escapeHtml(result.filename)}</a>`
+                    : `${escapeHtml(result.filename)}`;
+                // Рендер по каждому термину: количество и до 3 сниппетов
+                const perTermHtml = (result.per_term || []).map(entry => {
+                    const snips = (entry.snippets || []).slice(0,3).map(s => `<div class="context-snippet">${escapeHtml(s)}</div>`).join('');
+                    return `<div class="per-term-block">
+                        <div class="found-terms"><span class="found-term">${escapeHtml(entry.term)} (${entry.count})</span></div>
+                        <div class="context-snippets">${snips || '<div class="context-empty">Нет сниппетов</div>'}</div>
+                    </div>`;
+                }).join('');
+                item.innerHTML = `
+                    <div class="result-header">
+                        <span class="result-folder">${folderLabel}</span>
+                        <span class="result-filename" title="Источник: ${result.source || ''}">${fileNameHtml}</span>
+                    </div>
+                    ${perTermHtml}
+                `;
                 searchResults.appendChild(item);
             });
             highlightSnippets(t);
@@ -353,18 +372,18 @@ function refreshIndexStatus() {
         .then(res => res.json())
         .then(data => {
             if (!data.exists) {
-                indexStatus.textContent = 'Индекс: отсутствует';
+                indexStatus.textContent = 'Сводный файл: не сформирован';
                 indexStatus.style.color = '#a00';
             } else {
                 const size = (data.size || 0);
                 const sizeKb = (size / 1024).toFixed(1);
                 const entries = (data.entries == null) ? '—' : data.entries;
-                indexStatus.textContent = `Индекс: есть, ${sizeKb} KB, записей: ${entries}`;
+                indexStatus.textContent = `Сводный файл: сформирован, ${sizeKb} KB, записей: ${entries}`;
                 indexStatus.style.color = '#2a2';
             }
         })
         .catch(() => {
-            indexStatus.textContent = 'Индекс: ошибка запроса';
+            indexStatus.textContent = 'Сводный файл: ошибка запроса';
             indexStatus.style.color = '#a00';
         });
 }

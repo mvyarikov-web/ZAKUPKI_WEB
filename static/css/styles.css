@@ -79,13 +79,13 @@ section h2 {
 }
 
 .btn-secondary {
-    background: #95a5a6;
+    background: #3498db; /* синий как у .btn-primary */
     color: white;
-    margin-left: 10px;
+    margin-left: 0; /* слева выравниваем */
 }
 
 .btn-secondary:hover {
-    background: #7f8c8d;
+    background: #2980b9;
     transform: translateY(-1px);
 }
 
@@ -101,6 +101,11 @@ section h2 {
 /* Область загрузки */
 .upload-buttons {
     margin-bottom: 20px;
+}
+
+.folder-path {
+    font-size: 14px;
+    color: #555;
 }
 
 /* Прогресс бар */
@@ -159,6 +164,11 @@ section h2 {
 /* Результаты поиска */
 .search-results {
     display: none;
+}
+
+/* Секция сводного файла */
+.index-section .index-controls .btn {
+    height: 42px;
 }
 
 .search-result-item {
@@ -465,6 +475,11 @@ section h2 {
 .delete-btn:hover {
     background: #eaf4fb;
     color: #2980b9;
+}
+
+/* Уравниваем высоту всех основных кнопок */
+.btn, .btn-primary, .btn-secondary, #searchBtn, #selectFolderBtn, #viewIndexBtn {
+    height: 42px;
 }
 
 /* Единый стиль для встроенной SVG-иконки корзины */
