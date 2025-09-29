@@ -942,10 +942,12 @@ def download_file(filepath: str):
             return jsonify({'error': 'Файл не найден'}), 404
         folder = os.path.dirname(decoded)
         fname = os.path.basename(decoded)
-        resp = send_from_directory(os.path.join(directory, folder) if folder else directory, fname, as_attachment=False)
-        # Принудительно отдаём как inline
+        # В зависимости от параметра query отдаём как inline или attachment
+        dl = request.args.get('download') in ('1', 'true', 'yes')
+        resp = send_from_directory(os.path.join(directory, folder) if folder else directory, fname, as_attachment=dl)
         try:
-            resp.headers['Content-Disposition'] = f'inline; filename="{fname}"'
+            disp = 'attachment' if dl else 'inline'
+            resp.headers['Content-Disposition'] = f'{disp}; filename="{fname}"'
         except Exception:
             pass
         return resp
@@ -1030,7 +1032,38 @@ def view_file(filepath: str):
         except Exception:
             app.logger.exception('Ошибка извлечения текста для view')
         if not extracted:
-            return jsonify({'error': 'Не удалось отобразить файл'}), 500
+            # Если текст извлечь не удалось: пробуем отдать исходный файл как есть (inline)
+            # Для PDF и веб-форматов браузер часто умеет отрисовать самостоятельно
+            try:
+                folder = os.path.dirname(decoded)
+                fname = os.path.basename(decoded)
+                from flask import Response
+                # Попробуем вернуть файл как application/octet-stream с inline Content-Disposition
+                resp = send_from_directory(os.path.join(app.config['UPLOAD_FOLDER'], folder) if folder else app.config['UPLOAD_FOLDER'], fname, as_attachment=False)
+                try:
+                    resp.headers['Content-Disposition'] = f'inline; filename="{fname}"'
+                except Exception:
+                    pass
+                return resp
+            except Exception:
+                # Дружественное сообщение с предложением скачать
+                msg = 'Не удалось отобразить файл в браузере. Скачать файл?'
+                # Возвращаем лёгкую HTML-страницу с кнопками Да/Нет
+                dl_url = url_for('download_file', filepath=decoded) + ('&' if '?' in url_for('download_file', filepath=decoded) else '?') + 'download=1'
+                back_url = url_for('index')
+                html = f"""
+                <html><head><meta charset='utf-8'><title>Просмотр недоступен</title>
+                <style>body{{font-family:system-ui, -apple-system, Segoe UI, Roboto, Arial; padding:24px;}}
+                .box{{max-width:600px; margin:auto; border:1px solid #eee; border-radius:8px; padding:16px;}}
+                .actions a{{display:inline-block; margin-right:12px; padding:8px 12px; border-radius:6px; text-decoration:none;}}
+                .primary{{background:#2a7; color:#fff;}} .secondary{{background:#eee; color:#333;}}</style></head>
+                <body><div class='box'><h3>Просмотр не доступен</h3><p>{msg}</p>
+                <div class='actions'>
+                <a class='primary' href='{dl_url}' rel='noopener'>Да, скачать</a>
+                <a class='secondary' href='{back_url}' rel='noopener'>Нет, вернуться</a>
+                </div></div></body></html>
+                """
+                return html
         return render_template('view.html', title=title, content=Markup(f'<pre style="white-space: pre-wrap;">{Markup.escape(extracted)}</pre>'))
     except Exception as e:
         app.logger.exception('view_file error')
