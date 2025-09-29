@@ -63,6 +63,9 @@ if root_logger.level > logging.INFO:
 # Разрешенные расширения файлов
 ALLOWED_EXTENSIONS = {'pdf', 'doc', 'docx', 'xls', 'xlsx', 'txt', 'html', 'htm', 'csv', 'tsv', 'xml', 'json'}
 
+# Форматы, которые можно безопасно показывать inline в браузере (даже если не индексируем)
+PREVIEW_INLINE_EXTENSIONS = {'pdf', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'}
+
 # Форматы, которые можно отображать напрямую в браузере или конвертировать в HTML
 WEB_VIEWABLE_EXTENSIONS = {'html', 'htm', 'txt', 'csv', 'tsv', 'xml', 'json', 'pdf', 'doc', 'docx', 'xls', 'xlsx'}
 
@@ -932,8 +935,10 @@ def download_file(filepath: str):
         # Запрещаем скачивание скрытых и служебных файлов
         if os.path.basename(decoded).startswith('.'):
             return jsonify({'error': 'Файл недоступен'}), 403
-        # Блокируем неподдерживаемые расширения (соответствует политике UI и тестам)
-        if not allowed_file(decoded):
+        # Разрешаем скачивание/просмотр, если формат поддерживаемый для индексации
+        # или если это безопасный для inline предпросмотра тип (изображения, pdf)
+        ext = os.path.splitext(decoded)[1].lower().lstrip('.')
+        if not allowed_file(decoded) and ext not in PREVIEW_INLINE_EXTENSIONS:
             return jsonify({'error': 'Неподдерживаемый тип файла'}), 403
         directory = app.config['UPLOAD_FOLDER']
         # Разбиваем путь на каталог и имя
@@ -982,6 +987,16 @@ def view_file(filepath: str):
             with open(full_path, 'r', encoding='utf-8', errors='ignore') as f:
                 html_body = f.read()
             return render_template('view.html', title=title, content=Markup(html_body))
+
+        # Для PDF по умолчанию сразу отдаём оригинал inline штатным просмотрщиком браузера
+        # (чтобы избежать долгих попыток извлечения текста и "вечной" загрузки).
+        # Текстовый режим можно включить, передав ?mode=text в URL.
+        if ext == 'pdf' and request.args.get('mode') != 'text':
+            return redirect(url_for('download_file', filepath=decoded))
+
+        # Для изображений также отдаём сразу inline через браузерный рендерер
+        if ext in {'png','jpg','jpeg','gif','webp','svg'}:
+            return redirect(url_for('download_file', filepath=decoded))
 
         def _read_text(path: str) -> str:
             try:

@@ -92,7 +92,13 @@
                                     <span class="file-icon">📄</span>
                                     <div class="file-details">
                                         {% if status == 'unsupported' %}
+                                        {# Если это изображение или PDF — всё равно даём ссылку на просмотр #}
+                                        {% set ext = file.name.rsplit('.', 1)[-1].lower() if '.' in file.name else '' %}
+                                        {% if ext in ['pdf','png','jpg','jpeg','gif','webp','svg'] %}
+                                        <a class="file-name{% if is_bad %} text-danger{% endif %} result-file-link" href="{{ url_for('view_file', filepath=file.path) }}{% if last_search_terms %}?q={{ last_search_terms|urlencode }}{% endif %}" target="_blank" rel="noopener">{{ file.name }}</a>
+                                        {% else %}
                                         <span class="file-name{% if is_bad %} text-danger{% endif %}" title="Неподдерживаемый формат">{{ file.name }}</span>
+                                        {% endif %}
                                         {% else %}
                                         <a class="file-name{% if is_bad %} text-danger{% endif %} result-file-link" href="{{ url_for('view_file', filepath=file.path) }}{% if last_search_terms %}?q={{ last_search_terms|urlencode }}{% endif %}" target="_blank" rel="noopener">{{ file.name }}</a>
                                         {% endif %}
