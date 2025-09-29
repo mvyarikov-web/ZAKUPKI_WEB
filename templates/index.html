@@ -94,7 +94,7 @@
                                         {% if status == 'unsupported' %}
                                         <span class="file-name{% if is_bad %} text-danger{% endif %}" title="Неподдерживаемый формат">{{ file.name }}</span>
                                         {% else %}
-                                        <a class="file-name{% if is_bad %} text-danger{% endif %} result-file-link" href="{{ url_for('view_file', filepath=file.path) }}" target="_blank" rel="noopener">{{ file.name }}</a>
+                                        <a class="file-name{% if is_bad %} text-danger{% endif %} result-file-link" href="{{ url_for('view_file', filepath=file.path) }}{% if last_search_terms %}?q={{ last_search_terms|urlencode }}{% endif %}" target="_blank" rel="noopener">{{ file.name }}</a>
                                         {% endif %}
                                         <span class="file-size">{{ (file.size / 1024)|round(1) }} KB</span>
                                         {% if char_count is not none %}

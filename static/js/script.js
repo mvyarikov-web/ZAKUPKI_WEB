@@ -126,6 +126,8 @@ function updateFilesList() {
             if (newFileCount && fileCount) fileCount.textContent = newFileCount.textContent;
             // Также обновим статус индекса, если он есть на странице
             refreshIndexStatus();
+            // Применяем текущие термы к ссылкам просмотра в списке файлов
+            applyQueryToViewLinks();
         });
 }
 
@@ -203,6 +205,7 @@ function performSearch(terms) {
     })
     .then(res => res.json())
     .then(data => {
+        try { localStorage.setItem('last_search_terms', terms); } catch (e) {}
         // Критично: сразу обновляем список файлов, чтобы светофоры отобразились на первом поиске
         updateFilesList();
         if (data.results && data.results.length > 0) {
@@ -216,7 +219,7 @@ function performSearch(terms) {
                 const folderRaw = hasPath && result.path.includes('/') ? result.path.split('/').slice(0, -1).pop() : 'Загруженные файлы';
                 const folderLabel = escapeHtml(folderRaw || 'Загруженные файлы');
                 const fileNameHtml = hasPath
-                    ? `<a class="result-file-link" href="/view/${encodeURIComponent(result.path)}" target="_blank" rel="noopener">${escapeHtml(result.filename)}</a>`
+                    ? `<a class="result-file-link" href="/view/${encodeURIComponent(result.path)}?q=${encodeURIComponent(t.join(','))}" target="_blank" rel="noopener">${escapeHtml(result.filename)}</a>`
                     : `${escapeHtml(result.filename)}`;
                 // Рендер по каждому термину: количество и до 3 сниппетов
                 const perTermHtml = (result.per_term || []).map(entry => {
@@ -236,6 +239,7 @@ function performSearch(terms) {
                 searchResults.appendChild(item);
             });
             highlightSnippets(t);
+            applyQueryToViewLinks();
         } else {
             searchResults.innerHTML = '<div>Ничего не найдено по этим ключевым словам.</div>';
         }
@@ -271,10 +275,9 @@ searchBtn.addEventListener('click', () => {
             });
         return;
     }
-    // Перед поиском — гарантируем, что индекс свежий
+    // Запускаем поиск без перестроения индекса
     searchResults.style.display = 'block';
-    searchResults.innerHTML = '<div>Обновляем индекс...</div>';
-    rebuildIndexWithProgress().then(() => performSearch(terms));
+    performSearch(terms);
 });
 
 // (Кнопка очистки результатов удалена — очистка выполняется при пустом поисковом запросе)
@@ -302,7 +305,12 @@ function rebuildIndexWithProgress() {
 }
 
 function termsFromInput() {
-    return searchInput.value.split(',').map(t => t.trim()).filter(Boolean);
+    const raw = (searchInput && searchInput.value ? searchInput.value : '').trim();
+    if (raw) return raw.split(',').map(t => t.trim()).filter(Boolean);
+    try {
+        const saved = localStorage.getItem('last_search_terms') || '';
+        return saved.split(',').map(t => t.trim()).filter(Boolean);
+    } catch (_) { return []; }
 }
 
 function escapeHtml(s) {
@@ -371,6 +379,7 @@ function restoreFolderStates() {
 document.addEventListener('DOMContentLoaded', function() {
     refreshIndexStatus();
     setInterval(refreshIndexStatus, 8000);
+    applyQueryToViewLinks();
 });
 
 // --- Index status ---
@@ -394,4 +403,21 @@ function refreshIndexStatus() {
             indexStatus.textContent = 'Сводный файл: ошибка запроса';
             indexStatus.style.color = '#a00';
         });
+}
+
+// --- Append current terms to /view links ---
+function applyQueryToViewLinks() {
+    const terms = termsFromInput();
+    const anchors = document.querySelectorAll('a.result-file-link');
+    anchors.forEach(a => {
+        try {
+            const url = new URL(a.getAttribute('href'), window.location.origin);
+            if (terms.length > 0) {
+                url.searchParams.set('q', terms.join(','));
+            } else {
+                url.searchParams.delete('q');
+            }
+            a.setAttribute('href', url.pathname + (url.search ? url.search : ''));
+        } catch (_) {}
+    });
 }

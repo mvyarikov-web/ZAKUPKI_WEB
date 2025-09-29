@@ -290,7 +290,18 @@ class Indexer:
                             txt.append(t)
                 return "\n".join(txt).strip()
             except Exception:
-                return ""
+                # PyMuPDF (fitz) как дополнительный fallback
+                try:
+                    import fitz  # type: ignore
+                    doc = fitz.open(path)
+                    parts = []
+                    for page in doc:
+                        t = page.get_text("text") or ""
+                        if t:
+                            parts.append(t)
+                    return "\n".join(parts).strip()
+                except Exception:
+                    return ""
 
     def _ocr_pdf_pages(self, path: str, max_pages: int = 3) -> str:
         """Best-effort OCR: конвертирует первые N страниц в изображения и распознаёт текст.

@@ -13,6 +13,7 @@
         pre { white-space: pre-wrap; word-break: break-word; }
         table { border-collapse: collapse; }
         td, th { border: 1px solid #ddd; padding: 4px 6px; }
+        mark.highlight { background: #ffe58f; padding: 0 1px; }
     </style>
     <!-- Примечание: контент передаётся как Markup из бэкенда -->
     <!-- Не выполняем никакие скрипты здесь -->
@@ -23,7 +24,51 @@
 <body>
     <div class="container">
         <div class="file-title">{{ title or '' }}</div>
-        <div class="content">{{ content }}</div>
+        <div class="content" id="docContent">{{ content }}</div>
     </div>
+    <script>
+    // Подсветка терминов из параметра ?q= (формат: "term1,term2,term3"), регистронезависимо
+    (function() {
+        try {
+            const params = new URLSearchParams(window.location.search);
+            const q = params.get('q');
+            if (!q) return;
+            const terms = q.split(',').map(t => t.trim()).filter(Boolean);
+            if (terms.length === 0) return;
+            const root = document.getElementById('docContent');
+            if (!root) return;
+            // Обходим текстовые узлы и оборачиваем совпадения в <mark>
+            const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+                acceptNode: function(node) {
+                    if (!node.nodeValue || !node.nodeValue.trim()) return NodeFilter.FILTER_REJECT;
+                    // Не подсвечиваем внутри <script> и <style>
+                    const p = node.parentElement;
+                    if (!p) return NodeFilter.FILTER_REJECT;
+                    const tag = p.tagName ? p.tagName.toLowerCase() : '';
+                    if (tag === 'script' || tag === 'style') return NodeFilter.FILTER_REJECT;
+                    return NodeFilter.FILTER_ACCEPT;
+                }
+            });
+                        const regexes = terms.map(t => new RegExp(t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'));
+            const nodes = [];
+            while (walker.nextNode()) nodes.push(walker.currentNode);
+            nodes.forEach(node => {
+                let text = node.nodeValue;
+                let replaced = false;
+                regexes.forEach(re => {
+                    if (re.test(text)) {
+                        text = text.replace(re, function(m) { return '<mark class="highlight">' + m + '</mark>'; });
+                        replaced = true;
+                    }
+                });
+                if (replaced) {
+                    const span = document.createElement('span');
+                    span.innerHTML = text;
+                    node.parentNode.replaceChild(span, node);
+                }
+            });
+        } catch (e) { /* молча игнорируем */ }
+    })();
+    </script>
 </body>
 </html>

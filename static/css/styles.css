@@ -363,6 +363,23 @@ section h2 {
     transition: all 0.3s ease;
 }
 
+/* Неподдерживаемые файлы */
+.file-item.file-unsupported {
+    background: #f5f5f5;
+    color: #888;
+}
+
+.file-item.file-unsupported .file-name {
+    color: #888;
+    cursor: default;
+    text-decoration: none;
+}
+
+.file-item.file-unsupported:hover {
+    background: #f5f5f5;
+    transform: none;
+}
+
 /* Файлы внутри папок визуально смещены правее, чем заголовок папки */
 .folder-content .file-item {
     padding-left: 40px;

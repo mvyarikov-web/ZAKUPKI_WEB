@@ -206,36 +206,86 @@ def clear_search_results():
 def extract_text_from_pdf(file_path):
     """Извлечение текста из PDF файла"""
     text = ""
+    # 1) pdfplumber
     try:
-        # Попробуем pdfplumber сначала (лучше для сложных PDF)
         with pdfplumber.open(file_path) as pdf:
+            parts = []
             for page in pdf.pages:
-                page_text = page.extract_text()
-                if page_text:
-                    text += page_text + "\n"
-    except:
-        try:
-            # Если pdfplumber не работает, попробуем pypdf
-            import pypdf  # type: ignore
-            with open(file_path, 'rb') as file:
-                pdf_reader = pypdf.PdfReader(file)
-                for page in pdf_reader.pages:
-                    page_text = page.extract_text() or ""
-                    if page_text:
-                        text += page_text + "\n"
-        except Exception:
-            text = "Ошибка извлечения текста из PDF"
-    
-    return text
+                t = page.extract_text() or ""
+                if t:
+                    parts.append(t)
+        if parts:
+            app.logger.info("PDF extracted via pdfplumber: %s", os.path.basename(file_path))
+            return "\n".join(parts)
+    except Exception:
+        pass
+    # 2) pypdf (с попыткой расшифровки)
+    try:
+        import pypdf  # type: ignore
+        parts = []
+        with open(file_path, 'rb') as f:
+            r = pypdf.PdfReader(f)
+            try:
+                if getattr(r, 'is_encrypted', False):
+                    try:
+                        r.decrypt("")
+                    except Exception:
+                        try:
+                            r.decrypt(None)  # type: ignore[arg-type]
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+            for p in r.pages:
+                t = p.extract_text() or ""
+                if t:
+                    parts.append(t)
+        if parts:
+            app.logger.info("PDF extracted via pypdf: %s", os.path.basename(file_path))
+            return "\n".join(parts)
+    except Exception:
+        pass
+    # 3) pdfminer.six
+    try:
+        from pdfminer.high_level import extract_text as pdfminer_extract_text  # type: ignore
+        t = pdfminer_extract_text(file_path) or ""
+        if t.strip():
+            app.logger.info("PDF extracted via pdfminer.six: %s", os.path.basename(file_path))
+            return t
+    except Exception:
+        pass
+    # 4) PyMuPDF (fitz) — опционально, если установлен
+    try:
+        import fitz  # type: ignore
+        doc = fitz.open(file_path)
+        parts = []
+        for page in doc:
+            t = page.get_text("text") or ""
+            if t:
+                parts.append(t)
+        if parts:
+            app.logger.info("PDF extracted via PyMuPDF(fitz): %s", os.path.basename(file_path))
+            return "\n".join(parts)
+    except Exception:
+        pass
+    return ""
 
 def extract_text_from_docx(file_path):
     """Извлечение текста из DOCX файла"""
     try:
         doc = docx.Document(file_path)
-        text = ""
+        parts = []
+        # Параграфы
         for paragraph in doc.paragraphs:
-            text += paragraph.text + "\n"
-        return text
+            if paragraph.text:
+                parts.append(paragraph.text)
+        # Таблицы (ячейки через |)
+        for table in doc.tables:
+            for row in table.rows:
+                row_txt = [cell.text for cell in row.cells if cell.text]
+                if row_txt:
+                    parts.append(" | ".join(row_txt))
+        return "\n".join(parts).strip()
     except Exception as e:
         print(f"Ошибка при чтении DOCX файла {file_path}: {str(e)}")
         return "Ошибка извлечения текста из DOCX"
