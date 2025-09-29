@@ -85,22 +85,15 @@
                             {% set meta = file_status.get(file.path, {}) %}
                             {% set char_count = meta.get('char_count') %}
                             {% set status = meta.get('status', 'not_checked') %}
-                            {% set is_bad = (status == 'unsupported') or (status == 'error') or (char_count is defined and char_count == 0) %}
-                            {% set is_unsupported = (status == 'unsupported') %}
-                            <div class="file-item{% if is_bad %} file-bad{% endif %}{% if is_unsupported %} file-unsupported{% endif %}">
+                            {% set is_unreadable = (status == 'unsupported') or (status == 'error') or (char_count is defined and char_count == 0) %}
+                            <div class="file-item{% if is_unreadable %} file-disabled{% endif %}">
                                 <div class="file-info">
                                     <span class="file-icon">📄</span>
                                     <div class="file-details">
-                                        {% if status == 'unsupported' %}
-                                        {# Если это изображение или PDF — всё равно даём ссылку на просмотр #}
-                                        {% set ext = file.name.rsplit('.', 1)[-1].lower() if '.' in file.name else '' %}
-                                        {% if ext in ['pdf','png','jpg','jpeg','gif','webp','svg'] %}
-                                        <a class="file-name{% if is_bad %} text-danger{% endif %} result-file-link" href="{{ url_for('view_file', filepath=file.path) }}{% if last_search_terms %}?q={{ last_search_terms|urlencode }}{% endif %}" target="_blank" rel="noopener">{{ file.name }}</a>
+                                        {% if is_unreadable %}
+                                        <span class="file-name" title="Файл недоступен для просмотра/скачивания">{{ file.name }}</span>
                                         {% else %}
-                                        <span class="file-name{% if is_bad %} text-danger{% endif %}" title="Неподдерживаемый формат">{{ file.name }}</span>
-                                        {% endif %}
-                                        {% else %}
-                                        <a class="file-name{% if is_bad %} text-danger{% endif %} result-file-link" href="{{ url_for('view_file', filepath=file.path) }}{% if last_search_terms %}?q={{ last_search_terms|urlencode }}{% endif %}" target="_blank" rel="noopener">{{ file.name }}</a>
+                                        <a class="file-name result-file-link" href="{{ url_for('view_file', filepath=file.path) }}{% if last_search_terms %}?q={{ last_search_terms|urlencode }}{% endif %}" target="_blank" rel="noopener">{{ file.name }}</a>
                                         {% endif %}
                                         <span class="file-size">{{ (file.size / 1024)|round(1) }} KB</span>
                                         {% if char_count is not none %}

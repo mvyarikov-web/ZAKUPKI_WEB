@@ -3,7 +3,7 @@ import shutil
 import logging
 import time
 from logging.handlers import TimedRotatingFileHandler
-from flask import Flask, render_template, request, jsonify, redirect, url_for, g
+from flask import Flask, render_template, request, jsonify, redirect, url_for, g, make_response, send_file
 from werkzeug.utils import secure_filename
 import docx
 import openpyxl
@@ -17,7 +17,9 @@ import unicodedata
 import docx2txt
 import subprocess
 from document_processor import DocumentProcessor
+# from document_processor.pdf_utils import analyze_pdf, extract_text_pdf, build_pdf_response  # type: ignore
 from markupsafe import Markup
+from random import randint
 
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = 'uploads'
@@ -938,6 +940,10 @@ def download_file(filepath: str):
         # Разрешаем скачивание/просмотр, если формат поддерживаемый для индексации
         # или если это безопасный для inline предпросмотра тип (изображения, pdf)
         ext = os.path.splitext(decoded)[1].lower().lstrip('.')
+        # Блокируем скачивание для файлов, отмеченных как нечитаемые (unsupported/error/char_count==0)
+        meta = file_status.get(decoded) or file_status.get(os.path.basename(decoded)) or {}
+        if meta.get('status') in ('unsupported','error') or (meta.get('char_count') == 0):
+            return jsonify({'error': 'Файл недоступен для скачивания'}), 403
         if not allowed_file(decoded) and ext not in PREVIEW_INLINE_EXTENSIONS:
             return jsonify({'error': 'Неподдерживаемый тип файла'}), 403
         directory = app.config['UPLOAD_FOLDER']
@@ -949,12 +955,36 @@ def download_file(filepath: str):
         fname = os.path.basename(decoded)
         # В зависимости от параметра query отдаём как inline или attachment
         dl = request.args.get('download') in ('1', 'true', 'yes')
+        
+        # Для PDF отдаём через утилиту с поддержкой Range и корректными заголовками
+        if ext == 'pdf':
+            # Отдаём PDF напрямую: как inline или attachment по параметру download
+            app.logger.info(f"event=pdf.send.start rid={getattr(g,'rid',None)} path='{decoded}' inline={not dl} range_in='{request.headers.get('Range')}'")
+            resp = send_from_directory(os.path.join(directory, folder) if folder else directory, fname, as_attachment=dl, mimetype='application/pdf')
+            try:
+                disp = 'attachment' if dl else 'inline'
+                from urllib.parse import quote as _quote
+                fname_enc = _quote(fname, safe='')
+                resp.headers['Content-Disposition'] = f"{disp}; filename=\"{fname}\"; filename*=UTF-8''{fname_enc}"
+                # Подсветим поддержку диапазонов
+                if 'Accept-Ranges' not in resp.headers:
+                    resp.headers['Accept-Ranges'] = 'bytes'
+            except Exception:
+                pass
+            return resp
+        
+        # Для остальных файлов — стандартная логика
         resp = send_from_directory(os.path.join(directory, folder) if folder else directory, fname, as_attachment=dl)
         try:
             disp = 'attachment' if dl else 'inline'
-            resp.headers['Content-Disposition'] = f'{disp}; filename="{fname}"'
+            from urllib.parse import quote as _quote
+            fname_enc = _quote(fname, safe='')
+            resp.headers['Content-Disposition'] = f"{disp}; filename=\"{fname}\"; filename*=UTF-8''{fname_enc}"
         except Exception:
-            pass
+            try:
+                resp.headers['Content-Disposition'] = f'{disp}; filename="{fname}"'
+            except Exception:
+                pass
         return resp
     except Exception as e:
         app.logger.exception('download_file error')
@@ -978,6 +1008,11 @@ def view_file(filepath: str):
             return jsonify({'error': 'Файл не найден'}), 404
         ext = os.path.splitext(full_path)[1].lower().lstrip('.')
         # Разрешаем просмотр, если файл поддерживается для индексации ИЛИ безопасен для inline просмотра
+        # Блокируем просмотр для файлов, отмеченных как нечитаемые (unsupported/error/char_count==0)
+        rel_key = decoded
+        meta = file_status.get(rel_key) or file_status.get(os.path.basename(rel_key)) or {}
+        if meta.get('status') in ('unsupported','error') or (meta.get('char_count') == 0):
+            return jsonify({'error': 'Файл недоступен для просмотра'}), 403
         if not allowed_file(full_path) and ext not in PREVIEW_INLINE_EXTENSIONS:
             return jsonify({'error': 'Неподдерживаемый тип файла'}), 403
 
@@ -996,8 +1031,8 @@ def view_file(filepath: str):
         # Для PDF проверяем, какой режим запрошен:
         # - ?mode=inline -> браузерный просмотрщик
         # - по умолчанию -> текстовый режим с подсветкой
-        if ext == 'pdf' and request.args.get('mode') == 'inline':
-            return redirect(url_for('download_file', filepath=decoded))
+        # PDF: режим inline больше не используем для проблемных файлов.
+        # Для явного текста PDF ниже попытаемся извлечь; если пусто — принудительно скачиваем.
 
         def _read_text(path: str) -> str:
             try:
@@ -1038,7 +1073,12 @@ def view_file(filepath: str):
         extracted = ''
         try:
             if ext == 'pdf':
+                app.logger.info(f"event=pdf.extract.start rid={getattr(g,'rid',None)} path='{decoded}'")
+                # Оставляем быстрый, простой путь: пробуем pdfplumber/pypdf/pdfminer/PyMuPDF, если доступны
                 extracted = extract_text_from_pdf(full_path) or ''
+                app.logger.info(
+                    f"event=pdf.extract.end rid={getattr(g,'rid',None)} path='{decoded}' text_len={len(extracted)}"
+                )
             elif ext == 'docx':
                 extracted = extract_text_from_docx(full_path) or ''
             elif ext == 'doc':
@@ -1048,38 +1088,20 @@ def view_file(filepath: str):
         except Exception:
             app.logger.exception('Ошибка извлечения текста для view')
         if not extracted:
-            # Если текст извлечь не удалось: пробуем отдать исходный файл как есть (inline)
-            # Для PDF и веб-форматов браузер часто умеет отрисовать самостоятельно
+            # Если текст извлечь не удалось — не открываем inline, а предлагаем скачать
+            app.logger.warning(
+                f"event=pdf.view.fallback rid={getattr(g,'rid',None)} path='{decoded}' reason=no_text -> force_download"
+            )
+            folder = os.path.dirname(decoded)
+            fname = os.path.basename(decoded)
+            resp = send_from_directory(os.path.join(app.config['UPLOAD_FOLDER'], folder) if folder else app.config['UPLOAD_FOLDER'], fname, as_attachment=True, mimetype='application/pdf')
             try:
-                folder = os.path.dirname(decoded)
-                fname = os.path.basename(decoded)
-                from flask import Response
-                # Попробуем вернуть файл как application/octet-stream с inline Content-Disposition
-                resp = send_from_directory(os.path.join(app.config['UPLOAD_FOLDER'], folder) if folder else app.config['UPLOAD_FOLDER'], fname, as_attachment=False)
-                try:
-                    resp.headers['Content-Disposition'] = f'inline; filename="{fname}"'
-                except Exception:
-                    pass
-                return resp
+                from urllib.parse import quote as _quote
+                fname_enc = _quote(fname, safe='')
+                resp.headers['Content-Disposition'] = f"attachment; filename=\"{fname}\"; filename*=UTF-8''{fname_enc}"
             except Exception:
-                # Дружественное сообщение с предложением скачать
-                msg = 'Не удалось отобразить файл в браузере. Скачать файл?'
-                # Возвращаем лёгкую HTML-страницу с кнопками Да/Нет
-                dl_url = url_for('download_file', filepath=decoded) + ('&' if '?' in url_for('download_file', filepath=decoded) else '?') + 'download=1'
-                back_url = url_for('index')
-                html = f"""
-                <html><head><meta charset='utf-8'><title>Просмотр недоступен</title>
-                <style>body{{font-family:system-ui, -apple-system, Segoe UI, Roboto, Arial; padding:24px;}}
-                .box{{max-width:600px; margin:auto; border:1px solid #eee; border-radius:8px; padding:16px;}}
-                .actions a{{display:inline-block; margin-right:12px; padding:8px 12px; border-radius:6px; text-decoration:none;}}
-                .primary{{background:#2a7; color:#fff;}} .secondary{{background:#eee; color:#333;}}</style></head>
-                <body><div class='box'><h3>Просмотр не доступен</h3><p>{msg}</p>
-                <div class='actions'>
-                <a class='primary' href='{dl_url}' rel='noopener'>Да, скачать</a>
-                <a class='secondary' href='{back_url}' rel='noopener'>Нет, вернуться</a>
-                </div></div></body></html>
-                """
-                return html
+                pass
+            return resp
         return render_template('view.html', title=title, content=Markup(f'<pre style="white-space: pre-wrap;">{Markup.escape(extracted)}</pre>'))
     except Exception as e:
         app.logger.exception('view_file error')
@@ -1185,6 +1207,11 @@ def view_index():
 @app.before_request
 def _start_timer():
     g._start_time = time.time()
+    try:
+        import uuid
+        g.rid = uuid.uuid4().hex
+    except Exception:
+        g.rid = None
 
 @app.after_request
 def _log_request(response):
@@ -1207,6 +1234,9 @@ def clear_results():
 @app.get('/health')
 def health():
     return jsonify({'status': 'ok'}), 200
+
+
+
 
 
 def _ensure_uploads_dir():

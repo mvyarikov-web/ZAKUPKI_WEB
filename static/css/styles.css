@@ -434,6 +434,22 @@ section h2 {
     color: #c0392b !important;
 }
 
+/* Недоступные к чтению файлы: бледно-серая заливка и не кликабельные */
+.file-item.file-disabled {
+    background: #f0f0f0;
+    color: #888;
+}
+.file-item.file-disabled .file-name {
+    color: #888;
+    pointer-events: none;
+    cursor: default;
+    text-decoration: none;
+}
+.file-item.file-disabled:hover {
+    background: #f0f0f0;
+    transform: none;
+}
+
 .file-bad {
     background: #fff5f5;
 }
