@@ -126,6 +126,7 @@ function deleteFile(filename) {
             return rebuildIndexWithProgress().then(() => {
                 showMessage('Индекс перестроен');
                 updateFilesList();
+                refreshSearchResultsIfActive();
             });
         } else {
             showMessage(data.error || 'Ошибка удаления файла');
@@ -158,6 +159,7 @@ function deleteFolder(folderKey, folderDisplayName) {
             // Без дополнительных сообщений: молча перестраиваем индекс и обновляем список файлов
             return rebuildIndexWithProgress().then(() => {
                 updateFilesList();
+                refreshSearchResultsIfActive();
             });
         } else {
             showMessage(data.error || 'Ошибка удаления папки');
@@ -170,6 +172,66 @@ function deleteFolder(folderKey, folderDisplayName) {
 }
 
 // --- Search ---
+function performSearch(terms) {
+    searchResults.style.display = 'block';
+    searchResults.innerHTML = '<div>Поиск...</div>';
+    return fetch('/search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ search_terms: terms })
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.results && data.results.length > 0) {
+            searchResults.innerHTML = '';
+            const t = termsFromInput();
+            data.results.forEach(result => {
+                const item = document.createElement('div');
+                item.className = 'search-result-item';
+                const snippetsHtml = (result.context || []).slice(0, 3).map(s => `<div class="context-snippet">${escapeHtml(s)}</div>`).join('');
+                    // Определяем имя папки (родительский каталог) и делаем имя файла ссылкой, если это реальный файл
+                    const hasPath = !!result.path;
+                    const folderRaw = hasPath && result.path.includes('/') ? result.path.split('/').slice(0, -1).pop() : 'Загруженные файлы';
+                    const folderLabel = escapeHtml(folderRaw || 'Загруженные файлы');
+                    const fileNameHtml = hasPath
+                        ? `<a class="result-file-link" href="/download/${encodeURIComponent(result.path)}" target="_blank" rel="noopener">${escapeHtml(result.filename)}</a>`
+                        : `${escapeHtml(result.filename)}`;
+                    item.innerHTML = `
+                        <div class="result-header">
+                            <span class="result-folder">${folderLabel}</span>
+                            <span class="result-filename" title="Источник: ${result.source || ''}">${fileNameHtml}</span>
+                            <div class="found-terms">
+                                ${result.found_terms.map(term => `<span class="found-term">${term}</span>`).join(' ')}
+                            </div>
+                        </div>
+                        <div class="context-snippets">${snippetsHtml || '<div class="context-empty">Нет сниппетов</div>'}</div>
+                    `;
+                searchResults.appendChild(item);
+            });
+            highlightSnippets(t);
+        } else {
+            searchResults.innerHTML = '<div>Ничего не найдено по этим ключевым словам.</div>';
+        }
+    })
+    .catch(() => {
+        searchResults.innerHTML = '<div>Ошибка поиска.</div>';
+    });
+}
+
+function refreshSearchResultsIfActive() {
+    const terms = searchInput.value.trim();
+    if (!terms) {
+        // если запрос пуст — просто скрываем блок
+        searchResults.style.display = 'none';
+        searchResults.innerHTML = '';
+        return;
+    }
+    if (searchResults && searchResults.style.display !== 'none') {
+        // пере запускаем поиск, чтобы убрать удалённые документы из выдачи
+        performSearch(terms);
+    }
+}
+
 searchBtn.addEventListener('click', () => {
     const terms = searchInput.value.trim();
     if (!terms) {
@@ -185,44 +247,7 @@ searchBtn.addEventListener('click', () => {
     // Перед поиском — гарантируем, что индекс свежий
     searchResults.style.display = 'block';
     searchResults.innerHTML = '<div>Обновляем индекс...</div>';
-    rebuildIndexWithProgress()
-    .then(() => {
-        searchResults.innerHTML = '<div>Поиск...</div>';
-        return fetch('/search', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ search_terms: terms })
-        });
-    })
-    .then(res => res.json())
-    .then(data => {
-        if (data.results && data.results.length > 0) {
-            searchResults.innerHTML = '';
-            const terms = termsFromInput();
-            data.results.forEach(result => {
-                const item = document.createElement('div');
-                item.className = 'search-result-item';
-                const snippetsHtml = (result.context || []).slice(0, 3).map(s => `<div class="context-snippet">${escapeHtml(s)}</div>`).join('');
-                item.innerHTML = `
-                    <div class="result-header">
-                        <span class="result-filename" title="Источник: ${result.source || ''}">${result.filename}</span>
-                        <div class="found-terms">
-                            ${result.found_terms.map(term => `<span class="found-term">${term}</span>`).join(' ')}
-                        </div>
-                    </div>
-                    <div class="context-snippets">${snippetsHtml || '<div class="context-empty">Нет сниппетов</div>'}</div>
-                `;
-                searchResults.appendChild(item);
-            });
-            // Подсветка терминов в сниппетах
-            highlightSnippets(terms);
-        } else {
-            searchResults.innerHTML = '<div>Ничего не найдено по этим ключевым словам.</div>';
-        }
-    })
-    .catch(() => {
-        searchResults.innerHTML = '<div>Ошибка поиска.</div>';
-    });
+    rebuildIndexWithProgress().then(() => performSearch(terms));
 });
 
 // (Кнопка очистки результатов удалена — очистка выполняется при пустом поисковом запросе)
