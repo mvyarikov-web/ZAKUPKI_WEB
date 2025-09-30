@@ -366,11 +366,15 @@ def files_json():
     """JSON-список файлов в uploads, включая виртуальное содержимое архивов (FR-001, FR-009)."""
     uploads = current_app.config['UPLOAD_FOLDER']
     if not os.path.exists(uploads):
-        return jsonify({'folders': {}, 'total_files': 0, 'archives': []})
+        return jsonify({'folders': {}, 'total_files': 0, 'archives': [], 'file_statuses': {}})
     
     files_by_folder = {}
     archives_info = []
     total_files = 0
+    
+    # Получаем статусы всех файлов
+    files_state = _get_files_state()
+    all_statuses = files_state.get_file_status()
     
     for root, dirs, files in os.walk(uploads):
         rel_dir = os.path.relpath(root, uploads)
@@ -428,5 +432,6 @@ def files_json():
     return jsonify({
         'folders': files_by_folder,
         'total_files': total_files,
-        'archives': archives_info
+        'archives': archives_info,
+        'file_statuses': all_statuses
     })

@@ -9,6 +9,7 @@ const filesList = document.getElementById('filesList');
 const fileCount = document.getElementById('fileCount');
 const searchInput = document.getElementById('searchInput');
 const searchBtn = document.getElementById('searchBtn');
+const clearAllBtn = document.getElementById('clearAllBtn');
 // Кнопки построения индекса нет — индекс строится автоматически
 const searchResults = document.getElementById('searchResults');
 const messageModal = document.getElementById('messageModal');
@@ -114,7 +115,7 @@ function updateFilesList() {
     fetch('/files_json')
         .then(res => res.json())
         .then(data => {
-            const { folders = {}, archives = [] } = data;
+            const { folders = {}, archives = [], file_statuses = {} } = data;
             
             // Создаём карту архивов для быстрого доступа
             const archivesMap = new Map();
@@ -146,6 +147,9 @@ function updateFilesList() {
                 folderDiv.className = 'folder-container';
                 folderDiv.id = folderId;
                 
+                // Вычисляем агрегированный статус для папки
+                const folderStatus = calculateFolderStatus(files, file_statuses, archivesMap);
+                
                 const headerDiv = document.createElement('div');
                 headerDiv.className = 'folder-header';
                 headerDiv.onclick = () => toggleFolder(folderName);
@@ -154,6 +158,7 @@ function updateFilesList() {
                     <span class="folder-icon">📁</span>
                     <span class="folder-name">${escapeHtml(folderName)}</span>
                     <span class="file-count-badge">${files.length}</span>
+                    <span class="traffic-light traffic-light-${folderStatus}" title="Статус: ${folderStatus}"></span>
                     <button class="delete-folder-btn" title="Удалить папку" onclick="event.stopPropagation(); deleteFolder('${escapeHtml(folderKey)}', '${escapeHtml(folderName)}')">
                         <svg class="icon-trash" viewBox="0 0 24 24" aria-hidden="true">
                             <path d="M9 3h6a1 1 0 0 1 1 1v2h4v2h-1v12a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V8H4V6h4V4a1 1 0 0 1 1-1zm1 3h4V5h-4v1zM7 8v12h10V8H7zm3 3h2v7h-2v-7zm4 0h2v7h-2v-7z"></path>
@@ -168,7 +173,7 @@ function updateFilesList() {
                 
                 // Добавляем файлы
                 files.forEach(file => {
-                    const fileDiv = renderFileItem(file, archivesMap);
+                    const fileDiv = renderFileItem(file, archivesMap, file_statuses);
                     contentDiv.appendChild(fileDiv);
                 });
                 
@@ -205,16 +210,34 @@ function updateFilesList() {
         });
 }
 
-function renderFileItem(file, archivesMap) {
+function renderFileItem(file, archivesMap, file_statuses) {
     // FR-001, FR-009: Рендер элемента файла или архива
     const fileDiv = document.createElement('div');
     fileDiv.className = 'file-item';
+    
+    // Получаем статус файла
+    const fileStatus = file_statuses[file.path] || {};
+    const status = fileStatus.status || 'not_checked';
+    const charCount = fileStatus.char_count;
+    
+    // Определяем цвет светофора
+    let trafficLight = 'gray'; // по умолчанию
+    if (status === 'contains_keywords') {
+        trafficLight = 'green';
+    } else if (status === 'no_keywords') {
+        trafficLight = 'red';
+    } else if (status === 'error' || status === 'unsupported') {
+        trafficLight = 'gray';
+    }
     
     // Проверяем, является ли файл архивом
     if (file.is_archive && archivesMap.has(file.path)) {
         // Это архив - отображаем как раскрываемую папку
         const archiveContents = archivesMap.get(file.path);
         fileDiv.className = 'file-item archive-item';
+        
+        // Вычисляем агрегированный статус для архива
+        const archiveStatus = calculateArchiveStatus(archiveContents, file_statuses);
         
         const archiveHeaderDiv = document.createElement('div');
         archiveHeaderDiv.className = 'file-info archive-header';
@@ -228,6 +251,7 @@ function renderFileItem(file, archivesMap) {
                 <span class="file-size">${(file.size / 1024).toFixed(1)} KB</span>
                 <span class="archive-badge">Архив (${archiveContents.length} элементов)</span>
             </div>
+            <span class="traffic-light traffic-light-${archiveStatus}" title="Статус архива: ${archiveStatus}"></span>
             <span class="toggle-icon archive-toggle">▶</span>
         `;
         
@@ -270,14 +294,22 @@ function renderFileItem(file, archivesMap) {
                 const entryDiv = document.createElement('div');
                 entryDiv.className = 'file-item';
                 const icon = entry.is_archive ? '📦' : '📄';
+                
+                // Получаем статус для файла из архива
+                const entryStatus = file_statuses[entry.path] || {};
+                const entryTrafficLight = getTrafficLightColor(entryStatus.status || 'not_checked');
+                const entryCharCount = entryStatus.char_count;
+                
                 entryDiv.innerHTML = `
                     <div class="file-info">
                         <span class="file-icon">${icon}</span>
                         <div class="file-details">
                             <a class="file-name result-file-link" href="/download/${encodeURIComponent(entry.path)}" target="_blank" rel="noopener">${escapeHtml(entry.name)}</a>
                             <span class="file-size">${(entry.size / 1024).toFixed(1)} KB</span>
+                            ${entryCharCount !== undefined ? `<span class="file-chars">Символов: ${entryCharCount}</span>` : ''}
                         </div>
                     </div>
+                    <span class="traffic-light traffic-light-${entryTrafficLight}" title="Статус: ${entryStatus.status || 'not_checked'}"></span>
                 `;
                 archiveContentDiv.appendChild(entryDiv);
             }
@@ -294,9 +326,12 @@ function renderFileItem(file, archivesMap) {
                 <div class="file-details">
                     <a class="file-name result-file-link" href="/download/${encodeURIComponent(file.path)}" target="_blank" rel="noopener">${escapeHtml(file.name)}</a>
                     <span class="file-size">${(file.size / 1024).toFixed(1)} KB</span>
+                    ${charCount !== undefined ? `<span class="file-chars${charCount === 0 ? ' text-danger' : ''}">Символов: ${charCount}</span>` : ''}
+                    ${fileStatus.error ? `<span class="file-error text-danger">${escapeHtml(fileStatus.error)}</span>` : ''}
                 </div>
             </div>
             <div class="file-status">
+                <span class="traffic-light traffic-light-${trafficLight}" title="Статус: ${status}"></span>
                 <button class="delete-btn" title="Удалить файл" onclick="deleteFile('${escapeHtml(file.path)}')">
                     <svg class="icon-trash" viewBox="0 0 24 24" aria-hidden="true">
                         <path d="M9 3h6a1 1 0 0 1 1 1v2h4v2h-1v12a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V8H4V6h4V4a1 1 0 0 1 1-1zm1 3h4V5h-4v1zM7 8v12h10V8H7zm3 3h2v7h-2v-7zm4 0h2v7h-2v-7z"></path>
@@ -322,6 +357,72 @@ function toggleArchive(archivePath) {
             toggleIcon.textContent = isHidden ? '▼' : '▶';
         }
     }
+}
+
+// Helper function to get traffic light color based on status
+function getTrafficLightColor(status) {
+    if (status === 'contains_keywords') return 'green';
+    if (status === 'no_keywords') return 'red';
+    if (status === 'error' || status === 'unsupported') return 'gray';
+    return 'gray'; // not_checked or unknown
+}
+
+// Calculate folder status based on files inside
+function calculateFolderStatus(files, file_statuses, archivesMap) {
+    let hasGreen = false;
+    let hasRed = false;
+    
+    for (const file of files) {
+        const fileStatus = file_statuses[file.path] || {};
+        const status = fileStatus.status || 'not_checked';
+        
+        if (status === 'contains_keywords') {
+            hasGreen = true;
+        } else if (status === 'no_keywords') {
+            hasRed = true;
+        }
+        
+        // Если это архив, проверяем его содержимое
+        if (file.is_archive && archivesMap.has(file.path)) {
+            const archiveContents = archivesMap.get(file.path);
+            for (const entry of archiveContents) {
+                const entryStatus = file_statuses[entry.path] || {};
+                if (entryStatus.status === 'contains_keywords') {
+                    hasGreen = true;
+                } else if (entryStatus.status === 'no_keywords') {
+                    hasRed = true;
+                }
+            }
+        }
+    }
+    
+    // Логика: зелёный если есть хотя бы одно совпадение, красный если все проверены и нет совпадений, серый иначе
+    if (hasGreen) return 'green';
+    if (hasRed) return 'red';
+    return 'gray';
+}
+
+// Calculate archive status based on its contents
+function calculateArchiveStatus(archiveContents, file_statuses) {
+    let hasGreen = false;
+    let hasRed = false;
+    
+    for (const entry of archiveContents) {
+        if (entry.status === 'error' || entry.is_virtual_folder) continue;
+        
+        const entryStatus = file_statuses[entry.path] || {};
+        const status = entryStatus.status || 'not_checked';
+        
+        if (status === 'contains_keywords') {
+            hasGreen = true;
+        } else if (status === 'no_keywords') {
+            hasRed = true;
+        }
+    }
+    
+    if (hasGreen) return 'green';
+    if (hasRed) return 'red';
+    return 'gray';
 }
 
 // --- Delete File ---
@@ -472,6 +573,37 @@ searchBtn.addEventListener('click', () => {
     searchResults.style.display = 'block';
     performSearch(terms);
 });
+
+// Clear All button handler
+if (clearAllBtn) {
+    clearAllBtn.addEventListener('click', () => {
+        // Очищаем поисковую строку
+        searchInput.value = '';
+        
+        // Очищаем результаты поиска
+        searchResults.style.display = 'none';
+        searchResults.innerHTML = '';
+        
+        // Очищаем состояние на сервере
+        fetch('/clear_results', { method: 'POST', headers: { 'Content-Type': 'application/json' } })
+            .then(() => {
+                // Удаляем подсветку из сниппетов (если есть)
+                document.querySelectorAll('.highlight').forEach(el => {
+                    const text = el.textContent;
+                    el.replaceWith(document.createTextNode(text));
+                });
+                
+                // Обновляем список файлов (сбросит светофоры)
+                updateFilesList();
+                refreshIndexStatus();
+                
+                // Очищаем localStorage
+                try {
+                    localStorage.removeItem('last_search_terms');
+                } catch (e) {}
+            });
+    });
+}
 
 // (Кнопка очистки результатов удалена — очистка выполняется при пустом поисковом запросе)
 
