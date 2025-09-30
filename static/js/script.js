@@ -24,7 +24,7 @@ selectFolderBtn.addEventListener('click', () => {
     folderInput.type = 'file';
     folderInput.webkitdirectory = true;
     folderInput.multiple = true;
-    folderInput.accept = '.pdf,.doc,.docx,.xls,.xlsx,.txt,.html,.htm,.csv,.tsv,.xml,.json';
+    folderInput.accept = '.pdf,.doc,.docx,.xls,.xlsx,.txt,.html,.htm,.csv,.tsv,.xml,.json,.zip,.rar';
     folderInput.style.display = 'none';
     folderInput.addEventListener('change', handleFiles);
     document.body.appendChild(folderInput);
@@ -60,7 +60,7 @@ function handleFiles(e) {
     progressText.textContent = '0%';
 
     const formData = new FormData();
-    const allowedExt = new Set(['pdf','doc','docx','xls','xlsx','txt','html','htm','csv','tsv','xml','json']);
+    const allowedExt = new Set(['pdf','doc','docx','xls','xlsx','txt','html','htm','csv','tsv','xml','json','zip','rar']);
     let skipped = 0;
     for (let i = 0; i < files.length; i++) {
         const f = files[i];
