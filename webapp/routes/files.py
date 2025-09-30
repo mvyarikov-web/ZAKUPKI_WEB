@@ -210,6 +210,19 @@ def download_file(filepath: str):
         fname = os.path.basename(decoded_filepath)
         ext = os.path.splitext(fname)[1].lower().lstrip('.')
         
+        # Блокируем скачивание неподдерживаемых форматов (кроме PREVIEW_INLINE_EXTENSIONS)
+        if not allowed_file(decoded_filepath, current_app.config['ALLOWED_EXTENSIONS']) and ext not in current_app.config.get('PREVIEW_INLINE_EXTENSIONS', set()):
+            return jsonify({'error': 'Неподдерживаемый тип файла'}), 403
+        
+        # Блокируем файлы с проблемами (unsupported/error/char_count==0)
+        files_state = _get_files_state()
+        meta = files_state.get_file_status(decoded_filepath)
+        if not meta:
+            # Попробуем найти по basename
+            meta = files_state.get_file_status(fname)
+        if meta.get('status') in ('unsupported', 'error') or (meta.get('char_count') == 0):
+            return jsonify({'error': 'Файл недоступен для скачивания'}), 403
+        
         # Определяем, можно ли отображать inline
         inline = ext in current_app.config.get('PREVIEW_INLINE_EXTENSIONS', set())
         
