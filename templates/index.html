@@ -10,7 +10,7 @@
     <div class="container">
         <header>
             <h1>Анализ Документов Закупки</h1>
-            <p>Поддерживаемые форматы: PDF, DOC, DOCX, XLS, XLSX, TXT, HTML, CSV, XML, JSON</p>
+            <p>Поддерживаемые форматы: PDF, DOC, DOCX, XLS, XLSX, TXT, HTML, CSV, XML, JSON, ZIP, RAR</p>
         </header>
 
         <main>
@@ -93,7 +93,7 @@
                                         {% if is_unreadable %}
                                         <span class="file-name" title="Файл недоступен для просмотра/скачивания">{{ file.name }}</span>
                                         {% else %}
-                                        <a class="file-name result-file-link" href="{{ url_for('view_file', filepath=file.path) }}{% if last_search_terms %}?q={{ last_search_terms|urlencode }}{% endif %}" target="_blank" rel="noopener">{{ file.name }}</a>
+                                        <a class="file-name result-file-link" href="{{ url_for('pages.view_file', filepath=file.path) }}{% if last_search_terms %}?q={{ last_search_terms|urlencode }}{% endif %}" target="_blank" rel="noopener">{{ file.name }}</a>
                                         {% endif %}
                                         <span class="file-size">{{ (file.size / 1024)|round(1) }} KB</span>
                                         {% if char_count is not none %}

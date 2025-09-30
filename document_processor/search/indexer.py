@@ -50,28 +50,51 @@ class Indexer:
                     abs_path = os.path.join(dirpath, name)
                     rel_path = os.path.normpath(os.path.join(rel_dir, name)) if rel_dir != "." else name
                     if ext in {"zip", "rar"}:
-                        for v_rel, v_abs, v_source in self._iter_archive(abs_path, rel_path, ext):
+                        for v_rel, v_abs, v_source in self._iter_archive(abs_path, rel_path, ext, current_depth=0):
                             yield v_rel, v_abs, v_source
                     else:
                         yield rel_path, abs_path, rel_path
 
-    def _iter_archive(self, archive_path: str, rel_path: str, kind: str) -> Iterable[Tuple[str, str, str]]:
+    def _iter_archive(self, archive_path: str, rel_path: str, kind: str, current_depth: int = 0) -> Iterable[Tuple[str, str, str]]:
         # Extract supported files from archive into temp files and yield paths
+        # FR-008: Поддержка вложенных архивов с учетом archive_depth
         entries: List[Tuple[str, str, str]] = []
+        
+        # Проверяем глубину вложенности архивов
+        if current_depth > self.archive_depth:
+            self._log.info("Пропуск вложенного архива (превышена глубина %d): %s", self.archive_depth, rel_path)
+            return []
+        
         try:
             if kind == "zip":
-                with zipfile.ZipFile(archive_path) as z:
-                    for zi in z.infolist():
-                        if zi.is_dir():
-                            continue
-                        inner_name = zi.filename
-                        ext = inner_name.rsplit(".", 1)[-1].lower() if "." in inner_name else ""
-                        if ext and ext in SUPPORTED_EXT and ext not in {"zip", "rar"}:
-                            data = z.read(zi)
-                            tmp_path = self._write_temp_file(data, suffix=f".{ext}")
-                            v_rel = f"{rel_path}!/{inner_name}"
-                            v_source = f"zip://{rel_path}!/{inner_name}"
-                            entries.append((v_rel, tmp_path, v_source))
+                try:
+                    with zipfile.ZipFile(archive_path) as z:
+                        for zi in z.infolist():
+                            if zi.is_dir():
+                                continue
+                            inner_name = zi.filename
+                            ext = inner_name.rsplit(".", 1)[-1].lower() if "." in inner_name else ""
+                            if ext and ext in SUPPORTED_EXT:
+                                # FR-008: Обработка вложенных архивов
+                                if ext in {"zip", "rar"} and current_depth < self.archive_depth:
+                                    data = z.read(zi)
+                                    tmp_path = self._write_temp_file(data, suffix=f".{ext}")
+                                    nested_rel = f"{rel_path}!/{inner_name}"
+                                    # Рекурсивно обрабатываем вложенный архив
+                                    for nested_v_rel, nested_v_abs, nested_v_source in self._iter_archive(
+                                        tmp_path, nested_rel, ext, current_depth + 1
+                                    ):
+                                        entries.append((nested_v_rel, nested_v_abs, nested_v_source))
+                                elif ext not in {"zip", "rar"}:
+                                    # Обычный файл внутри архива
+                                    data = z.read(zi)
+                                    tmp_path = self._write_temp_file(data, suffix=f".{ext}")
+                                    v_rel = f"{rel_path}!/{inner_name}"
+                                    v_source = f"zip://{rel_path}!/{inner_name}"
+                                    entries.append((v_rel, tmp_path, v_source))
+                except zipfile.BadZipFile:
+                    self._log.warning("Повреждённый ZIP архив: %s", rel_path)
+                    return []
             elif kind == "rar":
                 try:
                     import rarfile  # type: ignore
@@ -81,20 +104,38 @@ class Indexer:
                                 continue
                             inner_name = ri.filename
                             ext = inner_name.rsplit(".", 1)[-1].lower() if "." in inner_name else ""
-                            if ext and ext in SUPPORTED_EXT and ext not in {"zip", "rar"}:
-                                with rf.open(ri) as rfp:
-                                    data = rfp.read()
-                                tmp_path = self._write_temp_file(data, suffix=f".{ext}")
-                                v_rel = f"{rel_path}!/{inner_name}"
-                                v_source = f"rar://{rel_path}!/{inner_name}"
-                                entries.append((v_rel, tmp_path, v_source))
+                            if ext and ext in SUPPORTED_EXT:
+                                # FR-008: Обработка вложенных архивов
+                                if ext in {"zip", "rar"} and current_depth < self.archive_depth:
+                                    with rf.open(ri) as rfp:
+                                        data = rfp.read()
+                                    tmp_path = self._write_temp_file(data, suffix=f".{ext}")
+                                    nested_rel = f"{rel_path}!/{inner_name}"
+                                    # Рекурсивно обрабатываем вложенный архив
+                                    for nested_v_rel, nested_v_abs, nested_v_source in self._iter_archive(
+                                        tmp_path, nested_rel, ext, current_depth + 1
+                                    ):
+                                        entries.append((nested_v_rel, nested_v_abs, nested_v_source))
+                                elif ext not in {"zip", "rar"}:
+                                    # Обычный файл внутри архива
+                                    with rf.open(ri) as rfp:
+                                        data = rfp.read()
+                                    tmp_path = self._write_temp_file(data, suffix=f".{ext}")
+                                    v_rel = f"{rel_path}!/{inner_name}"
+                                    v_source = f"rar://{rel_path}!/{inner_name}"
+                                    entries.append((v_rel, tmp_path, v_source))
                 except Exception:
-                    # rar unsupported on system: skip gracefully
+                    # rar unsupported on system or corrupted: skip gracefully
                     self._log.warning("RAR не поддержан системой или ошибка чтения: %s", rel_path)
                     return []
         except Exception:
             self._log.exception("Ошибка при чтении архива: %s", rel_path)
             return []
+        
+        # FR-007: Логирование событий индексации архивов
+        if entries:
+            self._log.info("Обработан архив %s: извлечено %d файлов (глубина %d)", rel_path, len(entries), current_depth)
+        
         return entries
 
     def _write_temp_file(self, data: bytes, suffix: str = "") -> str:
