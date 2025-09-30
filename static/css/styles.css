@@ -589,3 +589,47 @@ section h2 {
         margin-top: 10px;
     }
 }
+/* Стили для архивов (FR-001, FR-009) */
+.archive-item {
+    border-left: 3px solid #9b59b6;
+}
+
+.archive-header {
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.archive-header:hover {
+    background: #f8f9fa;
+}
+
+.archive-toggle {
+    font-size: 12px;
+    color: #6c757d;
+    margin-left: 8px;
+    transition: transform 0.3s ease;
+}
+
+.archive-content {
+    padding-left: 30px;
+    margin-top: 10px;
+}
+
+.archive-badge {
+    background: #9b59b6;
+    color: white;
+    padding: 3px 8px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+.virtual-folder {
+    background: #f8f9fa;
+    border-left: 2px solid #95a5a6;
+}
+
+.virtual-folder .file-name {
+    color: #6c757d;
+    font-weight: 500;
+}

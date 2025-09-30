@@ -110,25 +110,218 @@ function handleFiles(e) {
 
 // --- Update Files List ---
 function updateFilesList() {
-    fetch('/')
-        .then(res => res.text())
-        .then(html => {
-            // Парсим HTML и обновляем список файлов
-            const parser = new DOMParser();
-            const doc = parser.parseFromString(html, 'text/html');
-            const newFilesList = doc.getElementById('filesList');
-            const newFileCount = doc.getElementById('fileCount');
-            if (newFilesList && filesList) {
-                filesList.innerHTML = newFilesList.innerHTML;
-                // Восстанавливаем состояния папок после обновления
-                setTimeout(restoreFolderStates, 100);
+    // FR-001, FR-009: Обновлённая версия с поддержкой архивов как виртуальных папок
+    fetch('/files_json')
+        .then(res => res.json())
+        .then(data => {
+            const { folders = {}, archives = [] } = data;
+            
+            // Создаём карту архивов для быстрого доступа
+            const archivesMap = new Map();
+            archives.forEach(archive => {
+                archivesMap.set(archive.archive_path, archive.contents);
+            });
+            
+            // Сохраняем состояния открытых/закрытых папок
+            const folderStates = {};
+            document.querySelectorAll('.folder-container').forEach(container => {
+                const id = container.id;
+                const content = container.querySelector('.folder-content');
+                if (content) {
+                    folderStates[id] = content.style.display !== 'none';
+                }
+            });
+            
+            // Очищаем список
+            filesList.innerHTML = '';
+            
+            // Отображаем папки
+            Object.keys(folders).sort().forEach(folderKey => {
+                const files = folders[folderKey];
+                const folderName = folderKey === 'root' ? 'Загруженные файлы' : folderKey;
+                const folderId = `folder-${folderName}`;
+                const isExpanded = folderStates[folderId] !== false; // По умолчанию развёрнуты
+                
+                const folderDiv = document.createElement('div');
+                folderDiv.className = 'folder-container';
+                folderDiv.id = folderId;
+                
+                const headerDiv = document.createElement('div');
+                headerDiv.className = 'folder-header';
+                headerDiv.onclick = () => toggleFolder(folderName);
+                
+                headerDiv.innerHTML = `
+                    <span class="folder-icon">📁</span>
+                    <span class="folder-name">${escapeHtml(folderName)}</span>
+                    <span class="file-count-badge">${files.length}</span>
+                    <button class="delete-folder-btn" title="Удалить папку" onclick="event.stopPropagation(); deleteFolder('${escapeHtml(folderKey)}', '${escapeHtml(folderName)}')">
+                        <svg class="icon-trash" viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M9 3h6a1 1 0 0 1 1 1v2h4v2h-1v12a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V8H4V6h4V4a1 1 0 0 1 1-1zm1 3h4V5h-4v1zM7 8v12h10V8H7zm3 3h2v7h-2v-7zm4 0h2v7h-2v-7z"></path>
+                        </svg>
+                    </button>
+                    <span class="toggle-icon">${isExpanded ? '▼' : '▶'}</span>
+                `;
+                
+                const contentDiv = document.createElement('div');
+                contentDiv.className = 'folder-content';
+                contentDiv.style.display = isExpanded ? 'block' : 'none';
+                
+                // Добавляем файлы
+                files.forEach(file => {
+                    const fileDiv = renderFileItem(file, archivesMap);
+                    contentDiv.appendChild(fileDiv);
+                });
+                
+                folderDiv.appendChild(headerDiv);
+                folderDiv.appendChild(contentDiv);
+                filesList.appendChild(folderDiv);
+            });
+            
+            // Обновляем количество файлов
+            if (fileCount) {
+                fileCount.textContent = data.total_files || 0;
             }
-            if (newFileCount && fileCount) fileCount.textContent = newFileCount.textContent;
-            // Также обновим статус индекса, если он есть на странице
+            
+            // Обновляем статус индекса
             refreshIndexStatus();
-            // Применяем текущие термы к ссылкам просмотра в списке файлов
+            
+            // Применяем термины поиска к ссылкам
             applyQueryToViewLinks();
+        })
+        .catch(err => {
+            console.error('Ошибка загрузки списка файлов:', err);
+            // Fallback: используем старый метод
+            fetch('/')
+                .then(res => res.text())
+                .then(html => {
+                    const parser = new DOMParser();
+                    const doc = parser.parseFromString(html, 'text/html');
+                    const newFilesList = doc.getElementById('filesList');
+                    if (newFilesList && filesList) {
+                        filesList.innerHTML = newFilesList.innerHTML;
+                        setTimeout(restoreFolderStates, 100);
+                    }
+                });
         });
+}
+
+function renderFileItem(file, archivesMap) {
+    // FR-001, FR-009: Рендер элемента файла или архива
+    const fileDiv = document.createElement('div');
+    fileDiv.className = 'file-item';
+    
+    // Проверяем, является ли файл архивом
+    if (file.is_archive && archivesMap.has(file.path)) {
+        // Это архив - отображаем как раскрываемую папку
+        const archiveContents = archivesMap.get(file.path);
+        fileDiv.className = 'file-item archive-item';
+        
+        const archiveHeaderDiv = document.createElement('div');
+        archiveHeaderDiv.className = 'file-info archive-header';
+        archiveHeaderDiv.style.cursor = 'pointer';
+        archiveHeaderDiv.onclick = () => toggleArchive(file.path);
+        
+        archiveHeaderDiv.innerHTML = `
+            <span class="folder-icon">📦</span>
+            <div class="file-details">
+                <span class="file-name">${escapeHtml(file.name)}</span>
+                <span class="file-size">${(file.size / 1024).toFixed(1)} KB</span>
+                <span class="archive-badge">Архив (${archiveContents.length} элементов)</span>
+            </div>
+            <span class="toggle-icon archive-toggle">▶</span>
+        `;
+        
+        const archiveContentDiv = document.createElement('div');
+        archiveContentDiv.className = 'archive-content';
+        archiveContentDiv.id = `archive-${file.path.replace(/[^a-zA-Z0-9]/g, '-')}`;
+        archiveContentDiv.style.display = 'none';
+        archiveContentDiv.style.marginLeft = '30px';
+        
+        // Добавляем содержимое архива
+        archiveContents.forEach(entry => {
+            if (entry.status === 'error') {
+                const errorDiv = document.createElement('div');
+                errorDiv.className = 'file-item file-disabled';
+                errorDiv.innerHTML = `
+                    <div class="file-info">
+                        <span class="file-icon">⚠️</span>
+                        <div class="file-details">
+                            <span class="file-name">${escapeHtml(entry.name || file.name)}</span>
+                            <span class="file-error text-danger">${escapeHtml(entry.error || 'Ошибка')}</span>
+                        </div>
+                    </div>
+                `;
+                archiveContentDiv.appendChild(errorDiv);
+            } else if (entry.is_virtual_folder) {
+                // Виртуальная папка внутри архива
+                const folderDiv = document.createElement('div');
+                folderDiv.className = 'file-item virtual-folder';
+                folderDiv.innerHTML = `
+                    <div class="file-info">
+                        <span class="folder-icon">📁</span>
+                        <div class="file-details">
+                            <span class="file-name">${escapeHtml(entry.name)}</span>
+                        </div>
+                    </div>
+                `;
+                archiveContentDiv.appendChild(folderDiv);
+            } else {
+                // Обычный файл внутри архива
+                const entryDiv = document.createElement('div');
+                entryDiv.className = 'file-item';
+                const icon = entry.is_archive ? '📦' : '📄';
+                entryDiv.innerHTML = `
+                    <div class="file-info">
+                        <span class="file-icon">${icon}</span>
+                        <div class="file-details">
+                            <a class="file-name result-file-link" href="/download/${encodeURIComponent(entry.path)}" target="_blank" rel="noopener">${escapeHtml(entry.name)}</a>
+                            <span class="file-size">${(entry.size / 1024).toFixed(1)} KB</span>
+                        </div>
+                    </div>
+                `;
+                archiveContentDiv.appendChild(entryDiv);
+            }
+        });
+        
+        fileDiv.appendChild(archiveHeaderDiv);
+        fileDiv.appendChild(archiveContentDiv);
+    } else {
+        // Обычный файл
+        const icon = file.is_archive ? '📦' : '📄';
+        fileDiv.innerHTML = `
+            <div class="file-info">
+                <span class="file-icon">${icon}</span>
+                <div class="file-details">
+                    <a class="file-name result-file-link" href="/download/${encodeURIComponent(file.path)}" target="_blank" rel="noopener">${escapeHtml(file.name)}</a>
+                    <span class="file-size">${(file.size / 1024).toFixed(1)} KB</span>
+                </div>
+            </div>
+            <div class="file-status">
+                <button class="delete-btn" title="Удалить файл" onclick="deleteFile('${escapeHtml(file.path)}')">
+                    <svg class="icon-trash" viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M9 3h6a1 1 0 0 1 1 1v2h4v2h-1v12a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V8H4V6h4V4a1 1 0 0 1 1-1zm1 3h4V5h-4v1zM7 8v12h10V8H7zm3 3h2v7h-2v-7zm4 0h2v7h-2v-7z"></path>
+                    </svg>
+                </button>
+            </div>
+        `;
+    }
+    
+    return fileDiv;
+}
+
+function toggleArchive(archivePath) {
+    // FR-009: Переключение отображения содержимого архива
+    const archiveId = `archive-${archivePath.replace(/[^a-zA-Z0-9]/g, '-')}`;
+    const contentDiv = document.getElementById(archiveId);
+    const toggleIcon = event.currentTarget.querySelector('.archive-toggle');
+    
+    if (contentDiv) {
+        const isHidden = contentDiv.style.display === 'none';
+        contentDiv.style.display = isHidden ? 'block' : 'none';
+        if (toggleIcon) {
+            toggleIcon.textContent = isHidden ? '▼' : '▶';
+        }
+    }
 }
 
 // --- Delete File ---
