@@ -198,9 +198,15 @@ def delete_folder(folder_path):
 
 @files_bp.get('/download/<path:filepath>')
 def download_file(filepath: str):
-    """Безопасная выдача файла из uploads."""
+    """Безопасная выдача файла из uploads, включая файлы из архивов (FR-005, FR-010)."""
     try:
         decoded_filepath = unquote(filepath)
+        
+        # Проверяем, является ли путь виртуальным (из архива)
+        if is_archive_path(decoded_filepath):
+            return download_from_archive(decoded_filepath)
+        
+        # Обычный файл
         if not is_safe_subpath(current_app.config['UPLOAD_FOLDER'], decoded_filepath):
             return jsonify({'error': 'Недопустимый путь'}), 400
         
@@ -271,6 +277,89 @@ def download_file(filepath: str):
         current_app.logger.exception('download_file error')
         return jsonify({'error': str(e)}), 500
 
+
+def download_from_archive(virtual_path: str):
+    """Извлекает и отдаёт файл из архива по виртуальному пути."""
+    import zipfile
+    import io
+    from webapp.services.archives import parse_virtual_path, sanitize_archive_path, get_archive_root
+    
+    try:
+        # Парсим виртуальный путь
+        scheme, segments = parse_virtual_path(virtual_path)
+        if not segments:
+            return jsonify({'error': 'Некорректный виртуальный путь'}), 400
+        
+        # Извлекаем корневой архив
+        archive_name = get_archive_root(virtual_path)
+        if not archive_name:
+            return jsonify({'error': 'Не удалось определить архив'}), 400
+        
+        # Проверяем безопасность пути к архиву
+        if not is_safe_subpath(current_app.config['UPLOAD_FOLDER'], archive_name):
+            return jsonify({'error': 'Недопустимый путь к архиву'}), 400
+        
+        archive_full_path = os.path.join(current_app.config['UPLOAD_FOLDER'], archive_name)
+        if not os.path.exists(archive_full_path):
+            return jsonify({'error': 'Архив не найден'}), 404
+        
+        # Извлекаем путь внутри архива из виртуального пути
+        # Для простоты берём последний сегмент после последнего !/
+        inner_path = virtual_path.split('!/')[-1]
+        inner_path = sanitize_archive_path(inner_path)
+        
+        # Извлекаем файл из архива
+        data = None
+        filename = os.path.basename(inner_path)
+        
+        if scheme == 'zip':
+            try:
+                with zipfile.ZipFile(archive_full_path, 'r') as z:
+                    # Ищем файл в архиве (учитываем возможные вложенные архивы)
+                    if inner_path in z.namelist():
+                        data = z.read(inner_path)
+                    else:
+                        # Попробуем найти с учётом нормализации путей
+                        for name in z.namelist():
+                            if name.endswith(inner_path) or name == inner_path:
+                                data = z.read(name)
+                                break
+            except zipfile.BadZipFile:
+                return jsonify({'error': 'Повреждённый архив'}), 400
+        elif scheme == 'rar':
+            try:
+                import rarfile  # type: ignore
+                with rarfile.RarFile(archive_full_path, 'r') as rf:
+                    if inner_path in rf.namelist():
+                        with rf.open(inner_path) as rfp:
+                            data = rfp.read()
+                    else:
+                        for name in rf.namelist():
+                            if name.endswith(inner_path) or name == inner_path:
+                                with rf.open(name) as rfp:
+                                    data = rfp.read()
+                                break
+            except Exception as e:
+                return jsonify({'error': f'Ошибка чтения RAR: {str(e)}'}), 400
+        
+        if data is None:
+            return jsonify({'error': 'Файл не найден в архиве'}), 404
+        
+        # Отдаём файл
+        ext = os.path.splitext(filename)[1].lower().lstrip('.')
+        inline = ext in current_app.config.get('PREVIEW_INLINE_EXTENSIONS', set())
+        
+        resp = Response(data, mimetype='application/octet-stream')
+        disp = 'inline' if inline else 'attachment'
+        fname_enc = url_quote(filename, safe='')
+        resp.headers['Content-Disposition'] = f"{disp}; filename=\"{filename}\"; filename*=UTF-8''{fname_enc}"
+        resp.headers['Content-Length'] = str(len(data))
+        
+        return resp
+    
+    except Exception as e:
+        current_app.logger.exception('download_from_archive error')
+        return jsonify({'error': str(e)}), 500
 
 @files_bp.get('/files_json')
 def files_json():
