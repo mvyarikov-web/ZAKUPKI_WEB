@@ -508,13 +508,35 @@ function performSearch(terms) {
             data.results.forEach(result => {
                 const item = document.createElement('div');
                 item.className = 'search-result-item';
-                // Определяем имя папки (родительский каталог) и делаем имя файла ссылкой, если это реальный файл
+                
+                // Улучшенная логика для отображения пути (включая архивы)
                 const hasPath = !!result.path;
-                const folderRaw = hasPath && result.path.includes('/') ? result.path.split('/').slice(0, -1).pop() : 'Загруженные файлы';
-                const folderLabel = escapeHtml(folderRaw || 'Загруженные файлы');
+                let breadcrumb = '';
+                
+                if (result.source && result.source.includes('://')) {
+                    // Это файл из архива (формат: zip://archive.zip/path/to/file.txt)
+                    const parts = result.source.split('://');
+                    if (parts.length === 2) {
+                        const [protocol, fullPath] = parts;
+                        const pathParts = fullPath.split('/');
+                        const archiveName = pathParts[0];
+                        const innerPath = pathParts.slice(1).join(' › ');
+                        breadcrumb = `${archiveName} › ${innerPath}`;
+                    } else {
+                        breadcrumb = result.source;
+                    }
+                } else if (hasPath && result.path.includes('/')) {
+                    // Обычный файл в подпапке
+                    const pathParts = result.path.split('/');
+                    breadcrumb = pathParts.slice(0, -1).join(' › ') || 'Загруженные файлы';
+                } else {
+                    breadcrumb = 'Загруженные файлы';
+                }
+                
                 const fileNameHtml = hasPath
                     ? `<a class="result-file-link" href="/view/${encodeURIComponent(result.path)}?q=${encodeURIComponent(t.join(','))}" target="_blank" rel="noopener">${escapeHtml(result.filename)}</a>`
                     : `${escapeHtml(result.filename)}`;
+                
                 // Рендер по каждому термину: количество и до 3 сниппетов
                 const perTermHtml = (result.per_term || []).map(entry => {
                     const snips = (entry.snippets || []).slice(0,3).map(s => `<div class="context-snippet">${escapeHtml(s)}</div>`).join('');
@@ -525,8 +547,8 @@ function performSearch(terms) {
                 }).join('');
                 item.innerHTML = `
                     <div class="result-header">
-                        <span class="result-folder">${folderLabel}</span>
-                        <span class="result-filename" title="Источник: ${result.source || ''}">${fileNameHtml}</span>
+                        <span class="result-folder">${escapeHtml(breadcrumb)}</span>
+                        <span class="result-filename" title="Источник: ${escapeHtml(result.source || '')}">${fileNameHtml}</span>
                     </div>
                     ${perTermHtml}
                 `;
