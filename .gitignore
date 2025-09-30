@@ -58,4 +58,11 @@ uploads/**/*
 # Logs
 *.log
 /logs
+
+# Uploads and index
 /uploads
+/index
+
+# Python bytecode cache
+__pycache__/
+*.pyc
