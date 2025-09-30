@@ -5,9 +5,9 @@ from datetime import datetime
 from flask import Blueprint, request, jsonify, current_app, Response
 from document_processor import DocumentProcessor
 from document_processor.search.searcher import Searcher
-from app.services.files import allowed_file
-from app.services.state import FilesState
-from app.services.indexing import (
+from webapp.services.files import allowed_file
+from webapp.services.state import FilesState
+from webapp.services.indexing import (
     build_search_index, 
     search_in_index, 
     get_index_path,

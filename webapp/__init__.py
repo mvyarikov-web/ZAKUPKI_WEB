@@ -1,8 +1,8 @@
 """Flask приложение с factory pattern."""
 from flask import Flask
-from app.config import get_config
-from app.utils.logging import setup_logging
-from app.utils.errors import register_error_handlers
+from webapp.config import get_config
+from webapp.utils.logging import setup_logging
+from webapp.utils.errors import register_error_handlers
 
 
 def create_app(config_name=None):
@@ -35,10 +35,10 @@ def create_app(config_name=None):
     register_error_handlers(app)
     
     # Регистрируем blueprints
-    from app.routes.pages import pages_bp
-    from app.routes.files import files_bp
-    from app.routes.search import search_bp
-    from app.routes.health import health_bp
+    from webapp.routes.pages import pages_bp
+    from webapp.routes.files import files_bp
+    from webapp.routes.search import search_bp
+    from webapp.routes.health import health_bp
     
     app.register_blueprint(pages_bp)
     app.register_blueprint(files_bp)
@@ -46,7 +46,7 @@ def create_app(config_name=None):
     app.register_blueprint(health_bp)
     
     # Настраиваем хуки для логирования запросов
-    from app.utils.logging import generate_request_id
+    from webapp.utils.logging import generate_request_id
     import time
     from flask import g
     

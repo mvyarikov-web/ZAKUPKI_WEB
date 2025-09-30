@@ -8,7 +8,7 @@ def flask_app():
     """Создаёт тестовое приложение."""
     try:
         # Пытаемся использовать новую структуру
-        from app import create_app
+        from webapp import create_app
         app = create_app('testing')
     except ImportError:
         # Фолбэк на старую структуру если новая еще не применена

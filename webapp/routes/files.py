@@ -3,8 +3,8 @@ import os
 import shutil
 from flask import Blueprint, request, jsonify, current_app, send_file, Response
 from urllib.parse import unquote, quote as url_quote
-from app.services.files import is_safe_subpath, safe_filename, allowed_file
-from app.services.state import FilesState
+from webapp.services.files import is_safe_subpath, safe_filename, allowed_file
+from webapp.services.state import FilesState
 
 files_bp = Blueprint('files', __name__)
 

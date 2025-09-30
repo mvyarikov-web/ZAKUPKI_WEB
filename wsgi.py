@@ -7,7 +7,7 @@
     uwsgi --http :8081 --wsgi-file wsgi.py --callable app
 """
 import os
-from app import create_app
+from webapp import create_app
 
 # Получаем имя конфигурации из переменной окружения
 config_name = os.environ.get('FLASK_ENV', 'prod')

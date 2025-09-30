@@ -66,3 +66,6 @@ uploads/**/*
 # Python bytecode cache
 __pycache__/
 *.pyc
+
+# Backup files
+app_old.py

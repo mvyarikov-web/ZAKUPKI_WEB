@@ -2,9 +2,9 @@
 import os
 from flask import Blueprint, render_template, jsonify, request, current_app
 from markupsafe import Markup
-from app.services.files import allowed_file
-from app.services.state import FilesState
-from app.services.indexing import get_index_path
+from webapp.services.files import allowed_file
+from webapp.services.state import FilesState
+from webapp.services.indexing import get_index_path
 
 pages_bp = Blueprint('pages', __name__)
 
@@ -97,7 +97,7 @@ def index():
 def view_file(filepath: str):
     """Отображение содержимого файла с подсветкой ключевых слов."""
     from urllib.parse import unquote
-    from app.services.files import is_safe_subpath, allowed_file
+    from webapp.services.files import is_safe_subpath, allowed_file
     
     # Импорты для извлечения текста
     import docx
