@@ -5,6 +5,7 @@ from flask import Blueprint, request, jsonify, current_app, send_file, Response
 from urllib.parse import unquote, quote as url_quote
 from webapp.services.files import is_safe_subpath, safe_filename, allowed_file
 from webapp.services.state import FilesState
+from webapp.services.archives import list_archive_contents, is_archive_path
 
 files_bp = Blueprint('files', __name__)
 
@@ -273,12 +274,13 @@ def download_file(filepath: str):
 
 @files_bp.get('/files_json')
 def files_json():
-    """JSON-список файлов в uploads, сгруппированный по папкам (упрощённо)."""
+    """JSON-список файлов в uploads, включая виртуальное содержимое архивов (FR-001, FR-009)."""
     uploads = current_app.config['UPLOAD_FOLDER']
     if not os.path.exists(uploads):
-        return jsonify({'folders': {}, 'total_files': 0})
+        return jsonify({'folders': {}, 'total_files': 0, 'archives': []})
     
     files_by_folder = {}
+    archives_info = []
     total_files = 0
     
     for root, dirs, files in os.walk(uploads):
@@ -294,14 +296,48 @@ def files_json():
             rel_path = os.path.normpath(os.path.join(rel_dir, filename)) if rel_dir != '.' else filename
             folder_key = 'root' if rel_dir == '.' else rel_dir
             
+            # Определяем, является ли файл архивом
+            ext = filename.rsplit('.', 1)[-1].lower() if '.' in filename else ''
+            is_archive = ext in ('zip', 'rar')
+            
             if folder_key not in files_by_folder:
                 files_by_folder[folder_key] = []
             
-            files_by_folder[folder_key].append({
+            file_info = {
                 'name': filename,
                 'path': rel_path,
-                'size': os.path.getsize(file_path)
-            })
+                'size': os.path.getsize(file_path),
+                'is_archive': is_archive
+            }
+            files_by_folder[folder_key].append(file_info)
             total_files += 1
+            
+            # FR-001, FR-009: Если это архив, получаем его содержимое
+            if is_archive:
+                try:
+                    archive_entries = list_archive_contents(rel_path, uploads)
+                    archive_contents = []
+                    
+                    for entry in archive_entries:
+                        archive_contents.append({
+                            'name': entry.name,
+                            'path': entry.path,
+                            'is_virtual_folder': entry.is_virtual_folder,
+                            'is_archive': entry.is_archive,
+                            'size': entry.size,
+                            'status': entry.status,
+                            'error': entry.error
+                        })
+                    
+                    archives_info.append({
+                        'archive_path': rel_path,
+                        'contents': archive_contents
+                    })
+                except Exception as e:
+                    current_app.logger.warning(f"Не удалось прочитать архив {rel_path}: {e}")
     
-    return jsonify({'folders': files_by_folder, 'total_files': total_files})
+    return jsonify({
+        'folders': files_by_folder,
+        'total_files': total_files,
+        'archives': archives_info
+    })
