@@ -1,7 +1,7 @@
 // --- Drag & Drop ---
-const fileInput = document.getElementById('fileInput');
-const selectFilesBtn = document.getElementById('selectFilesBtn');
+// Отключаем выбор одиночных файлов — только папки
 const selectFolderBtn = document.getElementById('selectFolderBtn');
+const selectedFolderPathEl = document.getElementById('selectedFolderPath');
 const uploadProgress = document.getElementById('uploadProgress');
 const progressFill = document.getElementById('progressFill');
 const progressText = document.getElementById('progressText');
@@ -9,17 +9,14 @@ const filesList = document.getElementById('filesList');
 const fileCount = document.getElementById('fileCount');
 const searchInput = document.getElementById('searchInput');
 const searchBtn = document.getElementById('searchBtn');
-const buildIndexBtn = document.getElementById('buildIndexBtn');
-const clearResultsBtn = document.getElementById('clearResultsBtn');
+// Кнопки построения индекса нет — индекс строится автоматически
 const searchResults = document.getElementById('searchResults');
 const messageModal = document.getElementById('messageModal');
 const modalMessage = document.getElementById('modalMessage');
 const closeModal = document.querySelector('.close');
 const indexStatus = document.getElementById('indexStatus');
 
-// --- File Select ---
-selectFilesBtn.addEventListener('click', () => fileInput.click());
-fileInput.addEventListener('change', handleFiles);
+// --- File Select --- (удалено: выбор одиночных файлов)
 
 // --- Folder Select (experimental, works in Chromium browsers) ---
 selectFolderBtn.addEventListener('click', () => {
@@ -27,7 +24,7 @@ selectFolderBtn.addEventListener('click', () => {
     folderInput.type = 'file';
     folderInput.webkitdirectory = true;
     folderInput.multiple = true;
-    folderInput.accept = '.pdf,.doc,.docx,.xls,.xlsx,.txt';
+    folderInput.accept = '.pdf,.doc,.docx,.xls,.xlsx,.txt,.html,.htm,.csv,.tsv,.xml,.json';
     folderInput.style.display = 'none';
     folderInput.addEventListener('change', handleFiles);
     document.body.appendChild(folderInput);
@@ -39,14 +36,51 @@ selectFolderBtn.addEventListener('click', () => {
 function handleFiles(e) {
     const files = e.target.files;
     if (!files || files.length === 0) return;
+    // Отобразим полный путь выбранной папки по первому файлу
+    try {
+        const any = files[0];
+        const wrp = any && any.webkitRelativePath ? any.webkitRelativePath : '';
+        if (wrp) {
+            const parts = wrp.split('/');
+            const folderPath = parts.slice(0, -1).join('/');
+            // Попытаемся получить полный путь из webkitdirectory API
+            if (any.webkitdirectory && any.path) {
+                // Если доступен полный путь - используем его
+                const fullPath = any.path.replace('/' + any.name, '').replace(folderPath, '');
+                if (selectedFolderPathEl) selectedFolderPathEl.textContent = fullPath + '/' + folderPath;
+            } else {
+                // Иначе показываем относительный путь как есть
+                if (selectedFolderPathEl) selectedFolderPathEl.textContent = folderPath;
+            }
+        }
+    } catch (_) {}
     uploadProgress.style.display = 'flex';
     let uploaded = 0;
     progressFill.style.width = '0%';
     progressText.textContent = '0%';
 
     const formData = new FormData();
+    const allowedExt = new Set(['pdf','doc','docx','xls','xlsx','txt','html','htm','csv','tsv','xml','json']);
+    let skipped = 0;
     for (let i = 0; i < files.length; i++) {
-        formData.append('files', files[i]);
+        const f = files[i];
+        const baseName = (f.webkitRelativePath || f.name || '').split('/').pop();
+        if (!baseName) { continue; }
+        // Пропускаем временные файлы Office (~$, $)
+        if (baseName.startsWith('~$') || baseName.startsWith('$')) {
+            skipped++;
+            continue;
+        }
+        // Пропускаем неподдерживаемые расширения
+        const dot = baseName.lastIndexOf('.');
+        const ext = dot >= 0 ? baseName.slice(dot + 1).toLowerCase() : '';
+        if (!allowedExt.has(ext)) {
+            skipped++;
+            continue;
+        }
+        // Сохраняем относительный путь внутри архива папки
+        const relName = f.webkitRelativePath || f.name;
+        formData.append('files', f, relName);
     }
 
     fetch('/upload', {
@@ -61,13 +95,13 @@ function handleFiles(e) {
     })
     .then(data => {
         if (data.success) {
-            showMessage('Файлы успешно загружены!');
-            updateFilesList();
+            // Тихо перестраиваем индекс без модальных сообщений
+            return rebuildIndexWithProgress();
         } else {
-            showMessage(data.error || 'Ошибка загрузки файлов');
+            throw new Error(data.error || 'Ошибка загрузки папки');
         }
-        uploadProgress.style.display = 'none';
     })
+    .then(() => { uploadProgress.style.display = 'none'; })
     .catch((err) => {
         showMessage(err && err.message ? err.message : 'Ошибка загрузки файлов');
         uploadProgress.style.display = 'none';
@@ -90,6 +124,10 @@ function updateFilesList() {
                 setTimeout(restoreFolderStates, 100);
             }
             if (newFileCount && fileCount) fileCount.textContent = newFileCount.textContent;
+            // Также обновим статус индекса, если он есть на странице
+            refreshIndexStatus();
+            // Применяем текущие термы к ссылкам просмотра в списке файлов
+            applyQueryToViewLinks();
         });
 }
 
@@ -107,8 +145,12 @@ function deleteFile(filename) {
     .then(res => res.json())
     .then(data => {
         if (data.success) {
-            showMessage('Файл удалён');
-            updateFilesList();
+            showMessage('Файл удалён. Перестраиваем индекс…');
+            return rebuildIndexWithProgress().then(() => {
+                showMessage('Индекс перестроен');
+                updateFilesList();
+                refreshSearchResultsIfActive();
+            });
         } else {
             showMessage(data.error || 'Ошибка удаления файла');
         }
@@ -137,8 +179,11 @@ function deleteFolder(folderKey, folderDisplayName) {
     .then(res => res.json())
     .then(data => {
         if (data.success) {
-            showMessage(data.message || 'Папка удалена успешно');
-            updateFilesList();
+            // Без дополнительных сообщений: молча перестраиваем индекс и обновляем список файлов
+            return rebuildIndexWithProgress().then(() => {
+                updateFilesList();
+                refreshSearchResultsIfActive();
+            });
         } else {
             showMessage(data.error || 'Ошибка удаления папки');
         }
@@ -150,119 +195,138 @@ function deleteFolder(folderKey, folderDisplayName) {
 }
 
 // --- Search ---
-searchBtn.addEventListener('click', () => {
-    const terms = searchInput.value.trim();
-    if (!terms) {
-        showMessage('Введите ключевые слова для поиска');
-        return;
-    }
+function performSearch(terms) {
     searchResults.style.display = 'block';
     searchResults.innerHTML = '<div>Поиск...</div>';
-    
-    // Обновляем статусы файлов на "обрабатывается"
-    const fileItems = document.querySelectorAll('.file-item');
-    fileItems.forEach(item => {
-        const statusIndicator = item.querySelector('.status-indicator');
-        const statusText = item.querySelector('.status-text');
-        if (statusIndicator && statusText) {
-            statusIndicator.className = 'status-indicator status-processing';
-            statusText.textContent = 'Обработка...';
-        }
-    });
-    
-    fetch('/search', {
+    return fetch('/search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ search_terms: terms })
     })
     .then(res => res.json())
     .then(data => {
+        try { localStorage.setItem('last_search_terms', terms); } catch (e) {}
+        // Критично: сразу обновляем список файлов, чтобы светофоры отобразились на первом поиске
+        updateFilesList();
         if (data.results && data.results.length > 0) {
             searchResults.innerHTML = '';
+            const t = termsFromInput();
             data.results.forEach(result => {
                 const item = document.createElement('div');
                 item.className = 'search-result-item';
-                const linkTarget = result.path ? `/result/${encodeURIComponent(result.path)}` : '#';
+                // Определяем имя папки (родительский каталог) и делаем имя файла ссылкой, если это реальный файл
+                const hasPath = !!result.path;
+                const folderRaw = hasPath && result.path.includes('/') ? result.path.split('/').slice(0, -1).pop() : 'Загруженные файлы';
+                const folderLabel = escapeHtml(folderRaw || 'Загруженные файлы');
+                const fileNameHtml = hasPath
+                    ? `<a class="result-file-link" href="/view/${encodeURIComponent(result.path)}?q=${encodeURIComponent(t.join(','))}" target="_blank" rel="noopener">${escapeHtml(result.filename)}</a>`
+                    : `${escapeHtml(result.filename)}`;
+                // Рендер по каждому термину: количество и до 3 сниппетов
+                const perTermHtml = (result.per_term || []).map(entry => {
+                    const snips = (entry.snippets || []).slice(0,3).map(s => `<div class="context-snippet">${escapeHtml(s)}</div>`).join('');
+                    return `<div class="per-term-block">
+                        <div class="found-terms"><span class="found-term">${escapeHtml(entry.term)} (${entry.count})</span></div>
+                        <div class="context-snippets">${snips || '<div class="context-empty">Нет сниппетов</div>'}</div>
+                    </div>`;
+                }).join('');
                 item.innerHTML = `
                     <div class="result-header">
-                        <span class="result-filename" title="Источник: ${result.source || ''}">${result.filename}</span>
-                        <div class="found-terms">
-                            ${result.found_terms.map(term => `<span class="found-term">${term}</span>`).join(' ')}
-                        </div>
-                        ${result.path ? `<a class="result-link" href="${linkTarget}" target="_blank">Страница результата</a>` : '<span class="result-link disabled" title="Файл из архива, нет прямой страницы результата">Виртуальный источник</span>'}
+                        <span class="result-folder">${folderLabel}</span>
+                        <span class="result-filename" title="Источник: ${result.source || ''}">${fileNameHtml}</span>
                     </div>
-                    <div class="context-snippets">
-                        ${result.context.map(snippet => `<div class="context-snippet" data-search-terms="${terms}">${snippet}</div>`).join('')}
-                    </div>
+                    ${perTermHtml}
                 `;
                 searchResults.appendChild(item);
             });
-            // Подсветка ключевых слов в сниппетах результатов
-            const snippets = searchResults.querySelectorAll('.context-snippet');
-            const termsList = terms.split(',').map(t => t.trim()).filter(Boolean);
-            snippets.forEach(sn => {
-                let html = sn.innerHTML;
-                termsList.forEach(term => {
-                    const rx = new RegExp(`(${term.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\$&')})`, 'gi');
-                    html = html.replace(rx, '<span class="highlight">$1</span>');
-                });
-                sn.innerHTML = html;
-            });
+            highlightSnippets(t);
+            applyQueryToViewLinks();
         } else {
             searchResults.innerHTML = '<div>Ничего не найдено по этим ключевым словам.</div>';
         }
-        
-        // Обновляем список файлов со статусами
-        updateFilesList();
     })
     .catch(() => {
         searchResults.innerHTML = '<div>Ошибка поиска.</div>';
-        updateFilesList();
     });
-});
+}
 
-// --- Clear Results ---
-clearResultsBtn.addEventListener('click', () => {
-    if (!confirm('Вы уверены, что хотите очистить все результаты поиска? Эта операция необратима.')) {
+function refreshSearchResultsIfActive() {
+    const terms = searchInput.value.trim();
+    if (!terms) {
+        // если запрос пуст — просто скрываем блок
+        searchResults.style.display = 'none';
+        searchResults.innerHTML = '';
         return;
     }
-    
-    fetch('/clear_results', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
-    })
-    .then(res => res.json())
-    .then(data => {
-        if (data.success) {
-            showMessage('Результаты поиска очищены');
-            searchInput.value = '';
-            searchResults.style.display = 'none';
-            updateFilesList();
-        } else {
-            showMessage(data.message || 'Ошибка очистки результатов');
-        }
-    })
-    .catch(() => {
-        showMessage('Ошибка очистки результатов');
-    });
+    if (searchResults && searchResults.style.display !== 'none') {
+        // пере запускаем поиск, чтобы убрать удалённые документы из выдачи
+        performSearch(terms);
+    }
+}
+
+searchBtn.addEventListener('click', () => {
+    const terms = searchInput.value.trim();
+    if (!terms) {
+        // Пустой запрос = очистка результатов
+        fetch('/clear_results', { method: 'POST', headers: { 'Content-Type': 'application/json' } })
+            .then(() => {
+                searchResults.style.display = 'none';
+                updateFilesList();
+                refreshIndexStatus();
+            });
+        return;
+    }
+    // Запускаем поиск без перестроения индекса
+    searchResults.style.display = 'block';
+    performSearch(terms);
 });
 
-// --- Build Index ---
-if (buildIndexBtn) {
-    buildIndexBtn.addEventListener('click', () => {
-        buildIndexBtn.disabled = true;
-        fetch('/build_index', { method: 'POST' })
-            .then(res => res.json())
-            .then(data => {
-                if (data.success) {
-                    showMessage(`Индекс создан: ${data.index_path}\nРазмер: ${data.size} байт`);
-                    refreshIndexStatus();
-                } else {
-                    showMessage(data.message || 'Ошибка построения индекса');
-                }
-            })
-            .catch(() => showMessage('Ошибка построения индекса'))
-            .finally(() => { buildIndexBtn.disabled = false; });
+// (Кнопка очистки результатов удалена — очистка выполняется при пустом поисковом запросе)
+
+// --- Build Index auto ---
+function rebuildIndexWithProgress() {
+    const bar = document.getElementById('indexBuildProgress');
+    const fill = document.getElementById('indexBuildFill');
+    const text = document.getElementById('indexBuildText');
+    if (bar) bar.style.display = 'flex';
+    if (fill) fill.style.width = '10%';
+    if (text) text.textContent = 'Построение индекса…';
+    return fetch('/build_index', { method: 'POST' })
+        .then(res => res.json())
+        .then(data => {
+            if (!data.success) throw new Error(data.message || 'Ошибка построения индекса');
+            if (fill) fill.style.width = '100%';
+            if (text) text.textContent = 'Готово';
+            refreshIndexStatus();
+            updateFilesList();
+        })
+        .finally(() => {
+            setTimeout(() => { if (bar) bar.style.display = 'none'; if (fill) fill.style.width = '0%'; }, 600);
+        });
+}
+
+function termsFromInput() {
+    const raw = (searchInput && searchInput.value ? searchInput.value : '').trim();
+    if (raw) return raw.split(',').map(t => t.trim()).filter(Boolean);
+    try {
+        const saved = localStorage.getItem('last_search_terms') || '';
+        return saved.split(',').map(t => t.trim()).filter(Boolean);
+    } catch (_) { return []; }
+}
+
+function escapeHtml(s) {
+    return s.replace(/[&<>"]+/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[ch]));
+}
+
+function highlightSnippets(terms) {
+    const snippets = document.querySelectorAll('.context-snippet');
+    if (!terms || terms.length === 0) return;
+    snippets.forEach(sn => {
+        let html = sn.innerHTML;
+        terms.forEach(term => {
+            const re = new RegExp('(' + term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'gi');
+            html = html.replace(re, '<span class="highlight">$1</span>');
+        });
+        sn.innerHTML = html;
     });
 }
 
@@ -313,15 +377,10 @@ function restoreFolderStates() {
 
 // --- Initial ---
 document.addEventListener('DOMContentLoaded', function() {
-    restoreFolderStates();
     refreshIndexStatus();
-    // периодический автопул статуса индекса
     setInterval(refreshIndexStatus, 8000);
+    applyQueryToViewLinks();
 });
-
-// Для обратной совместимости
-updateFilesList();
-restoreFolderStates();
 
 // --- Index status ---
 function refreshIndexStatus() {
@@ -330,18 +389,35 @@ function refreshIndexStatus() {
         .then(res => res.json())
         .then(data => {
             if (!data.exists) {
-                indexStatus.textContent = 'Индекс: отсутствует';
+                indexStatus.textContent = 'Сводный файл: не сформирован';
                 indexStatus.style.color = '#a00';
             } else {
                 const size = (data.size || 0);
                 const sizeKb = (size / 1024).toFixed(1);
                 const entries = (data.entries == null) ? '—' : data.entries;
-                indexStatus.textContent = `Индекс: есть, ${sizeKb} KB, записей: ${entries}`;
+                indexStatus.textContent = `Сводный файл: сформирован, ${sizeKb} KB, записей: ${entries}`;
                 indexStatus.style.color = '#2a2';
             }
         })
         .catch(() => {
-            indexStatus.textContent = 'Индекс: ошибка запроса';
+            indexStatus.textContent = 'Сводный файл: ошибка запроса';
             indexStatus.style.color = '#a00';
         });
+}
+
+// --- Append current terms to /view links ---
+function applyQueryToViewLinks() {
+    const terms = termsFromInput();
+    const anchors = document.querySelectorAll('a.result-file-link');
+    anchors.forEach(a => {
+        try {
+            const url = new URL(a.getAttribute('href'), window.location.origin);
+            if (terms.length > 0) {
+                url.searchParams.set('q', terms.join(','));
+            } else {
+                url.searchParams.delete('q');
+            }
+            a.setAttribute('href', url.pathname + (url.search ? url.search : ''));
+        } catch (_) {}
+    });
 }

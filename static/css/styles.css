@@ -79,13 +79,13 @@ section h2 {
 }
 
 .btn-secondary {
-    background: #95a5a6;
+    background: #3498db; /* синий как у .btn-primary */
     color: white;
-    margin-left: 10px;
+    margin-left: 0; /* слева выравниваем */
 }
 
 .btn-secondary:hover {
-    background: #7f8c8d;
+    background: #2980b9;
     transform: translateY(-1px);
 }
 
@@ -101,6 +101,11 @@ section h2 {
 /* Область загрузки */
 .upload-buttons {
     margin-bottom: 20px;
+}
+
+.folder-path {
+    font-size: 14px;
+    color: #555;
 }
 
 /* Прогресс бар */
@@ -161,12 +166,28 @@ section h2 {
     display: none;
 }
 
+/* Секция сводного файла */
+.index-section .index-controls .btn {
+    height: 42px;
+}
+
 .search-result-item {
     background: #f8f9fa;
     border: 1px solid #e9ecef;
     border-radius: 8px;
     padding: 20px;
     margin-bottom: 15px;
+}
+.context-snippet { 
+    line-height: 1.5; 
+    margin: 6px 0; 
+}
+.highlight { 
+    background-color: #fff3cd; 
+    padding: 0 2px; 
+    border-radius: 3px; 
+    color: #856404; 
+    font-weight: 600; 
 }
 
 .result-header {
@@ -180,6 +201,25 @@ section h2 {
     font-weight: 600;
     color: #2c3e50;
     font-size: 16px;
+}
+
+.result-folder {
+    color: #6c757d;
+    font-size: 13px;
+    margin-right: 10px;
+    padding: 2px 6px;
+    background: #f1f3f5;
+    border-radius: 6px;
+}
+
+.result-file-link {
+    color: #3498db;
+    text-decoration: none;
+}
+
+.result-file-link:hover {
+    color: #2980b9;
+    text-decoration: underline;
 }
 
 .found-terms {
@@ -276,7 +316,7 @@ section h2 {
 .delete-folder-btn {
     background: none;
     border: none;
-    color: #e74c3c;
+    color: #3498db;
     cursor: pointer;
     padding: 6px;
     border-radius: 4px;
@@ -285,8 +325,8 @@ section h2 {
 }
 
 .delete-folder-btn:hover {
-    background: #fdf2f2;
-    color: #c0392b;
+    background: #eaf4fb;
+    color: #2980b9;
     transform: scale(1.1);
 }
 
@@ -304,6 +344,8 @@ section h2 {
     max-height: 1000px;
     overflow: hidden;
     transition: max-height 0.3s ease;
+    border-left: 2px dashed #e9ecef;
+    padding-left: 16px;
 }
 
 .folder-container.collapsed .folder-content {
@@ -319,6 +361,28 @@ section h2 {
     background: #fff;
     border-bottom: 1px solid #f1f3f4;
     transition: all 0.3s ease;
+}
+
+/* Неподдерживаемые файлы */
+.file-item.file-unsupported {
+    background: #f5f5f5;
+    color: #888;
+}
+
+.file-item.file-unsupported .file-name {
+    color: #888;
+    cursor: default;
+    text-decoration: none;
+}
+
+.file-item.file-unsupported:hover {
+    background: #f5f5f5;
+    transform: none;
+}
+
+/* Файлы внутри папок визуально смещены правее, чем заголовок папки */
+.folder-content .file-item {
+    padding-left: 40px;
 }
 
 .file-item:hover {
@@ -355,6 +419,39 @@ section h2 {
 .file-size {
     font-size: 12px;
     color: #7f8c8d;
+}
+
+.file-chars {
+    font-size: 12px;
+    color: #6c757d;
+}
+
+.file-error {
+    font-size: 12px;
+}
+
+.text-danger {
+    color: #c0392b !important;
+}
+
+/* Недоступные к чтению файлы: бледно-серая заливка и не кликабельные */
+.file-item.file-disabled {
+    background: #f0f0f0;
+    color: #888;
+}
+.file-item.file-disabled .file-name {
+    color: #888;
+    pointer-events: none;
+    cursor: default;
+    text-decoration: none;
+}
+.file-item.file-disabled:hover {
+    background: #f0f0f0;
+    transform: none;
+}
+
+.file-bad {
+    background: #fff5f5;
 }
 
 .file-status {
@@ -401,7 +498,7 @@ section h2 {
 .delete-btn {
     background: none;
     border: none;
-    color: #e74c3c;
+    color: #3498db;
     cursor: pointer;
     padding: 8px;
     border-radius: 4px;
@@ -409,8 +506,22 @@ section h2 {
 }
 
 .delete-btn:hover {
-    background: #fdf2f2;
-    color: #c0392b;
+    background: #eaf4fb;
+    color: #2980b9;
+}
+
+/* Уравниваем высоту всех основных кнопок */
+.btn, .btn-primary, .btn-secondary, #searchBtn, #selectFolderBtn, #viewIndexBtn {
+    height: 42px;
+}
+
+/* Единый стиль для встроенной SVG-иконки корзины */
+.icon-trash {
+    width: 18px;
+    height: 18px;
+    fill: currentColor;
+    display: inline-block;
+    vertical-align: middle;
 }
 
 /* Модальное окно */

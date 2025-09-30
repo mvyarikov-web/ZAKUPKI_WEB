@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{{ title }}</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 0; padding: 16px; }
+    .row { display: flex; gap: 16px; align-items: center; }
+    .status { font-weight: 700; }
+    .ok { color: #18794e; }
+    .fail { color: #b00020; }
+    iframe { width: 100%; height: 80vh; border: 1px solid #ccc; }
+    .meta { color: #666; font-size: 13px; }
+    .small { font-size: 12px; color: #999; }
+  </style>
+</head>
+<body>
+  <h2>{{ title }}</h2>
+  <div class="meta">Файл: <code>{{ file_rel_path }}</code></div>
+  <div class="row" style="margin: 8px 0 16px;">
+    <div>Таймаут: <b id="timeout">{{ timeout_ms }}</b> мс</div>
+    <div>Статус: <span id="status" class="status">Ожидание…</span></div>
+  </div>
+
+  <iframe id="pdfFrame" src="{{ inline_url }}" referrerpolicy="no-referrer"></iframe>
+
+  <p class="small">Если через {{ timeout_ms }} мс событие загрузки не наступит, тест завершится со статусом FAIL.</p>
+
+  <script>
+    (function() {
+  const timeoutMs = Number('{{ timeout_ms }}') || 5000;
+      const statusEl = document.getElementById('status');
+      const frame = document.getElementById('pdfFrame');
+      let done = false;
+
+      function setStatus(text, cls) {
+        statusEl.textContent = text;
+        statusEl.classList.remove('ok', 'fail');
+        if (cls) statusEl.classList.add(cls);
+      }
+
+      const timer = setTimeout(() => {
+        if (done) return;
+        done = true;
+        setStatus('FAIL (таймаут ' + timeoutMs + ' мс)', 'fail');
+        try { if (frame && frame.contentWindow) { frame.contentWindow.stop && frame.contentWindow.stop(); } } catch (e) {}
+        try { frame.src = 'about:blank'; } catch (e) {}
+        try {
+          navigator.sendBeacon && navigator.sendBeacon('/test_result', new Blob([JSON.stringify({
+            result: 'fail', reason: 'timeout', timeout_ms: timeoutMs, ts: Date.now()
+          })], { type: 'application/json' }));
+        } catch (e) {}
+      }, timeoutMs);
+
+      frame.addEventListener('load', () => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        setStatus('PASS (iframe onload)', 'ok');
+        try {
+          navigator.sendBeacon && navigator.sendBeacon('/test_result', new Blob([JSON.stringify({
+            result: 'pass', reason: 'onload', timeout_ms: timeoutMs, ts: Date.now()
+          })], { type: 'application/json' }));
+        } catch (e) {}
+      });
+
+      frame.addEventListener('error', () => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        setStatus('FAIL (ошибка загрузки iframe)', 'fail');
+        try {
+          navigator.sendBeacon && navigator.sendBeacon('/test_result', new Blob([JSON.stringify({
+            result: 'fail', reason: 'iframe_error', timeout_ms: timeoutMs, ts: Date.now()
+          })], { type: 'application/json' }));
+        } catch (e) {}
+      });
+    })();
+  </script>
+</body>
+</html>

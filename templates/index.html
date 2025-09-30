@@ -8,34 +8,45 @@
 </head>
 <body>
     <div class="container">
-        <h1>Автоматический поиск по содержимому</h1>
-            <p>Поддерживаемые форматы: PDF, DOC, DOCX, XLS, XLSX, TXT</p>
+        <header>
+            <h1>Анализ Документов Закупки</h1>
+            <p>Поддерживаемые форматы: PDF, DOC, DOCX, XLS, XLSX, TXT, HTML, CSV, XML, JSON</p>
         </header>
 
         <main>
-            <!-- Секция загрузки файлов -->
+            <!-- Секция загрузки папки -->
             <section class="upload-section">
-                <h2>Загрузка файлов</h2>
-                
-                <!-- Кнопка выбора файлов -->
+                <h2>Загрузка папки</h2>
                 <div class="upload-buttons">
-                    <input type="file" id="fileInput" multiple accept=".pdf,.doc,.docx,.xls,.xlsx,.txt" style="display: none;">
-                    <button id="selectFilesBtn" class="btn btn-primary">
-                        <i class="icon">📁</i> Выбрать файлы
-                    </button>
                     <button id="selectFolderBtn" class="btn btn-secondary">
                         <i class="icon">📂</i> Выбрать папку
                     </button>
+                    <span id="selectedFolderPath" class="folder-path" style="margin-left:12px; color:#555;"></span>
                 </div>
-
-
-
                 <!-- Прогресс загрузки -->
                 <div id="uploadProgress" class="progress-container" style="display: none;">
                     <div class="progress-bar">
                         <div id="progressFill" class="progress-fill"></div>
                     </div>
                     <span id="progressText">0%</span>
+                </div>
+            </section>
+
+            <!-- Секция сводного файла (статус + просмотр) -->
+            <section class="index-section">
+                <h2>Сводный файл</h2>
+                <div class="index-controls" style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+                    <div id="indexStatus" style="font-size:14px; color:#555;">Сводный файл: проверяется…</div>
+                    <a id="viewIndexBtn" class="btn btn-secondary" href="/view_index" target="_blank">
+                        <i class="icon">📜</i> Просмотр
+                    </a>
+                </div>
+                <!-- Прогресс построения индекса -->
+                <div id="indexBuildProgress" class="progress-container" style="display: none; margin-top:10px;">
+                    <div class="progress-bar">
+                        <div id="indexBuildFill" class="progress-fill" style="width: 25%;"></div>
+                    </div>
+                    <span id="indexBuildText">Построение индекса…</span>
                 </div>
             </section>
 
@@ -47,67 +58,62 @@
                     <button id="searchBtn" class="btn btn-primary">
                         <i class="icon">🔍</i> Найти
                     </button>
-                    <button id="buildIndexBtn" class="btn btn-secondary" style="margin-left: 10px;">
-                        <i class="icon">🧱</i> Построить индекс
-                    </button>
-                    <button id="clearResultsBtn" class="btn btn-danger" style="margin-left: 10px;">
-                        <i class="icon">🧹</i> Очистить результаты
-                    </button>
                 </div>
-                <div id="indexStatus" style="margin-top:8px; font-size: 14px; color: #555;">Индекс: проверяется…</div>
                 
-                <!-- Результаты поиска -->
+                <!-- Результаты поиска (с подсветкой в сниппетах) -->
                 <div id="searchResults" class="search-results"></div>
             </section>
-
-            <!-- Список файлов -->
+            <!-- Список файлов с метриками извлечения -->
             <section class="files-section">
-                <h2>Загруженные файлы (<span id="fileCount">{{ total_files or 0 }}</span>)</h2>
+                <h2>Файлы</h2>
                 <div id="filesList" class="files-list">
-                    {% for folder_key, folder_data in files_by_folder.items() %}
-                    <div class="folder-container">
-                        <div class="folder-header" onclick="toggleFolder('{{ folder_key }}')">
-                            <i class="folder-icon expand-icon">📁</i>
-                            <span class="folder-name">{{ folder_data.display_name }}</span>
-                            <span class="file-count-badge">{{ folder_data.files|length }} файл(ов)</span>
-                            <button class="delete-folder-btn" onclick="event.stopPropagation(); deleteFolder('{{ folder_key }}', '{{ folder_data.display_name }}')" title="Удалить папку">
-                                <i class="icon">🗑️</i>
+                    {% for folder_key, folder in files_by_folder.items() %}
+                    <div class="folder-container" id="folder-{{ folder.display_name }}">
+                        <div class="folder-header" onclick="toggleFolder('{{ folder.display_name }}')">
+                            <span class="folder-icon">📁</span>
+                            <span class="folder-name">{{ folder.display_name }}</span>
+                            <span class="file-count-badge">{{ folder.files|length }}</span>
+                            <button class="delete-folder-btn" title="Удалить папку" onclick="event.stopPropagation(); deleteFolder('{{ folder_key }}', '{{ folder.display_name }}')">
+                                <svg class="icon-trash" viewBox="0 0 24 24" aria-hidden="true">
+                                    <path d="M9 3h6a1 1 0 0 1 1 1v2h4v2h-1v12a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V8H4V6h4V4a1 1 0 0 1 1-1zm1 3h4V5h-4v1zM7 8v12h10V8H7zm3 3h2v7h-2v-7zm4 0h2v7h-2v-7z"></path>
+                                </svg>
                             </button>
-                            <i class="toggle-icon">▼</i>
+                            <span class="toggle-icon">▼</span>
                         </div>
-                        <div class="folder-content" id="folder-{{ folder_key }}">
-                            {% for file in folder_data.files %}
-                            <div class="file-item" data-filename="{{ file.name }}" data-filepath="{{ file.path }}">
+                        <div class="folder-content">
+                            {% for file in folder.files %}
+                            {% set meta = file_status.get(file.path, {}) %}
+                            {% set char_count = meta.get('char_count') %}
+                            {% set status = meta.get('status', 'not_checked') %}
+                            {% set is_unreadable = (status == 'unsupported') or (status == 'error') or (char_count is defined and char_count == 0) %}
+                            <div class="file-item{% if is_unreadable %} file-disabled{% endif %}">
                                 <div class="file-info">
-                                    <i class="file-icon">📄</i>
+                                    <span class="file-icon">📄</span>
                                     <div class="file-details">
-                                        <span class="file-name">{{ file.name }}</span>
-                                        <span class="file-size">{{ "%.2f"|format(file.size / 1024) }} KB</span>
+                                        {% if is_unreadable %}
+                                        <span class="file-name" title="Файл недоступен для просмотра/скачивания">{{ file.name }}</span>
+                                        {% else %}
+                                        <a class="file-name result-file-link" href="{{ url_for('view_file', filepath=file.path) }}{% if last_search_terms %}?q={{ last_search_terms|urlencode }}{% endif %}" target="_blank" rel="noopener">{{ file.name }}</a>
+                                        {% endif %}
+                                        <span class="file-size">{{ (file.size / 1024)|round(1) }} KB</span>
+                                        {% if char_count is not none %}
+                                        <span class="file-chars{% if char_count == 0 %} text-danger{% endif %}">Символов: {{ char_count }}</span>
+                                        {% endif %}
+                                        {% if meta.get('error') %}
+                                        <span class="file-error text-danger">{{ meta.get('error') }}</span>
+                                        {% elif status == 'unsupported' %}
+                                        <span class="file-error text-danger">Неподдерживаемый формат</span>
+                                        {% endif %}
                                     </div>
                                 </div>
                                 <div class="file-status">
-                                    <span class="status-indicator status-{{ file.status }}"></span>
-                                    <span class="status-text">
-                                        {% if file.status == 'not_checked' %}
-                                            Не проверено
-                                        {% elif file.status == 'processing' %}
-                                            Обработка...
-                                        {% elif file.status == 'contains_keywords' %}
-                                            Содержит ключевые слова
-                                        {% elif file.status == 'no_keywords' %}
-                                            Не содержит ключевые слова
-                                        {% elif file.status == 'error' %}
-                                            Ошибка
-                                        {% else %}
-                                            Неизвестный статус
-                                        {% endif %}
-                                    </span>
+                                    <span class="status-indicator status-{{ status }}" title="{{ status }}"></span>
+                                    <button class="delete-btn" title="Удалить файл" onclick="deleteFile('{{ file.path }}')">
+                                        <svg class="icon-trash" viewBox="0 0 24 24" aria-hidden="true">
+                                            <path d="M9 3h6a1 1 0 0 1 1 1v2h4v2h-1v12a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V8H4V6h4V4a1 1 0 0 1 1-1zm1 3h4V5h-4v1zM7 8v12h10V8H7zm3 3h2v7h-2v-7zm4 0h2v7h-2v-7z"></path>
+                                        </svg>
+                                    </button>
                                 </div>
-                                <a href="/download/{{ file.path | urlencode }}" class="btn btn-secondary" style="font-size: 12px; padding: 6px 12px; margin-right: 10px;">Скачать</a>
-                                <a href="/result/{{ file.path | urlencode }}" class="btn btn-secondary" style="font-size: 12px; padding: 6px 12px; margin-right: 10px;">Результат</a>
-                                <button class="delete-btn" onclick="deleteFile('{{ file.path }}')">
-                                    <i class="icon">🗑️</i>
-                                </button>
                             </div>
                             {% endfor %}
                         </div>

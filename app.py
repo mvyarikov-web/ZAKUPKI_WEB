@@ -3,7 +3,7 @@ import shutil
 import logging
 import time
 from logging.handlers import TimedRotatingFileHandler
-from flask import Flask, render_template, request, jsonify, redirect, url_for, g
+from flask import Flask, render_template, request, jsonify, redirect, url_for, g, make_response, send_file
 from werkzeug.utils import secure_filename
 import docx
 import openpyxl
@@ -17,11 +17,15 @@ import unicodedata
 import docx2txt
 import subprocess
 from document_processor import DocumentProcessor
+# from document_processor.pdf_utils import analyze_pdf, extract_text_pdf, build_pdf_response  # type: ignore
+from markupsafe import Markup
+from random import randint
 
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = 'uploads'
+app.config['INDEX_FOLDER'] = 'index'
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB max file size
-app.config['SEARCH_RESULTS_FILE'] = 'uploads/search_results.json'
+app.config['SEARCH_RESULTS_FILE'] = 'index/search_results.json'
 app.config['JSON_AS_ASCII'] = False  # корректная кириллица в JSON
 
 # Логирование: файл logs/app.log, ежедневная ротация, хранить 7 архивов
@@ -59,10 +63,56 @@ if root_logger.level > logging.INFO:
     root_logger.setLevel(logging.INFO)
 
 # Разрешенные расширения файлов
-ALLOWED_EXTENSIONS = {'pdf', 'doc', 'docx', 'xls', 'xlsx', 'txt'}
+ALLOWED_EXTENSIONS = {'pdf', 'doc', 'docx', 'xls', 'xlsx', 'txt', 'html', 'htm', 'csv', 'tsv', 'xml', 'json'}
+
+# Форматы, которые можно безопасно показывать inline в браузере (даже если не индексируем)
+PREVIEW_INLINE_EXTENSIONS = {'pdf', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'}
+
+# Форматы, которые можно отображать напрямую в браузере или конвертировать в HTML
+WEB_VIEWABLE_EXTENSIONS = {'html', 'htm', 'txt', 'csv', 'tsv', 'xml', 'json', 'pdf', 'doc', 'docx', 'xls', 'xlsx'}
 
 # Статусы обработки файлов
 file_status = {}  # filename: {'status': 'not_checked'|'processing'|'contains_keywords'|'no_keywords'|'error', 'result': {...}}
+
+
+def _parse_index_char_counts(index_path: str) -> dict:
+    """Парсит _search_index.txt и возвращает {relative_path: char_count} только для файлов из ФС (без zip://, rar://).
+    Безопасен к ошибкам формата; игнорирует записи без чисел.
+    """
+    mapping: dict[str, int] = {}
+    if not os.path.exists(index_path):
+        return mapping
+    try:
+        current_title = None
+        with open(index_path, 'r', encoding='utf-8', errors='ignore') as f:
+            for raw in f:
+                line = raw.strip()
+                if line.startswith('ЗАГОЛОВОК:'):
+                    title = line.split(':', 1)[1].strip()
+                    # интересуют только реальные файлы из uploads (без схем)
+                    if title and '://' not in title:
+                        current_title = title
+                    else:
+                        current_title = None
+                elif current_title and line.startswith('Формат:') and 'Символов:' in line:
+                    try:
+                        # ожидание шаблона: Формат: ... | Символов: N | ...
+                        parts = [p.strip() for p in line.split('|')]
+                        for p in parts:
+                            if p.startswith('Символов:'):
+                                n_str = p.split(':', 1)[1].strip()
+                                n = int(''.join(ch for ch in n_str if ch.isdigit())) if n_str else 0
+                                mapping[current_title] = n
+                                break
+                    except Exception:
+                        # пропускаем некорректные строки
+                        pass
+                elif line.startswith('====='):
+                    # разделитель — сбрасываем состояние
+                    current_title = None
+    except Exception:
+        app.logger.exception('Ошибка парсинга индекса для char_count')
+    return mapping
 
 
 def _is_safe_subpath(base_dir: str, user_path: str) -> bool:
@@ -100,8 +150,13 @@ def safe_filename(filename):
     return name + ext
 
 def allowed_file(filename):
-    return '.' in filename and \
-           filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+    """Проверяет поддержку расширения и исключает временные файлы Office (~$*, $*)."""
+    if not filename:
+        return False
+    base = os.path.basename(filename)
+    if base.startswith('~$') or base.startswith('$'):
+        return False
+    return '.' in base and base.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 def save_search_results():
     """Сохранение результатов поиска в JSON файл"""
@@ -137,8 +192,8 @@ def load_search_results():
     return ''
 
 def _index_file_path() -> str:
-    """Путь к файлу индекса внутри папки uploads."""
-    return os.path.join(app.config['UPLOAD_FOLDER'], '_search_index.txt')
+    """Путь к файлу индекса внутри папки index."""
+    return os.path.join(app.config['INDEX_FOLDER'], '_search_index.txt')
 
 def clear_search_results():
     """Очистка файла с результатами поиска"""
@@ -156,36 +211,86 @@ def clear_search_results():
 def extract_text_from_pdf(file_path):
     """Извлечение текста из PDF файла"""
     text = ""
+    # 1) pdfplumber
     try:
-        # Попробуем pdfplumber сначала (лучше для сложных PDF)
         with pdfplumber.open(file_path) as pdf:
+            parts = []
             for page in pdf.pages:
-                page_text = page.extract_text()
-                if page_text:
-                    text += page_text + "\n"
-    except:
-        try:
-            # Если pdfplumber не работает, попробуем pypdf
-            import pypdf  # type: ignore
-            with open(file_path, 'rb') as file:
-                pdf_reader = pypdf.PdfReader(file)
-                for page in pdf_reader.pages:
-                    page_text = page.extract_text() or ""
-                    if page_text:
-                        text += page_text + "\n"
-        except Exception:
-            text = "Ошибка извлечения текста из PDF"
-    
-    return text
+                t = page.extract_text() or ""
+                if t:
+                    parts.append(t)
+        if parts:
+            app.logger.info("PDF extracted via pdfplumber: %s", os.path.basename(file_path))
+            return "\n".join(parts)
+    except Exception:
+        pass
+    # 2) pypdf (с попыткой расшифровки)
+    try:
+        import pypdf  # type: ignore
+        parts = []
+        with open(file_path, 'rb') as f:
+            r = pypdf.PdfReader(f)
+            try:
+                if getattr(r, 'is_encrypted', False):
+                    try:
+                        r.decrypt("")
+                    except Exception:
+                        try:
+                            r.decrypt(None)  # type: ignore[arg-type]
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+            for p in r.pages:
+                t = p.extract_text() or ""
+                if t:
+                    parts.append(t)
+        if parts:
+            app.logger.info("PDF extracted via pypdf: %s", os.path.basename(file_path))
+            return "\n".join(parts)
+    except Exception:
+        pass
+    # 3) pdfminer.six
+    try:
+        from pdfminer.high_level import extract_text as pdfminer_extract_text  # type: ignore
+        t = pdfminer_extract_text(file_path) or ""
+        if t.strip():
+            app.logger.info("PDF extracted via pdfminer.six: %s", os.path.basename(file_path))
+            return t
+    except Exception:
+        pass
+    # 4) PyMuPDF (fitz) — опционально, если установлен
+    try:
+        import fitz  # type: ignore
+        doc = fitz.open(file_path)
+        parts = []
+        for page in doc:
+            t = page.get_text("text") or ""
+            if t:
+                parts.append(t)
+        if parts:
+            app.logger.info("PDF extracted via PyMuPDF(fitz): %s", os.path.basename(file_path))
+            return "\n".join(parts)
+    except Exception:
+        pass
+    return ""
 
 def extract_text_from_docx(file_path):
     """Извлечение текста из DOCX файла"""
     try:
         doc = docx.Document(file_path)
-        text = ""
+        parts = []
+        # Параграфы
         for paragraph in doc.paragraphs:
-            text += paragraph.text + "\n"
-        return text
+            if paragraph.text:
+                parts.append(paragraph.text)
+        # Таблицы (ячейки через |)
+        for table in doc.tables:
+            for row in table.rows:
+                row_txt = [cell.text for cell in row.cells if cell.text]
+                if row_txt:
+                    parts.append(" | ".join(row_txt))
+        return "\n".join(parts).strip()
     except Exception as e:
         print(f"Ошибка при чтении DOCX файла {file_path}: {str(e)}")
         return "Ошибка извлечения текста из DOCX"
@@ -326,6 +431,41 @@ def extract_text_from_file(file_path):
         print(f"Общая ошибка при обработке файла {file_path}: {str(e)}")
         return f"Ошибка обработки файла: {str(e)}"
 
+def extract_text_from_excel(file_path: str) -> str:
+    """Извлекает текст из Excel-файлов (.xlsx/.xls) для отображения.
+    - Для .xlsx использует openpyxl (read_only, data_only)
+    - Для .xls пытается использовать xlrd, если доступен; иначе возвращает пустую строку
+    Возвращает простой табличный текст, строки разделены переводами, ячейки — табуляцией.
+    """
+    try:
+        ext = os.path.splitext(file_path)[1].lower()
+        parts: list[str] = []
+        if ext == '.xlsx':
+            wb = openpyxl.load_workbook(file_path, data_only=True, read_only=True)
+            for ws in wb.worksheets:
+                parts.append(f"[Лист] {ws.title}")
+                for row in ws.iter_rows(values_only=True):
+                    vals = []
+                    for v in row:
+                        vals.append('' if v is None else str(v))
+                    parts.append('\t'.join(vals))
+        elif ext == '.xls':
+            try:
+                import xlrd  # type: ignore
+            except Exception:
+                return ''
+            wb = xlrd.open_workbook(file_path, on_demand=True)
+            for s in wb.sheets():
+                parts.append(f"[Лист] {s.name}")
+                for r in range(s.nrows):
+                    vals = []
+                    for c in range(s.ncols):
+                        vals.append(str(s.cell_value(r, c)))
+                    parts.append('\t'.join(vals))
+        return '\n'.join(parts)
+    except Exception:
+        return ''
+
 def search_in_files(search_terms):
     """НОВАЯ логика: поиск по сводному индексу (_search_index.txt), игнорируя заголовки.
     Группирует результаты по файлам и обновляет статусы file_status.
@@ -344,6 +484,9 @@ def search_in_files(search_terms):
     files_to_search = []
     for root, dirs, files in os.walk(uploads):
         for fname in files:
+            # Исключаем служебный индекс и временные Office-файлы
+            if fname == '_search_index.txt' or fname.startswith('~$') or fname.startswith('$'):
+                continue
             if allowed_file(fname):
                 rel_path = os.path.relpath(os.path.join(root, fname), uploads)
                 files_to_search.append(rel_path)
@@ -369,43 +512,74 @@ def search_in_files(search_terms):
         app.logger.exception(f'Ошибка поиска по индексу: {e}')
         matches = []
 
-    # Сгруппируем результаты по файлам (используем key 'title' если появится; fallback — не группировать)
-    grouped = {}
+    # Сгруппируем результаты по файлам и по ключевым словам внутри файла
+    grouped: dict[str, dict] = {}
     for m in matches:
         title = m.get('title') or m.get('source') or 'индекс'
-        d = grouped.setdefault(title, {'found_terms': set(), 'snippets': []})
-        d['found_terms'].add(m.get('keyword', ''))
-        if len(d['snippets']) < 3:
-            d['snippets'].append(m.get('snippet', ''))
+        kw = m.get('keyword', '')
+        snip = m.get('snippet', '')
+        g = grouped.setdefault(title, { 'by_term': {}, 'total': 0 })
+        tinfo = g['by_term'].setdefault(kw, { 'count': 0, 'snippets': [] })
+        tinfo['count'] += 1
+        g['total'] += 1
+        if len(tinfo['snippets']) < 3 and snip:
+            tinfo['snippets'].append(snip)
 
     # Обновим статусы известных файлов и подготовим выдачу
     found_files = set()
     for rel_path, data in grouped.items():
         # Статус обновляем только для реальных файлов из uploads
         if rel_path in files_to_search:
-            file_status[rel_path] = {
+            prev = file_status.get(rel_path, {})
+            # Составим агрегированный список терминов и до 3 сниппетов на термин
+            found_terms = []
+            context = []
+            for term, info in data['by_term'].items():
+                if not term:
+                    continue
+                found_terms.append(f"{term} ({info['count']})")
+                context.extend(info['snippets'][:3])
+            new_entry = {
                 'status': 'contains_keywords',
-                'found_terms': sorted([t for t in data['found_terms'] if t]),
-                'context': data['snippets'],
+                'found_terms': found_terms,
+                'context': context[: max(3, len(context))],
                 'processed_at': datetime.now().isoformat()
             }
+            # Не затираем ранее сохранённые поля (char_count, error, original_name)
+            for k in ('char_count','error','original_name'):
+                if k in prev:
+                    new_entry[k] = prev[k]
+            file_status[rel_path] = new_entry
             found_files.add(rel_path)
         # Добавляем в выдачу, даже если файл виртуальный (например, внутри архива)
+        # Формируем блоки по каждому ключевому слову
+        per_term = []
+        for term, info in data['by_term'].items():
+            per_term.append({
+                'term': term,
+                'count': info['count'],
+                'snippets': info['snippets']
+            })
         results.append({
             'filename': os.path.basename(rel_path) if isinstance(rel_path, str) else str(rel_path),
             'source': rel_path,
             'path': rel_path if rel_path in files_to_search else None,
-            'found_terms': sorted([t for t in data['found_terms'] if t]),
-            'context': data['snippets']
+            'total': data['total'],
+            'per_term': per_term
         })
 
     # Реальным файлам без совпадений — статус "нет ключевых слов"
     for rel_path in files_to_search:
         if rel_path not in found_files:
-            file_status[rel_path] = {
+            prev = file_status.get(rel_path, {})
+            new_entry = {
                 'status': 'no_keywords',
                 'processed_at': datetime.now().isoformat()
             }
+            for k in ('char_count','error','original_name'):
+                if k in prev:
+                    new_entry[k] = prev[k]
+            file_status[rel_path] = new_entry
 
     app.logger.info(f"Поиск завершён: найдено {len(matches)} совпадений, групп: {len(grouped)}")
     return results
@@ -426,57 +600,63 @@ def index():
         # Рекурсивно обходим все файлы и папки
         for root, dirs, files in os.walk(app.config['UPLOAD_FOLDER']):
             for filename in files:
-                if allowed_file(filename):
-                    file_path = os.path.join(root, filename)
-                    # Определяем относительную папку
-                    relative_folder = os.path.relpath(root, app.config['UPLOAD_FOLDER'])
-                    
-                    # Правильно определяем название папки
-                    if relative_folder == '.':
-                        # Файлы в корневой папке uploads
-                        folder_display_name = '📁 Загруженные файлы'
-                        folder_key = 'root'
-                    else:
-                        # Файлы в подпапках - берем последнюю часть пути и восстанавливаем оригинальное имя
-                        folder_parts = relative_folder.split(os.sep)
-                        original_folder_name = folder_parts[-1]
-                        # Показываем оригинальное имя папки
-                        folder_display_name = f'📂 {original_folder_name}'
-                        folder_key = relative_folder
-                    
-                    file_size = os.path.getsize(file_path)
-                    # Получаем статус файла из новой структуры данных
-                    file_key = os.path.join(relative_folder, filename) if relative_folder != '.' else filename
-                    file_data = file_status.get(file_key, {})
-                    status = file_data.get('status', 'not_checked')
-                    
-                    # Получаем оригинальное имя файла если оно сохранено, иначе используем текущее
-                    display_name = file_data.get('original_name', filename)
-                    
-                    file_info = {
-                        'name': display_name,
-                        'size': file_size,
-                        'status': status,
-                        'path': file_key,
-                        'relative_folder': relative_folder
+                # Скрываем служебный индексный файл и временные файлы Office
+                if filename == '_search_index.txt' or filename.startswith('~$') or filename.startswith('$'):
+                    continue
+                file_path = os.path.join(root, filename)
+                # Определяем относительную папку
+                relative_folder = os.path.relpath(root, app.config['UPLOAD_FOLDER'])
+
+                # Правильно определяем название папки
+                if relative_folder == '.':
+                    folder_display_name = '📁 Загруженные файлы'
+                    folder_key = 'root'
+                else:
+                    folder_parts = relative_folder.split(os.sep)
+                    original_folder_name = folder_parts[-1]
+                    folder_display_name = f'📂 {original_folder_name}'
+                    folder_key = relative_folder
+
+                file_size = os.path.getsize(file_path)
+                file_key = os.path.join(relative_folder, filename) if relative_folder != '.' else filename
+                file_data = file_status.get(file_key, {})
+                status = file_data.get('status', 'not_checked')
+                # Если формат не поддерживается — пометим явно
+                if not allowed_file(filename):
+                    status = 'unsupported'
+                    file_data = {**file_data, 'status': 'unsupported', 'error': 'Неподдерживаемый формат'}
+                    file_status[file_key] = file_data
+
+                display_name = file_data.get('original_name', filename)
+                file_info = {
+                    'name': display_name,
+                    'size': file_size,
+                    'status': status,
+                    'path': file_key,
+                    'relative_folder': relative_folder
+                }
+
+                if folder_key not in files_by_folder:
+                    files_by_folder[folder_key] = {
+                        'display_name': folder_display_name,
+                        'relative_path': relative_folder,
+                        'files': []
                     }
-                    
-                    if folder_key not in files_by_folder:
-                        files_by_folder[folder_key] = {
-                            'display_name': folder_display_name,
-                            'relative_path': relative_folder,
-                            'files': []
-                        }
-                    
-                    files_by_folder[folder_key]['files'].append(file_info)
-                    total_files += 1
-                    
-                    app.logger.debug(f"Добавлен файл: {filename} в папку {folder_display_name}, размер: {file_size}, статус: {status}")
+
+                files_by_folder[folder_key]['files'].append(file_info)
+                total_files += 1
+                app.logger.debug(f"Добавлен файл: {filename} в папку {folder_display_name}, размер: {file_size}, статус: {status}")
     else:
         app.logger.warning("Папка uploads не существует")
     
     app.logger.info(f"Всего файлов для отображения: {total_files}, папок: {len(files_by_folder)}")
-    return render_template('index.html', files_by_folder=files_by_folder, total_files=total_files, last_search_terms=last_search_terms)
+    return render_template(
+        'index.html',
+        files_by_folder=files_by_folder,
+        total_files=total_files,
+        last_search_terms=last_search_terms,
+        file_status=file_status,
+    )
 
 @app.route('/upload', methods=['POST'])
 def upload_files():
@@ -491,6 +671,11 @@ def upload_files():
         if file and file.filename != '':
             original_filename = file.filename
             app.logger.info(f"Загружается файл: {original_filename}")
+            # Пропускаем временные файлы Office (например, ~$file.docx)
+            base_name = os.path.basename(original_filename)
+            if base_name.startswith('~$') or base_name.startswith('$'):
+                app.logger.info(f"Пропуск временного файла Office: {original_filename}")
+                continue
             
             if allowed_file(original_filename):
                 # Обрабатываем путь из webkitRelativePath если есть (для папок)
@@ -587,9 +772,55 @@ def build_index():
     try:
         dp = DocumentProcessor()
         app.logger.info("Запуск явной сборки индекса для uploads")
-        index_path = dp.create_search_index(uploads)
+        # Создаём индекс в uploads, затем переносим в index/
+        tmp_index_path = dp.create_search_index(uploads)
+        os.makedirs(app.config['INDEX_FOLDER'], exist_ok=True)
+        index_path = _index_file_path()
+        try:
+            if os.path.exists(tmp_index_path):
+                shutil.move(tmp_index_path, index_path)
+            else:
+                # На всякий случай, если реализация уже пишет в index_folder
+                if os.path.exists(index_path):
+                    pass
+        except Exception:
+            app.logger.exception('Не удалось переместить индекс в папку index')
         size = os.path.getsize(index_path) if os.path.exists(index_path) else 0
         app.logger.info(f"Индекс собран: {index_path}, размер: {size} байт")
+        # Обновим количество распознанных символов по каждому реальному файлу и статусы ошибок/неподдержки
+        try:
+            counts = _parse_index_char_counts(index_path)
+            # Список всех файлов в uploads
+            all_files: list[str] = []
+            for root, dirs, files in os.walk(uploads):
+                for fname in files:
+                    if fname == '_search_index.txt' or fname.startswith('~$') or fname.startswith('$'):
+                        continue
+                    rel_path = os.path.relpath(os.path.join(root, fname), uploads)
+                    all_files.append(rel_path)
+            for rel_path in all_files:
+                ext_ok = allowed_file(rel_path)
+                entry = file_status.get(rel_path, {})
+                if not ext_ok:
+                    # Неподдерживаемый формат
+                    entry.update({'status': 'unsupported', 'error': 'Неподдерживаемый формат', 'char_count': 0, 'processed_at': datetime.now().isoformat()})
+                else:
+                    cc = counts.get(rel_path)
+                    if cc is None:
+                        # Поддерживаемый, но нет записи в индексе — ошибка чтения/индексации
+                        entry.update({'status': entry.get('status', 'error' if entry.get('status') in (None, 'not_checked') else entry.get('status')),
+                                      'error': entry.get('error') or 'Ошибка чтения или не проиндексирован',
+                                      'char_count': 0,
+                                      'processed_at': datetime.now().isoformat()})
+                    else:
+                        # Есть счётчик символов — не трогаем статус поиска, только дополняем метрикой
+                        entry.update({'char_count': cc, 'processed_at': datetime.now().isoformat()})
+                        # если 0 символов, оставим это как индикатор качества (UI подсветит)
+                file_status[rel_path] = entry
+            # Сохраним
+            save_search_results()
+        except Exception:
+            app.logger.exception('Не удалось обновить char_count по индексу')
         return jsonify({'success': True, 'index_path': index_path, 'size': size})
     except Exception as e:
         app.logger.exception("Ошибка при сборке индекса")
@@ -706,9 +937,15 @@ def download_file(filepath: str):
         # Запрещаем скачивание скрытых и служебных файлов
         if os.path.basename(decoded).startswith('.'):
             return jsonify({'error': 'Файл недоступен'}), 403
-        # Ограничим типы по whitelist
-        if not allowed_file(decoded):
-            return jsonify({'error': 'Неподдерживаемый тип файла'}), 400
+        # Разрешаем скачивание/просмотр, если формат поддерживаемый для индексации
+        # или если это безопасный для inline предпросмотра тип (изображения, pdf)
+        ext = os.path.splitext(decoded)[1].lower().lstrip('.')
+        # Блокируем скачивание для файлов, отмеченных как нечитаемые (unsupported/error/char_count==0)
+        meta = file_status.get(decoded) or file_status.get(os.path.basename(decoded)) or {}
+        if meta.get('status') in ('unsupported','error') or (meta.get('char_count') == 0):
+            return jsonify({'error': 'Файл недоступен для скачивания'}), 403
+        if not allowed_file(decoded) and ext not in PREVIEW_INLINE_EXTENSIONS:
+            return jsonify({'error': 'Неподдерживаемый тип файла'}), 403
         directory = app.config['UPLOAD_FOLDER']
         # Разбиваем путь на каталог и имя
         full_path = os.path.join(directory, decoded)
@@ -716,9 +953,158 @@ def download_file(filepath: str):
             return jsonify({'error': 'Файл не найден'}), 404
         folder = os.path.dirname(decoded)
         fname = os.path.basename(decoded)
-        return send_from_directory(os.path.join(directory, folder) if folder else directory, fname, as_attachment=False)
+        # В зависимости от параметра query отдаём как inline или attachment
+        dl = request.args.get('download') in ('1', 'true', 'yes')
+        
+        # Для PDF отдаём через утилиту с поддержкой Range и корректными заголовками
+        if ext == 'pdf':
+            # Отдаём PDF напрямую: как inline или attachment по параметру download
+            app.logger.info(f"event=pdf.send.start rid={getattr(g,'rid',None)} path='{decoded}' inline={not dl} range_in='{request.headers.get('Range')}'")
+            resp = send_from_directory(os.path.join(directory, folder) if folder else directory, fname, as_attachment=dl, mimetype='application/pdf')
+            try:
+                disp = 'attachment' if dl else 'inline'
+                from urllib.parse import quote as _quote
+                fname_enc = _quote(fname, safe='')
+                resp.headers['Content-Disposition'] = f"{disp}; filename=\"{fname}\"; filename*=UTF-8''{fname_enc}"
+                # Подсветим поддержку диапазонов
+                if 'Accept-Ranges' not in resp.headers:
+                    resp.headers['Accept-Ranges'] = 'bytes'
+            except Exception:
+                pass
+            return resp
+        
+        # Для остальных файлов — стандартная логика
+        resp = send_from_directory(os.path.join(directory, folder) if folder else directory, fname, as_attachment=dl)
+        try:
+            disp = 'attachment' if dl else 'inline'
+            from urllib.parse import quote as _quote
+            fname_enc = _quote(fname, safe='')
+            resp.headers['Content-Disposition'] = f"{disp}; filename=\"{fname}\"; filename*=UTF-8''{fname_enc}"
+        except Exception:
+            try:
+                resp.headers['Content-Disposition'] = f'{disp}; filename="{fname}"'
+            except Exception:
+                pass
+        return resp
     except Exception as e:
         app.logger.exception('download_file error')
+        return jsonify({'error': str(e)}), 500
+
+
+@app.get('/view/<path:filepath>')
+def view_file(filepath: str):
+    """Отображение содержимого поддерживаемого файла как веб-страницы.
+    Поддержка txt/csv/tsv/json/xml/html напрямую; для офисных/PDF будет предпринята
+    простая текстовая конвертация. Неподдерживаемые — 403.
+    """
+    try:
+        decoded = unquote(filepath)
+        if not _is_safe_subpath(app.config['UPLOAD_FOLDER'], decoded):
+            return jsonify({'error': 'Недопустимый путь'}), 400
+        if os.path.basename(decoded).startswith('.'):
+            return jsonify({'error': 'Файл недоступен'}), 403
+        full_path = os.path.join(app.config['UPLOAD_FOLDER'], decoded)
+        if not os.path.isfile(full_path):
+            return jsonify({'error': 'Файл не найден'}), 404
+        ext = os.path.splitext(full_path)[1].lower().lstrip('.')
+        # Разрешаем просмотр, если файл поддерживается для индексации ИЛИ безопасен для inline просмотра
+        # Блокируем просмотр для файлов, отмеченных как нечитаемые (unsupported/error/char_count==0)
+        rel_key = decoded
+        meta = file_status.get(rel_key) or file_status.get(os.path.basename(rel_key)) or {}
+        if meta.get('status') in ('unsupported','error') or (meta.get('char_count') == 0):
+            return jsonify({'error': 'Файл недоступен для просмотра'}), 403
+        if not allowed_file(full_path) and ext not in PREVIEW_INLINE_EXTENSIONS:
+            return jsonify({'error': 'Неподдерживаемый тип файла'}), 403
+
+        title = os.path.basename(decoded)
+        html_body = ''
+        # Прямая отдача HTML/HTM (как есть, безопасно, без исполнения скриптов — браузер сам экранирует источник)
+        if ext in {'html','htm'}:
+            with open(full_path, 'r', encoding='utf-8', errors='ignore') as f:
+                html_body = f.read()
+            return render_template('view.html', title=title, content=Markup(html_body))
+
+        # Для изображений всегда отдаём inline через браузерный рендерер
+        if ext in {'png','jpg','jpeg','gif','webp','svg'}:
+            return redirect(url_for('download_file', filepath=decoded))
+
+        # Для PDF проверяем, какой режим запрошен:
+        # - ?mode=inline -> браузерный просмотрщик
+        # - по умолчанию -> текстовый режим с подсветкой
+        # PDF: режим inline больше не используем для проблемных файлов.
+        # Для явного текста PDF ниже попытаемся извлечь; если пусто — принудительно скачиваем.
+
+        def _read_text(path: str) -> str:
+            try:
+                import chardet
+                raw = open(path, 'rb').read()
+                enc = chardet.detect(raw).get('encoding') or 'utf-8'
+                return raw.decode(enc, errors='ignore')
+            except Exception:
+                try:
+                    return open(path, 'r', encoding='utf-8', errors='ignore').read()
+                except Exception:
+                    return ''
+
+                # (удалено) вложенная extract_text_from_excel — используем одноимённую функцию верхнего уровня
+
+        if ext in {'txt','csv','tsv','xml','json'}:
+            text = _read_text(full_path)
+            # Простая табличная визуализация для CSV/TSV
+            if ext in {'csv','tsv'}:
+                import csv, io
+                delimiter = ',' if ext=='csv' else '\t'
+                reader = csv.reader(io.StringIO(text), delimiter=delimiter)
+                rows = list(reader)
+                table_html = ['<table class="table table-sm" style="width:100%; border-collapse: collapse;">']
+                for r in rows:
+                    table_html.append('<tr>')
+                    for cell in r:
+                        table_html.append(f'<td style="border:1px solid #ddd; padding:4px;">{Markup.escape(cell)}</td>')
+                    table_html.append('</tr>')
+                table_html.append('</table>')
+                html_body = '\n'.join(table_html)
+            else:
+                # Для json/xml экранируем и показываем как pre
+                html_body = f'<pre style="white-space: pre-wrap;">{Markup.escape(text)}</pre>'
+            return render_template('view.html', title=title, content=Markup(html_body))
+
+        # Базовая текстовая конвертация для office/pdf — быстрый рендер в <pre>
+        extracted = ''
+        try:
+            if ext == 'pdf':
+                app.logger.info(f"event=pdf.extract.start rid={getattr(g,'rid',None)} path='{decoded}'")
+                # Оставляем быстрый, простой путь: пробуем pdfplumber/pypdf/pdfminer/PyMuPDF, если доступны
+                extracted = extract_text_from_pdf(full_path) or ''
+                app.logger.info(
+                    f"event=pdf.extract.end rid={getattr(g,'rid',None)} path='{decoded}' text_len={len(extracted)}"
+                )
+            elif ext == 'docx':
+                extracted = extract_text_from_docx(full_path) or ''
+            elif ext == 'doc':
+                extracted = extract_text_from_doc(full_path) or ''
+            elif ext in {'xlsx','xls'}:
+                extracted = extract_text_from_excel(full_path) or ''
+        except Exception:
+            app.logger.exception('Ошибка извлечения текста для view')
+        if not extracted:
+            # Если текст извлечь не удалось — не открываем inline, а предлагаем скачать
+            app.logger.warning(
+                f"event=pdf.view.fallback rid={getattr(g,'rid',None)} path='{decoded}' reason=no_text -> force_download"
+            )
+            folder = os.path.dirname(decoded)
+            fname = os.path.basename(decoded)
+            resp = send_from_directory(os.path.join(app.config['UPLOAD_FOLDER'], folder) if folder else app.config['UPLOAD_FOLDER'], fname, as_attachment=True, mimetype='application/pdf')
+            try:
+                from urllib.parse import quote as _quote
+                fname_enc = _quote(fname, safe='')
+                resp.headers['Content-Disposition'] = f"attachment; filename=\"{fname}\"; filename*=UTF-8''{fname_enc}"
+            except Exception:
+                pass
+            return resp
+        return render_template('view.html', title=title, content=Markup(f'<pre style="white-space: pre-wrap;">{Markup.escape(extracted)}</pre>'))
+    except Exception as e:
+        app.logger.exception('view_file error')
         return jsonify({'error': str(e)}), 500
 
 
@@ -733,6 +1119,9 @@ def files_json():
     for root, dirs, files in os.walk(uploads):
         rel_dir = os.path.relpath(root, uploads)
         for filename in files:
+            # Скрываем служебный индексный файл и временные файлы Office
+            if filename == '_search_index.txt' or filename.startswith('~$') or filename.startswith('$'):
+                continue
             if not allowed_file(filename):
                 continue
             file_path = os.path.join(root, filename)
@@ -741,10 +1130,13 @@ def files_json():
             folder_name = '📁 Загруженные файлы' if rel_dir == '.' else f'📂 {os.path.basename(rel_dir)}'
             if folder_key not in files_by_folder:
                 files_by_folder[folder_key] = {'display_name': folder_name, 'relative_path': rel_dir if rel_dir != '.' else '', 'files': []}
+            meta = file_status.get(rel_path, {})
             files_by_folder[folder_key]['files'].append({
                 'name': filename,
                 'size': os.path.getsize(file_path),
-                'status': file_status.get(rel_path, {}).get('status', 'not_checked'),
+                'status': meta.get('status', 'not_checked'),
+                'char_count': meta.get('char_count'),
+                'error': meta.get('error'),
                 'path': rel_path
             })
             total_files += 1
@@ -753,8 +1145,24 @@ def files_json():
 
 @app.get('/index_status')
 def index_status():
-    """Статус индексного файла uploads/_search_index.txt: наличие, размер, mtime, записи."""
+    """Статус индексного файла index/_search_index.txt: наличие, размер, mtime, записи."""
     try:
+        # Если в текущей папке uploads нет поддерживаемых файлов, считаем индекс отсутствующим
+        uploads = app.config.get('UPLOAD_FOLDER', 'uploads')
+        has_files = False
+        if os.path.exists(uploads):
+            for root, dirs, files in os.walk(uploads):
+                for fname in files:
+                    if fname == '_search_index.txt' or fname.startswith('~$') or fname.startswith('$'):
+                        continue
+                    if allowed_file(fname):
+                        has_files = True
+                        break
+                if has_files:
+                    break
+        if not has_files:
+            return jsonify({'exists': False})
+
         idx = _index_file_path()
         exists = os.path.exists(idx)
         if not exists:
@@ -780,66 +1188,30 @@ def index_status():
 def request_entity_too_large(e):
     return jsonify({'error': 'Файл слишком большой. Лимит 100MB.'}), 413
 
-# Страница с результатом обработки файла
-@app.route('/result/<path:filepath>')
-def result_page(filepath):
-    """Отображение результатов обработки файла"""
-    # Декодируем путь к файлу
-    from urllib.parse import unquote
-    decoded_filepath = unquote(filepath)
-    
-    app.logger.info(f"Ищем результаты для файла: {decoded_filepath}")
-    
-    # Пробуем найти результат по полному пути
-    result = file_status.get(decoded_filepath, {})
-    
-    # Если не найден, пробуем по короткому имени файла
-    if not result:
-        short_filename = os.path.basename(decoded_filepath)
-        result = file_status.get(short_filename, {})
-        app.logger.debug(f"Поиск по короткому имени {short_filename}: найдено={bool(result)}")
-    
-    # Если все еще не найден, пробуем найти любой файл с таким же именем
-    if not result:
-        for key, data in file_status.items():
-            if os.path.basename(key) == os.path.basename(decoded_filepath):
-                result = data
-                decoded_filepath = key  # Обновляем путь на найденный
-                app.logger.debug(f"Найден результат по базовому имени: {key}")
-                break
-    
-    status = result.get('status', 'not_checked')
-    
-    # Получаем данные результата в зависимости от структуры
-    if 'found_terms' in result:
-        # Новая структура
-        found_terms = result.get('found_terms', [])
-        context = result.get('context', [])
-        data = {
-            'filename': os.path.basename(decoded_filepath),
-            'found_terms': found_terms,
-            'context': context
-        }
-    else:
-        # Старая структура
-        data = result.get('result', None)
-    
-    # Получаем последние ключевые слова для подсветки
-    last_terms = getattr(save_search_results, 'last_terms', '')
-    
-    app.logger.info(f"Результат для {decoded_filepath}: status={status}, data={bool(data)}")
-    
-    return render_template('result.html', 
-                         filename=os.path.basename(decoded_filepath), 
-                         filepath=decoded_filepath,
-                         status=status, 
-                         data=data, 
-                         search_terms=last_terms)
+# Просмотр сводного файла индекса в отдельной вкладке
+@app.get('/view_index')
+def view_index():
+    idx = _index_file_path()
+    if not os.path.exists(idx):
+        return jsonify({'error': 'Индекс не найден'}), 404
+    try:
+        with open(idx, 'r', encoding='utf-8', errors='ignore') as f:
+            content = f.read()
+        from flask import Response
+        return Response(content, mimetype='text/plain; charset=utf-8')
+    except Exception as e:
+        app.logger.exception('Ошибка чтения сводного файла индекса')
+        return jsonify({'error': str(e)}), 500
 
 # Логирование HTTP-запросов: время, путь, статус
 @app.before_request
 def _start_timer():
     g._start_time = time.time()
+    try:
+        import uuid
+        g.rid = uuid.uuid4().hex
+    except Exception:
+        g.rid = None
 
 @app.after_request
 def _log_request(response):
@@ -862,6 +1234,9 @@ def clear_results():
 @app.get('/health')
 def health():
     return jsonify({'status': 'ok'}), 200
+
+
+
 
 
 def _ensure_uploads_dir():

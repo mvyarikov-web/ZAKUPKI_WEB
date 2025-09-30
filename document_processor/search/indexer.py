@@ -7,7 +7,7 @@ from typing import Iterable, Tuple, List
 import logging
 
 HEADER_BAR = "=" * 31
-SUPPORTED_EXT = {"pdf", "doc", "docx", "xls", "xlsx", "txt", "zip", "rar"}
+SUPPORTED_EXT = {"pdf", "doc", "docx", "xls", "xlsx", "txt", "zip", "rar", "html", "htm", "csv", "tsv", "xml", "json"}
 DOC_EXTS = {"doc", "docx"}
 
 class Indexer:
@@ -39,6 +39,12 @@ class Indexer:
             if depth > self.max_depth:
                 continue
             for name in sorted(filenames):
+                # Пропускаем временные файлы Office (обычно начинаются с ~$ или $)
+                if name.startswith("~$") or name.startswith("$"):
+                    continue
+                # Пропускаем сам сводный индекс
+                if name == "_search_index.txt":
+                    continue
                 ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
                 if ext in SUPPORTED_EXT:
                     abs_path = os.path.join(dirpath, name)
@@ -115,10 +121,34 @@ class Indexer:
         try:
             if ext == "txt":
                 text = self._read_text_with_encoding(abs_path)
+            elif ext in {"html", "htm"}:
+                raw = self._read_text_with_encoding(abs_path)
+                text = self._html_to_text(raw)
+            elif ext in {"xml", "json"}:
+                text = self._read_text_with_encoding(abs_path)
+            elif ext in {"csv", "tsv"}:
+                sep = "," if ext == "csv" else "\t"
+                try:
+                    import csv
+                    with open(abs_path, "r", encoding="utf-8", errors="ignore") as f:
+                        rows = list(csv.reader(f, delimiter=sep))
+                    text = "\n".join([" | ".join(row) for row in rows])
+                except Exception:
+                    text = self._read_text_with_encoding(abs_path)
             elif ext == "pdf":
                 text = self._extract_pdf(abs_path)
                 if not text.strip():
-                    ocr_text = self._ocr_pdf_first_page(abs_path)
+                    # Fallback: pdfminer.six
+                    try:
+                        from pdfminer.high_level import extract_text  # type: ignore
+                        t2 = extract_text(abs_path) or ""
+                        if t2.strip():
+                            text = t2
+                    except Exception:
+                        pass
+                if not text.strip():
+                    # OCR первых страниц (best effort)
+                    ocr_text = self._ocr_pdf_pages(abs_path, max_pages=3)
                     if ocr_text:
                         text = ocr_text
                         ocr_used = True
@@ -151,6 +181,9 @@ class Indexer:
         return text, meta
 
     def _write_entry(self, out, rel_path: str, text: str, meta: dict):
+        # Дополнительная защита: не пишем запись для самого индексного файла
+        if os.path.basename(rel_path) == "_search_index.txt":
+            return
         out.write(f"{HEADER_BAR}\n")
         out.write(f"ЗАГОЛОВОК: {rel_path}\n")
         out.write(
@@ -201,6 +234,20 @@ class Indexer:
         t = re.sub(r"\s+", " ", t)
         return t.strip()
 
+    def _html_to_text(self, html: str) -> str:
+        """Очень простая очистка HTML без внешних зависимостей: убираем теги, скрипты/стили, декодируем сущности."""
+        if not html:
+            return ""
+        import re, html as h
+        # Удаляем содержимое <script> и <style>
+        cleaned = re.sub(r"<script[\s\S]*?</script>", " ", html, flags=re.IGNORECASE)
+        cleaned = re.sub(r"<style[\s\S]*?</style>", " ", cleaned, flags=re.IGNORECASE)
+        # Удаляем остальные теги
+        cleaned = re.sub(r"<[^>]+>", " ", cleaned)
+        # Декодируем HTML-сущности
+        cleaned = h.unescape(cleaned)
+        return cleaned
+
     def _estimate_quality(self, text: str) -> int:
         if not text:
             return 0
@@ -225,31 +272,67 @@ class Indexer:
                 txt = []
                 with open(path, "rb") as f:
                     r = pypdf.PdfReader(f)
+                    # Попробуем расшифровать без пароля (часто помогает для "безопасных" PDF)
+                    try:
+                        if getattr(r, "is_encrypted", False):
+                            try:
+                                r.decrypt("")
+                            except Exception:
+                                try:
+                                    r.decrypt(None)  # type: ignore[arg-type]
+                                except Exception:
+                                    pass
+                    except Exception:
+                        pass
                     for p in r.pages:
                         t = p.extract_text() or ""
                         if t:
                             txt.append(t)
                 return "\n".join(txt).strip()
             except Exception:
-                return ""
+                # PyMuPDF (fitz) как дополнительный fallback
+                try:
+                    import fitz  # type: ignore
+                    doc = fitz.open(path)
+                    parts = []
+                    for page in doc:
+                        t = page.get_text("text") or ""
+                        if t:
+                            parts.append(t)
+                    return "\n".join(parts).strip()
+                except Exception:
+                    return ""
 
-    def _ocr_pdf_first_page(self, path: str) -> str:
-        # Best-effort: OCR first page only, if deps installed
+    def _ocr_pdf_pages(self, path: str, max_pages: int = 3) -> str:
+        """Best-effort OCR: конвертирует первые N страниц в изображения и распознаёт текст.
+        Требует системные зависимости (poppler для pdf2image и tesseract для OCR)."""
+        if max_pages <= 0:
+            return ""
         try:
             from pdf2image import convert_from_path  # type: ignore
             import pytesseract  # type: ignore
-            from PIL import Image  # type: ignore
+            from PIL import Image  # type: ignore  # noqa: F401
         except Exception:
+            # Зависимости не установлены — спокойно пропускаем
+            self._log.debug("OCR пропущен: отсутствуют зависимости pdf2image/pytesseract/Pillow")
             return ""
         try:
-            images = convert_from_path(path, first_page=1, last_page=1)
-            if not images:
-                return ""
-            img = images[0]
-            text = pytesseract.image_to_string(img, lang="rus+eng")
-            return text or ""
+            images = convert_from_path(path)
         except Exception:
+            # Возможно, отсутствует poppler (pdftoppm/pdftocairo)
+            self._log.debug("OCR пропущен: не удалось конвертировать PDF в изображения (вероятно, нет poppler)")
             return ""
+        if not images:
+            return ""
+        texts: List[str] = []
+        for img in images[:max_pages]:
+            try:
+                t = pytesseract.image_to_string(img, lang="rus+eng")
+                if t and t.strip():
+                    texts.append(t)
+            except Exception:
+                continue
+        return "\n".join(texts).strip()
 
     def _extract_docx(self, path: str) -> str:
         try:
