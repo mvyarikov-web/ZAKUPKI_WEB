@@ -24,12 +24,19 @@ app = create_app('dev')
 
 if __name__ == '__main__':
     # Параметры для dev-сервера
-    host = os.environ.get('FLASK_HOST', '0.0.0.0')
-    port = int(os.environ.get('FLASK_PORT', 5000))
+    host = os.environ.get('FLASK_HOST', '127.0.0.1')
+    port = int(os.environ.get('FLASK_PORT', 8081))
     debug = os.environ.get('FLASK_DEBUG', 'True').lower() in ('true', '1', 'yes')
     
     app.logger.info(f'Запуск dev-сервера на http://{host}:{port}')
     app.logger.info(f'Debug mode: {debug}')
     
+    # Явно сообщаем пользователю о запуске
+    print(f'\n{"="*60}')
+    print(f'🚀 Сервер запускается...')
+    print(f'📍 Адрес: http://{host}:{port}')
+    print(f'🔧 Debug mode: {debug}')
+    print(f'{"="*60}\n')
+    
     # Запуск встроенного Flask-сервера (только для разработки!)
-    app.run(host=host, port=port, debug=debug)
+    app.run(host=host, port=port, debug=debug, use_reloader=debug)
