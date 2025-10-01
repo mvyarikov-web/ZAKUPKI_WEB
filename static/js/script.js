@@ -225,15 +225,7 @@ function renderFileItem(file, archivesMap, file_statuses) {
     // FR-005: Определяем цвет светофора
     // Зелёный=найдено, Жёлтый=не найдено, Красный=ошибка, Серый=нейтральный
     let trafficLight = 'gray'; // по умолчанию
-    if (status === 'contains_keywords') {
-        trafficLight = 'green';  // Зелёный: слова найдены
-    } else if (status === 'no_keywords') {
-        trafficLight = 'yellow';  // Жёлтый: слова не найдены
-    } else if (status === 'error') {
-        trafficLight = 'red';  // Красный: ошибка чтения/индексации
-    } else if (status === 'unsupported') {
-        trafficLight = 'gray';  // Серый: неподдерживаемый формат
-    }
+
     
     // Проверяем, является ли файл архивом
     if (file.is_archive && archivesMap.has(file.path)) {
@@ -304,8 +296,8 @@ function renderFileItem(file, archivesMap, file_statuses) {
                 
                 // Получаем статус для файла из архива
                 const entryStatus = file_statuses[entry.path] || {};
-                const entryTrafficLight = getTrafficLightColor(entryStatus.status || 'not_checked');
-                const entryCharCount = entryStatus.char_count;
+                const entryCharCount = entryStatus.char_count || 0;
+                const entryTrafficLight = getTrafficLightColor(entryStatus.status || 'not_checked', entryCharCount);
                 
                 entryDiv.innerHTML = `
                     <div class="file-info">
@@ -313,7 +305,7 @@ function renderFileItem(file, archivesMap, file_statuses) {
                         <div class="file-details">
                             <a class="file-name result-file-link" href="/view/${encodeURIComponent(entry.path)}" target="_blank" rel="noopener">${escapeHtml(entry.name)}</a>
                             <span class="file-size">${(entry.size / 1024).toFixed(1)} KB</span>
-                            ${entryCharCount !== undefined ? `<span class="file-chars">Символов: ${entryCharCount}</span>` : ''}
+                            ${entryCharCount !== undefined ? `<span class="file-chars${entryCharCount === 0 ? ' text-danger' : ''}">Символов: ${entryCharCount}</span>` : ''}
                         </div>
                     </div>
                     <span class="traffic-light traffic-light-${entryTrafficLight}" title="Статус: ${entryStatus.status || 'not_checked'}"></span>
@@ -371,31 +363,41 @@ function toggleArchive(archivePath) {
 }
 
 // FR-005: Helper function to get traffic light color based on status
-// Зелёный=найдено, Жёлтый=не найдено, Красный=ошибка, Серый=нейтральный
-function getTrafficLightColor(status) {
+// Зелёный=найдено, Жёлтый=не найдено, Красный=ошибка или char_count=0, Серый=нейтральный
+function getTrafficLightColor(status, charCount = null) {
     if (status === 'contains_keywords') return 'green';  // Зелёный: слова найдены
     if (status === 'no_keywords') return 'yellow';  // Жёлтый: слова не найдены
-    if (status === 'error') return 'red';  // Красный: ошибка чтения/индексации
+    if (status === 'error' || charCount === 0) return 'red';  // Красный: ошибка чтения/индексации или нет символов
     if (status === 'unsupported') return 'gray';  // Серый: неподдерживаемый формат
     return 'gray'; // not_checked or unknown
 }
 
 // FR-006, FR-007: Calculate folder status based on files inside
+// Логика: серый = файлы не считаны, зелёный = есть совпадения, жёлтый = нет совпадений, красный = все файлы с ошибками
 function calculateFolderStatus(files, file_statuses, archivesMap) {
     let hasGreen = false;
     let hasYellow = false;
     let hasRed = false;
+    let hasNotChecked = false;
+    let totalFiles = 0;
+    let errorFiles = 0;
     
     for (const file of files) {
         const fileStatus = file_statuses[file.path] || {};
         const status = fileStatus.status || 'not_checked';
+        const charCount = fileStatus.char_count || 0;
+        
+        totalFiles++;
         
         if (status === 'contains_keywords') {
             hasGreen = true;
         } else if (status === 'no_keywords') {
             hasYellow = true;
-        } else if (status === 'error') {
+        } else if (status === 'error' || charCount === 0) {
             hasRed = true;
+            errorFiles++;
+        } else {
+            hasNotChecked = true;
         }
         
         // FR-006: Если это архив, проверяем его содержимое
@@ -403,50 +405,79 @@ function calculateFolderStatus(files, file_statuses, archivesMap) {
             const archiveContents = archivesMap.get(file.path);
             for (const entry of archiveContents) {
                 const entryStatus = file_statuses[entry.path] || {};
+                const entryCharCount = entryStatus.char_count || 0;
+                totalFiles++;
+                
                 if (entryStatus.status === 'contains_keywords') {
                     hasGreen = true;
                 } else if (entryStatus.status === 'no_keywords') {
                     hasYellow = true;
-                } else if (entryStatus.status === 'error') {
+                } else if (entryStatus.status === 'error' || entryCharCount === 0) {
                     hasRed = true;
+                    errorFiles++;
+                } else {
+                    hasNotChecked = true;
                 }
             }
         }
     }
     
-    // Логика: зелёный если есть хотя бы одно совпадение, 
-    // красный если есть ошибки, жёлтый если все проверены и нет совпадений, серый иначе
+    // Новая логика светофоров для папок:
+    // Зелёный: есть хотя бы одно совпадение
+    // Красный: все файлы не удалось прочитать
+    // Жёлтый: совпадений нет, но файлы прочитаны
+    // Серый: файлы не считаны
     if (hasGreen) return 'green';
+    if (totalFiles > 0 && errorFiles === totalFiles) return 'red';
+    if (hasYellow && !hasNotChecked) return 'yellow';
     if (hasRed) return 'red';
     if (hasYellow) return 'yellow';
     return 'gray';
 }
 
 // FR-006: Calculate archive status based on its contents
+// Логика: серый = файлы не считаны, зелёный = есть совпадения, жёлтый = нет совпадений, красный = все файлы с ошибками
 function calculateArchiveStatus(archiveContents, file_statuses) {
     let hasGreen = false;
     let hasYellow = false;
     let hasRed = false;
+    let hasNotChecked = false;
+    let totalFiles = 0;
+    let errorFiles = 0;
     
     for (const entry of archiveContents) {
-        if (entry.status === 'error' || entry.is_virtual_folder) {
-            if (entry.status === 'error') hasRed = true;
+        if (entry.is_virtual_folder) {
+            continue; // Пропускаем виртуальные папки
+        }
+        
+        totalFiles++;
+        
+        if (entry.status === 'error') {
+            hasRed = true;
+            errorFiles++;
             continue;
         }
         
         const entryStatus = file_statuses[entry.path] || {};
         const status = entryStatus.status || 'not_checked';
+        const charCount = entryStatus.char_count || 0;
         
         if (status === 'contains_keywords') {
             hasGreen = true;
         } else if (status === 'no_keywords') {
             hasYellow = true;
-        } else if (status === 'error') {
+        } else if (status === 'error' || charCount === 0) {
             hasRed = true;
+            errorFiles++;
+        } else {
+            hasNotChecked = true;
         }
     }
     
+    // Новая логика светофоров для архивов:
     if (hasGreen) return 'green';
+    if (totalFiles > 0 && errorFiles === totalFiles) return 'red';
+    if (hasYellow && !hasNotChecked) return 'yellow';
     if (hasRed) return 'red';
     if (hasYellow) return 'yellow';
     return 'gray';

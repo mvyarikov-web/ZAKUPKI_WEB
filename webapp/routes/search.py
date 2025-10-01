@@ -139,10 +139,18 @@ def _search_in_files(search_terms):
     for rel_path in files_to_search:
         if rel_path not in found_files:
             prev = files_state.get_file_status(rel_path)
-            new_entry = {
-                'status': 'no_keywords',
-                'processed_at': datetime.now().isoformat()
-            }
+            # Проверяем char_count - если 0, то файл не удалось прочитать
+            char_count = prev.get('char_count', 0) if isinstance(prev, dict) else 0
+            if char_count == 0:
+                new_entry = {
+                    'status': 'error',
+                    'processed_at': datetime.now().isoformat()
+                }
+            else:
+                new_entry = {
+                    'status': 'no_keywords',
+                    'processed_at': datetime.now().isoformat()
+                }
             for k in ('char_count','error','original_name'):
                 if k in prev:
                     new_entry[k] = prev[k]
