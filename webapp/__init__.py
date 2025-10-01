@@ -28,7 +28,7 @@ def create_app(config_name=None):
     os.makedirs(app.config['INDEX_FOLDER'], exist_ok=True)
     os.makedirs(app.config['LOGS_DIR'], exist_ok=True)
     
-    # Настраиваем логирование
+        # Настраиваем логирование
     setup_logging(app)
     
     # Регистрируем обработчики ошибок

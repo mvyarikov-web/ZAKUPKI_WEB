@@ -162,10 +162,9 @@ function updateFilesList() {
                 folderDiv.className = 'folder-container';
                 folderDiv.id = folderId;
                 
-                // Вычисляем агрегированный статус для папки
-                const folderStatus = calculateFolderStatus(files, file_statuses, archivesMap);
-                
-                const headerDiv = document.createElement('div');
+        // Вычисляем агрегированный статус для папки
+        const searchPerformed = document.querySelectorAll('.file-search-results[style*="display: block"]').length > 0;
+        const folderStatus = calculateFolderStatus(files, file_statuses, archivesMap, searchPerformed);                const headerDiv = document.createElement('div');
                 headerDiv.className = 'folder-header';
                 headerDiv.onclick = () => toggleFolder(folderName);
                 
@@ -238,8 +237,10 @@ function renderFileItem(file, archivesMap, file_statuses) {
     const charCount = fileStatus.char_count;
     
     // FR-005: Определяем цвет светофора
-    // Зелёный=найдено, Жёлтый=не найдено, Красный=ошибка, Серый=нейтральный
-    let trafficLight = getTrafficLightColor(status, charCount);
+    // Проверяем, есть ли результаты поиска и был ли поиск
+    const hasSearchResults = window.TrafficLights.hasSearchResultsForFile(file.path);
+    const searchPerformed = window.TrafficLights.isSearchPerformed();
+    let trafficLight = window.TrafficLights.getFileTrafficLightColor(status, charCount, hasSearchResults, searchPerformed);
 
     
     // Проверяем, является ли файл архивом
@@ -251,7 +252,7 @@ function renderFileItem(file, archivesMap, file_statuses) {
         fileDiv.dataset.path = file.path; // FR-009: Сохраняем путь для localStorage
         
         // Вычисляем агрегированный статус для архива
-        const archiveStatus = calculateArchiveStatus(archiveContents, file_statuses);
+        const archiveStatus = calculateArchiveStatus(archiveContents, file_statuses, searchPerformed);
         
         // Проверяем сохранённое состояние архива
         const savedArchiveState = localStorage.getItem('archive-' + file.path);
@@ -353,6 +354,9 @@ function renderFileItem(file, archivesMap, file_statuses) {
         fileDiv.className = 'file-item-wrapper';
         fileDiv.setAttribute('data-file-path', file.path);
         
+        // Пересчитываем светофор для обычного файла с учетом поиска
+        trafficLight = window.TrafficLights.getFileTrafficLightColor(status, charCount, hasSearchResults, searchPerformed);
+        
         const icon = file.is_archive ? '📦' : '📄';
         const isUnreadable = (status === 'unsupported') || (status === 'error') || (charCount !== undefined && charCount === 0);
         
@@ -414,45 +418,26 @@ function toggleArchive(archivePath) {
 }
 
 // FR-005: Helper function to get traffic light color based on status
-// Зелёный=найдено, Жёлтый=не найдено, Красный=ошибка или char_count=0, Серый=нейтральный
-function getTrafficLightColor(status, charCount = null) {
-    if (status === 'contains_keywords') return 'green';  // Зелёный: слова найдены
-    if (status === 'no_keywords') return 'yellow';  // Жёлтый: слова не найдены
-    if (status === 'error' || charCount === 0) return 'red';  // Красный: ошибка чтения/индексации или нет символов
-    if (status === 'unsupported') return 'gray';  // Серый: неподдерживаемый формат
-    return 'gray'; // not_checked or unknown
+// Используем централизованную логику из модуля traffic-lights.js
+function getTrafficLightColor(status, charCount = null, hasSearchResults = false, searchPerformed = false) {
+    return window.TrafficLights.getFileTrafficLightColor(status, charCount, hasSearchResults, searchPerformed);
 }
 
 // FR-006, FR-007: Calculate folder status based on files inside
-// Логика: серый = файлы не считаны, зелёный = есть совпадения, жёлтый = нет совпадений но файлы прочитаны, красный = все файлы с ошибками
-function calculateFolderStatus(files, file_statuses, archivesMap) {
-    let hasGreen = false;   // есть совпадения
-    let hasYellow = false;  // есть прочитанные файлы без совпадений
-    let hasRed = false;     // есть файлы с ошибками
-    let hasNotChecked = false; // есть непроверенные файлы
-    let totalFiles = 0;
-    let errorFiles = 0;
-    let readableFiles = 0;  // файлы, которые удалось прочитать
+// Логика: используем централизованную логику из модуля traffic-lights.js
+function calculateFolderStatus(files, file_statuses, archivesMap, searchPerformed = false) {
+    const fileColors = [];
     
     for (const file of files) {
         const fileStatus = file_statuses[file.path] || {};
         const status = fileStatus.status || 'not_checked';
         const charCount = fileStatus.char_count || 0;
         
-        totalFiles++;
+        // Проверяем, есть ли результаты поиска для этого файла
+        const hasSearchResults = window.TrafficLights.hasSearchResultsForFile(file.path);
         
-        if (status === 'contains_keywords') {
-            hasGreen = true;
-            readableFiles++;
-        } else if (status === 'no_keywords') {
-            hasYellow = true;
-            readableFiles++;
-        } else if (status === 'error' || charCount === 0) {
-            hasRed = true;
-            errorFiles++;
-        } else {
-            hasNotChecked = true;
-        }
+        const lightColor = window.TrafficLights.getFileTrafficLightColor(status, charCount, hasSearchResults, searchPerformed);
+        fileColors.push(lightColor);
         
         // FR-006: Если это архив, проверяем его содержимое
         if (file.is_archive && archivesMap.has(file.path)) {
@@ -460,94 +445,34 @@ function calculateFolderStatus(files, file_statuses, archivesMap) {
             for (const entry of archiveContents) {
                 const entryStatus = file_statuses[entry.path] || {};
                 const entryCharCount = entryStatus.char_count || 0;
-                totalFiles++;
                 
-                if (entryStatus.status === 'contains_keywords') {
-                    hasGreen = true;
-                    readableFiles++;
-                } else if (entryStatus.status === 'no_keywords') {
-                    hasYellow = true;
-                    readableFiles++;
-                } else if (entryStatus.status === 'error' || entryCharCount === 0) {
-                    hasRed = true;
-                    errorFiles++;
-                } else {
-                    hasNotChecked = true;
-                }
+                const entryHasResults = window.TrafficLights.hasSearchResultsForFile(entry.path);
+                const entryLightColor = window.TrafficLights.getFileTrafficLightColor(entryStatus.status || 'not_checked', entryCharCount, entryHasResults, searchPerformed);
+                fileColors.push(entryLightColor);
             }
         }
     }
     
-    // Новая логика светофоров для папок:
-    // 1. Зелёный: есть хотя бы одно совпадение
-    if (hasGreen) return 'green';
-    
-    // 2. Красный: все файлы не удалось прочитать
-    if (totalFiles > 0 && errorFiles === totalFiles) return 'red';
-    
-    // 3. Жёлтый: нет совпадений, но хотя бы один файл прочитан
-    if (hasYellow && readableFiles > 0) return 'yellow';
-    
-    // 4. Серый: файлы не считаны (все not_checked)
-    return 'gray';
-    if (hasYellow) return 'yellow';
-    return 'gray';
+    return window.TrafficLights.getFolderTrafficLightColor(fileColors);
 }
 
 // FR-006: Calculate archive status based on its contents
-// Логика: серый = файлы не считаны, зелёный = есть совпадения, жёлтый = нет совпадений но файлы прочитаны, красный = все файлы с ошибками
-function calculateArchiveStatus(archiveContents, file_statuses) {
-    let hasGreen = false;   // есть совпадения
-    let hasYellow = false;  // есть прочитанные файлы без совпадений
-    let hasRed = false;     // есть файлы с ошибками
-    let hasNotChecked = false; // есть непроверенные файлы
-    let totalFiles = 0;
-    let errorFiles = 0;
-    let readableFiles = 0;  // файлы, которые удалось прочитать
+// Логика: используем централизованную логику из модуля traffic-lights.js
+function calculateArchiveStatus(archiveContents, file_statuses, searchPerformed = false) {
+    const fileColors = [];
     
     for (const entry of archiveContents) {
-        if (entry.is_virtual_folder) {
-            continue; // Пропускаем виртуальные папки
-        }
-        
-        totalFiles++;
-        
-        if (entry.status === 'error') {
-            hasRed = true;
-            errorFiles++;
-            continue;
-        }
-        
         const entryStatus = file_statuses[entry.path] || {};
-        const status = entryStatus.status || 'not_checked';
-        const charCount = entryStatus.char_count || 0;
+        const entryCharCount = entryStatus.char_count || 0;
         
-        if (status === 'contains_keywords') {
-            hasGreen = true;
-            readableFiles++;
-        } else if (status === 'no_keywords') {
-            hasYellow = true;
-            readableFiles++;
-        } else if (status === 'error' || charCount === 0) {
-            hasRed = true;
-            errorFiles++;
-        } else {
-            hasNotChecked = true;
-        }
+        // Проверяем, есть ли результаты поиска для этого файла
+        const entryHasResults = window.TrafficLights.hasSearchResultsForFile(entry.path);
+        
+        const lightColor = window.TrafficLights.getFileTrafficLightColor(entryStatus.status || 'not_checked', entryCharCount, entryHasResults, searchPerformed);
+        fileColors.push(lightColor);
     }
     
-    // Новая логика светофоров для архивов:
-    // 1. Зелёный: есть хотя бы одно совпадение
-    if (hasGreen) return 'green';
-    
-    // 2. Красный: все файлы не удалось прочитать
-    if (totalFiles > 0 && errorFiles === totalFiles) return 'red';
-    
-    // 3. Жёлтый: нет совпадений, но хотя бы один файл прочитан
-    if (hasYellow && readableFiles > 0) return 'yellow';
-    
-    // 4. Серый: файлы не считаны (все not_checked)
-    return 'gray';
+    return window.TrafficLights.getFolderTrafficLightColor(fileColors);
 }
 
 // --- Delete File ---
@@ -704,15 +629,17 @@ async function performSearch(terms) {
                     // Проверяем, проиндексирован ли файл (не disabled)
                     const isIndexed = !el.classList.contains('file-disabled') && !el.querySelector('.file-item.file-disabled');
                     
-                    // Трёхуровневая сортировка:
-                    // 3 - есть результаты поиска (наверх)
-                    // 2 - проиндексирован, но нет результатов (середина)  
-                    // 1 - не проиндексирован (вниз)
-                    let score = 1; // по умолчанию считаем неиндексированным
-                    if (isIndexed) {
-                        score = hasResults ? 3 : 2;
+                    // Определяем цвет светофора для правильной сортировки
+                    let lightColor = window.TrafficLights.COLORS.GRAY;
+                    if (!isIndexed) {
+                        lightColor = window.TrafficLights.COLORS.RED;
+                    } else if (hasResults) {
+                        lightColor = window.TrafficLights.COLORS.GREEN;
+                    } else if (window.TrafficLights.isSearchPerformed()) {
+                        lightColor = window.TrafficLights.COLORS.YELLOW;
                     }
                     
+                    const score = window.TrafficLights.getTrafficLightSortPriority(lightColor);
                     return { el, score };
                 });
                 scored.sort((a, b) => b.score - a.score);

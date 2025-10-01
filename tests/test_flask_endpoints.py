@@ -12,6 +12,9 @@ def flask_app():
         app = create_app('testing')
     except ImportError:
         # Фолбэк на старую структуру если новая еще не применена
+        import sys
+        import os
+        sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
         import app as old_app
         app = old_app.app
     return app
