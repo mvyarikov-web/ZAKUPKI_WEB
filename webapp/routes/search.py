@@ -135,12 +135,25 @@ def _search_in_files(search_terms, exclude_mode=False):
         # Добавляем в выдачу
         # Формируем блоки по каждому ключевому слову
         per_term = []
-        for term, info in data['by_term'].items():
-            per_term.append({
-                'term': term,
-                'count': info['count'],
-                'snippets': info['snippets']
-            })
+        if is_exclude:
+            # В режиме исключения: один блок для всех терминов с префиксом "не содержит"
+            all_snippets = []
+            for term_data in data['by_term'].values():
+                all_snippets.extend(term_data['snippets'][:1])
+            
+            for original_term in terms:
+                per_term.append({
+                    'term': f'не содержит: {original_term}',
+                    'count': 1,
+                    'snippets': all_snippets[:1]  # Только 1 сниппет
+                })
+        else:
+            for term, info in data['by_term'].items():
+                per_term.append({
+                    'term': term,
+                    'count': info['count'],
+                    'snippets': info['snippets']
+                })
         results.append({
             'filename': os.path.basename(rel_path) if isinstance(rel_path, str) else str(rel_path),
             'source': rel_path,
