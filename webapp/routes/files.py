@@ -421,7 +421,7 @@ def clear_all():
         
     except Exception as e:
         current_app.logger.exception('Ошибка при полной очистке')
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'success': False, 'error': str(e)}), 200
 
 
 @files_bp.get('/files_json')

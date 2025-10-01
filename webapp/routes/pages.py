@@ -134,7 +134,11 @@ def view_file(filepath: str):
         text = _extract_text_from_index(index_path, decoded_filepath)
         
         if not text:
-            return jsonify({'error': 'Не удалось извлечь текст из индекса'}), 403
+            # Возвращаем HTML-превью с сообщением об ошибке
+            return render_template('view.html',
+                                 filename=os.path.basename(decoded_filepath),
+                                 content=Markup('<div class="error-message">Не удалось извлечь текст из индекса</div>'),
+                                 keywords=[])
         
         # Получаем ключевые слова из query параметра
         query = request.args.get('q', '')
@@ -164,7 +168,7 @@ def view_file(filepath: str):
 
 
 def _extract_text_from_index(index_path: str, target_path: str) -> str:
-    """Извлекает текст из индекса для указанного файла.
+    """Извлекает текст из индекса для указанного файла, используя маркеры начала и конца.
     
     FR-003: Источник данных для окна просмотра — индекс, без повторного чтения исходных файлов.
     
@@ -175,43 +179,93 @@ def _extract_text_from_index(index_path: str, target_path: str) -> str:
     Returns:
         Извлечённый текст или пустая строка
     """
+    import re
+    import os
+    
+    # Маркеры для поиска содержимого документа
+    DOC_START_MARKER = "<<< НАЧАЛО ДОКУМЕНТА >>>"
+    DOC_END_MARKER = "<<< КОНЕЦ ДОКУМЕНТА >>>"
+    
     try:
+        # Нормализуем путь для поиска
+        norm_target = target_path.replace('\\', '/')
+        norm_target_clean = re.sub(r'^(zip://|rar://)', '', norm_target)
+        
+        current_app.logger.debug(f"Поиск в индексе с маркерами: target_path='{target_path}', norm_target='{norm_target}', norm_target_clean='{norm_target_clean}'")
+        
+        with open(index_path, 'r', encoding='utf-8', errors='ignore') as f:
+            content = f.read()
+        
+        # Ищем заголовок документа
+        patterns = [
+            rf"ЗАГОЛОВОК: {re.escape(norm_target)}\n",
+            rf"ЗАГОЛОВОК: {re.escape(norm_target_clean)}\n",
+            rf"ЗАГОЛОВОК: .*{re.escape(os.path.basename(norm_target))}\n",
+            rf"ЗАГОЛОВОК: .*{re.escape(os.path.basename(norm_target_clean))}\n"
+        ]
+        
+        for pattern in patterns:
+            matches = list(re.finditer(pattern, content, re.MULTILINE | re.IGNORECASE))
+            if matches:
+                current_app.logger.debug(f"Найдено {len(matches)} соответствий по шаблону: {pattern}")
+                
+                for match in matches:
+                    # Ищем маркер начала документа после заголовка
+                    start_pos = content.find(DOC_START_MARKER, match.end())
+                    if start_pos == -1:
+                        continue
+                    
+                    # Ищем маркер конца документа
+                    end_pos = content.find(DOC_END_MARKER, start_pos + len(DOC_START_MARKER))
+                    if end_pos == -1:
+                        # Если маркер конца не найден, берем до конца файла
+                        document_text = content[start_pos + len(DOC_START_MARKER):].strip()
+                    else:
+                        document_text = content[start_pos + len(DOC_START_MARKER):end_pos].strip()
+                    
+                    if document_text:
+                        current_app.logger.debug(f"Извлечен текст ({len(document_text)} символов) для '{target_path}'")
+                        return document_text
+        
+        # Если с маркерами не найдено, пробуем старый способ для совместимости
+        current_app.logger.debug(f"Попытка извлечения старым способом для '{target_path}'")
         with open(index_path, 'r', encoding='utf-8', errors='ignore') as f:
             in_target = False
             text_lines = []
             header_bar = "=" * 31
-            
             for line in f:
                 stripped = line.rstrip('\n')
-                
-                # Начало записи
                 if stripped == header_bar:
                     if in_target:
-                        # Конец нашей записи
                         break
-                    # Возможное начало нашей записи
                     in_target = False
                     text_lines = []
                     continue
-                
-                # Проверяем заголовок
                 if stripped.startswith('ЗАГОЛОВОК:'):
-                    title = stripped.split(':', 1)[1].strip()
-                    # Ищем точное совпадение (с учётом виртуальных путей для архивов)
-                    if title == target_path or title.endswith(f'/{target_path}'):
+                    title = stripped.split(':', 1)[1].strip().replace('\\', '/')
+                    title_clean = re.sub(r'^(zip://|rar://)', '', title)
+                    
+                    if (title == norm_target or 
+                        title_clean == norm_target_clean or
+                        title.endswith(norm_target) or 
+                        title_clean.endswith(norm_target_clean) or
+                        norm_target.endswith(title_clean) or
+                        norm_target_clean.endswith(title_clean) or
+                        title.endswith('/' + os.path.basename(norm_target)) or
+                        title_clean.endswith('/' + os.path.basename(norm_target_clean))):
                         in_target = True
+                        current_app.logger.debug(f"Найден блок для '{target_path}' в заголовке '{title}' (старый способ)")
                     continue
-                
-                # Пропускаем метаданные
                 if stripped.startswith('Формат:') or stripped.startswith('Источник:'):
                     continue
-                
-                # Собираем текст
                 if in_target:
                     text_lines.append(line.rstrip('\n'))
             
-            return '\n'.join(text_lines)
-    
+            result = '\n'.join(text_lines)
+            current_app.logger.debug(f"Извлечено символов (старый способ): {len(result)} для '{target_path}'")
+            return result
+            
     except Exception as e:
         current_app.logger.exception(f'Ошибка извлечения текста из индекса для {target_path}')
         return ''
+    

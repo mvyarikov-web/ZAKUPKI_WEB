@@ -2,11 +2,17 @@ from __future__ import annotations
 import os
 import io
 import zipfile
+import tempfile
+import datetime
 from datetime import datetime
-from typing import Iterable, Tuple, List
+from typing import Iterable, Tuple, List, Optional, Any
 import logging
 
-HEADER_BAR = "=" * 31
+# Разделитель заголовков в индексе
+HEADER_BAR = "===============================" 
+# Маркеры начала и конца документа
+DOC_START_MARKER = "<<< НАЧАЛО ДОКУМЕНТА >>>"
+DOC_END_MARKER = "<<< КОНЕЦ ДОКУМЕНТА >>>"
 SUPPORTED_EXT = {"pdf", "doc", "docx", "xls", "xlsx", "txt", "zip", "rar", "html", "htm", "csv", "tsv", "xml", "json"}
 DOC_EXTS = {"doc", "docx"}
 
@@ -240,7 +246,9 @@ class Indexer:
         )
         out.write(f"Источник: {meta.get('source','filesystem')}\n")
         out.write(f"{HEADER_BAR}\n")
-        out.write((text or "").strip() + "\n\n")
+        out.write(f"{DOC_START_MARKER}\n")
+        out.write((text or "").strip() + "\n")
+        out.write(f"{DOC_END_MARKER}\n\n")
 
     # ---------- Helpers ----------
     def _read_text_with_encoding(self, path: str) -> str:
