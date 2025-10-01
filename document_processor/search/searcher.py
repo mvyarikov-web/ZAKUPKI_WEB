@@ -29,19 +29,14 @@ class Searcher:
             for kw in [k.strip() for k in keywords if k and k.strip()]:
                 if not kw:
                     continue
+                
+                # Собираем все найденные позиции для дедупликации
+                found_positions = set()
+                
                 # 1) Прямое подстрочное совпадение
                 for m in re.finditer(re.escape(kw), body, flags=re.IGNORECASE):
-                    start = max(0, m.start() - context)
-                    end = min(len(body), m.end() + context)
-                    snippet = body[start:end]
-                    results.append({
-                        "keyword": kw,
-                        "position": m.start(),
-                        "snippet": snippet,
-                        "title": entry.get("title"),
-                        "source": entry.get("source"),
-                        "format": entry.get("format"),
-                    })
+                    found_positions.add(m.start())
+                
                 # 2) Толерантное совпадение: допускаем разделители между буквами (актуально для PDF)
                 # Применяем только для коротких терминов (2..8), чтобы не раздувать шум
                 if 2 <= len(kw) <= 8:
@@ -49,17 +44,21 @@ class Searcher:
                     parts = [re.escape(ch) for ch in kw]
                     pattern = re.compile("".join([parts[0]] + [gap_class + p for p in parts[1:]]), re.IGNORECASE)
                     for m in pattern.finditer(body):
-                        start = max(0, m.start() - context)
-                        end = min(len(body), m.end() + context)
-                        snippet = body[start:end]
-                        results.append({
-                            "keyword": kw,
-                            "position": m.start(),
-                            "snippet": snippet,
-                            "title": entry.get("title"),
-                            "source": entry.get("source"),
-                            "format": entry.get("format"),
-                        })
+                        found_positions.add(m.start())
+                
+                # Добавляем результаты только для уникальных позиций
+                for pos in found_positions:
+                    start = max(0, pos - context)
+                    end = min(len(body), pos + len(kw) + context)
+                    snippet = body[start:end]
+                    results.append({
+                        "keyword": kw,
+                        "position": pos,
+                        "snippet": snippet,
+                        "title": entry.get("title"),
+                        "source": entry.get("source"),
+                        "format": entry.get("format"),
+                    })
         # naive ranking: order by keyword then position
         results.sort(key=lambda r: (r.get("title") or "", r["keyword"].lower(), r["position"]))
         log.info("Поиск завершён: найдено %d совпадений", len(results))
