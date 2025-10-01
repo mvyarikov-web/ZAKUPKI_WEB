@@ -84,6 +84,15 @@ TEMPLATE="$REPO_ROOT/.specify/templates/spec-template.md"
 SPEC_FILE="$FEATURE_DIR/spec.md"
 if [ -f "$TEMPLATE" ]; then cp "$TEMPLATE" "$SPEC_FILE"; else touch "$SPEC_FILE"; fi
 
+# Автоматически создаём файл инкрементации с корректным именем
+INCREMENTS_DIR="$REPO_ROOT/increments_doc"
+mkdir -p "$INCREMENTS_DIR"
+INCREMENT_FILE="$INCREMENTS_DIR/${FEATURE_NUM}_increment_$(date +%Y-%m-%d).md"
+if [ ! -f "$INCREMENT_FILE" ]; then
+    echo "# increment-$FEATURE_NUM — $FEATURE_DESCRIPTION" > "$INCREMENT_FILE"
+    echo "\n(Документация инкремента создана автоматически)" >> "$INCREMENT_FILE"
+fi
+
 # Set the SPECIFY_FEATURE environment variable for the current session
 export SPECIFY_FEATURE="$BRANCH_NAME"
 
