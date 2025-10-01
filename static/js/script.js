@@ -596,34 +596,51 @@ searchBtn.addEventListener('click', () => {
     performSearch(terms);
 });
 
-// Clear All button handler
+// Clear All button handler - удаляет все файлы и индекс, но сохраняет поисковый запрос
 if (clearAllBtn) {
     clearAllBtn.addEventListener('click', () => {
-        // Очищаем поисковую строку
-        searchInput.value = '';
+        if (!confirm('Удалить ВСЕ загруженные файлы и папки, а также сводный файл? Это действие необратимо!\n\nПоисковый запрос будет сохранён.')) {
+            return;
+        }
         
-        // Очищаем результаты поиска
-        searchResults.style.display = 'none';
-        searchResults.innerHTML = '';
+        // Сохраняем текущие поисковые термины
+        const savedSearchTerms = searchInput.value;
         
-        // Очищаем состояние на сервере
-        fetch('/clear_results', { method: 'POST', headers: { 'Content-Type': 'application/json' } })
-            .then(() => {
-                // Удаляем подсветку из сниппетов (если есть)
-                document.querySelectorAll('.highlight').forEach(el => {
-                    const text = el.textContent;
-                    el.replaceWith(document.createTextNode(text));
-                });
+        // Вызываем новый маршрут для полной очистки
+        fetch('/clear_all', { 
+            method: 'POST', 
+            headers: { 'Content-Type': 'application/json' } 
+        })
+        .then(res => res.json())
+        .then(data => {
+            if (data.success) {
+                // Восстанавливаем поисковые термины
+                searchInput.value = savedSearchTerms;
                 
-                // Обновляем список файлов (сбросит светофоры)
+                // Очищаем результаты поиска на UI
+                searchResults.style.display = 'none';
+                searchResults.innerHTML = '';
+                
+                // Обновляем список файлов (покажет пустое дерево)
                 updateFilesList();
                 refreshIndexStatus();
                 
-                // Очищаем localStorage
-                try {
-                    localStorage.removeItem('last_search_terms');
-                } catch (e) {}
-            });
+                // Показываем результат
+                const message = `Очистка завершена:\n• Удалено элементов: ${data.deleted_count}\n• Индекс удалён: ${data.index_deleted ? 'да' : 'нет'}`;
+                if (data.errors && data.errors.length > 0) {
+                    const errorList = data.errors.map(e => `  - ${e.path}: ${e.error}`).join('\n');
+                    showMessage(message + `\n• Ошибки:\n${errorList}`);
+                } else {
+                    showMessage(message);
+                }
+            } else {
+                showMessage('Ошибка при очистке: ' + (data.error || 'Неизвестная ошибка'));
+            }
+        })
+        .catch(error => {
+            console.error('Ошибка при очистке:', error);
+            showMessage('Ошибка при очистке данных');
+        });
     });
 }
 

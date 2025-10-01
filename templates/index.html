@@ -21,6 +21,9 @@
                     <button id="selectFolderBtn" class="btn btn-secondary">
                         <i class="icon">📂</i> Выбрать папку
                     </button>
+                    <button id="clearAllBtn" class="btn btn-danger">
+                        <i class="icon">🗑️</i> Очистить все
+                    </button>
                     <span id="selectedFolderPath" class="folder-path" style="margin-left:12px; color:#555;"></span>
                 </div>
                 <!-- Прогресс загрузки -->
@@ -57,9 +60,6 @@
                     <input type="text" id="searchInput" placeholder="Введите ключевые слова через запятую..." value="{{ last_search_terms or '' }}">
                     <button id="searchBtn" class="btn btn-primary">
                         <i class="icon">🔍</i> Найти
-                    </button>
-                    <button id="clearAllBtn" class="btn btn-secondary" style="background: #95a5a6;">
-                        <i class="icon">🔄</i> Очистить всё
                     </button>
                 </div>
                 
