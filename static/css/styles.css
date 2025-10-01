@@ -450,6 +450,58 @@ section h2 {
     transform: none;
 }
 
+/* FR-003, FR-004, FR-005: Результаты поиска под файлами */
+.file-item-wrapper {
+    /* Обёртка для файла и его результатов */
+}
+
+.file-search-results {
+    padding: 10px 15px 10px 40px;
+    background: #f8f9fa;
+    border-top: 1px solid #e9ecef;
+    margin-left: 16px;
+}
+
+.file-search-results .per-term-block {
+    margin-bottom: 12px;
+}
+
+.file-search-results .found-terms {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 8px;
+}
+
+.file-search-results .found-term {
+    background: #3498db;
+    color: white;
+    padding: 3px 6px;
+    border-radius: 4px;
+    font-size: 11px;
+}
+
+.file-search-results .context-snippets {
+    margin-top: 8px;
+}
+
+.file-search-results .context-snippet {
+    background: white;
+    border-left: 4px solid #3498db;
+    padding: 8px 10px;
+    margin-bottom: 6px;
+    font-size: 13px; /* FR-005: Немного меньше основного шрифта */
+    color: #555;
+    border-radius: 0 4px 4px 0;
+    line-height: 1.4;
+}
+
+.file-search-results .context-empty {
+    font-size: 12px;
+    color: #999;
+    font-style: italic;
+}
+
 .file-bad {
     background: #fff5f5;
 }

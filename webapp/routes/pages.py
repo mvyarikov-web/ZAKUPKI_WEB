@@ -118,13 +118,23 @@ def view_file(filepath: str):
         char_count = file_data.get('char_count')
         error = file_data.get('error')
         
-        # Запрещаем чтение неподдерживаемых, ошибочных и пустых файлов
+        # FR-001, FR-002: Запрещаем чтение неподдерживаемых, ошибочных и пустых файлов
+        # Возвращаем понятное сообщение вместо JSON
         if status == 'unsupported':
-            return jsonify({'error': 'Файл неподдерживаемого формата'}), 403
+            return render_template('view.html',
+                                 title=os.path.basename(decoded_filepath),
+                                 content=Markup('<div class="error-message">Просмотр файла не поддерживается</div>'),
+                                 keywords=[])
         if status == 'error' or error:
-            return jsonify({'error': f'Ошибка обработки файла: {error}'}), 403
+            return render_template('view.html',
+                                 title=os.path.basename(decoded_filepath),
+                                 content=Markup('<div class="error-message">Просмотр файла не поддерживается</div>'),
+                                 keywords=[])
         if char_count == 0:
-            return jsonify({'error': 'Файл пуст или не содержит текста'}), 403
+            return render_template('view.html',
+                                 title=os.path.basename(decoded_filepath),
+                                 content=Markup('<div class="error-message">Просмотр файла не поддерживается</div>'),
+                                 keywords=[])
         
         # FR-003: Читаем текст из индекса
         index_path = get_index_path(current_app.config['INDEX_FOLDER'])
