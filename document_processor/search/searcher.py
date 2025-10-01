@@ -29,26 +29,13 @@ class Searcher:
             for kw in [k.strip() for k in keywords if k and k.strip()]:
                 if not kw:
                     continue
-                # 1) Прямое подстрочное совпадение
-                for m in re.finditer(re.escape(kw), body, flags=re.IGNORECASE):
-                    start = max(0, m.start() - context)
-                    end = min(len(body), m.end() + context)
-                    snippet = body[start:end]
-                    results.append({
-                        "keyword": kw,
-                        "position": m.start(),
-                        "snippet": snippet,
-                        "title": entry.get("title"),
-                        "source": entry.get("source"),
-                        "format": entry.get("format"),
-                    })
-                # 2) Толерантное совпадение: допускаем разделители между буквами (актуально для PDF)
-                # Применяем только для коротких терминов (2..8), чтобы не раздувать шум
-                if 2 <= len(kw) <= 8:
-                    # Построим шаблон вида: з[gap]а[gap]х[gap]...
-                    parts = [re.escape(ch) for ch in kw]
-                    pattern = re.compile("".join([parts[0]] + [gap_class + p for p in parts[1:]]), re.IGNORECASE)
-                    for m in pattern.finditer(body):
+                                # 1) Обычный поиск
+                pattern = re.compile(re.escape(kw), re.IGNORECASE)
+                found_positions = set()  # Отслеживаем позиции для избежания дубликатов
+                
+                for m in pattern.finditer(body):
+                    if m.start() not in found_positions:
+                        found_positions.add(m.start())
                         start = max(0, m.start() - context)
                         end = min(len(body), m.end() + context)
                         snippet = body[start:end]
@@ -60,6 +47,26 @@ class Searcher:
                             "source": entry.get("source"),
                             "format": entry.get("format"),
                         })
+                        
+                # 2) Толерантное совпадение: только для коротких слов и если обычный поиск не нашёл
+                if 2 <= len(kw) <= 8 and len(found_positions) == 0:
+                    # Построим шаблон вида: з[gap]а[gap]х[gap]...
+                    parts = [re.escape(ch) for ch in kw]
+                    pattern = re.compile("".join([parts[0]] + [gap_class + p for p in parts[1:]]), re.IGNORECASE)
+                    for m in pattern.finditer(body):
+                        if m.start() not in found_positions:
+                            found_positions.add(m.start())
+                            start = max(0, m.start() - context)
+                            end = min(len(body), m.end() + context)
+                            snippet = body[start:end]
+                            results.append({
+                                "keyword": kw,
+                                "position": m.start(),
+                                "snippet": snippet,
+                                "title": entry.get("title"),
+                                "source": entry.get("source"),
+                                "format": entry.get("format"),
+                            })
         # naive ranking: order by keyword then position
         results.sort(key=lambda r: (r.get("title") or "", r["keyword"].lower(), r["position"]))
         log.info("Поиск завершён: найдено %d совпадений", len(results))

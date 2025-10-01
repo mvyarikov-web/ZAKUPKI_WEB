@@ -58,10 +58,14 @@ def _search_in_files(search_terms):
             os.makedirs(current_app.config['INDEX_FOLDER'], exist_ok=True)
             if tmp_index != index_path and os.path.exists(tmp_index):
                 shutil.move(tmp_index, index_path)
-            current_app.logger.info('Индекс создан автоматически для поиска')
         except Exception as e:
-            current_app.logger.exception(f'Ошибка создания индекса: {e}')
+            current_app.logger.exception('Ошибка создания индекса')
             return results
+    
+    # Получаем все файлы из индекса (включая архивные)
+    from webapp.services.indexing import parse_index_char_counts
+    all_indexed_files = parse_index_char_counts(index_path)
+    current_app.logger.debug(f'Всего файлов в индексе: {len(all_indexed_files)}')
 
     # Поиск по индексу с привязкой к файлам
     try:
@@ -82,7 +86,8 @@ def _search_in_files(search_terms):
         tinfo = g['by_term'].setdefault(kw, { 'count': 0, 'snippets': [] })
         tinfo['count'] += 1
         g['total'] += 1
-        if len(tinfo['snippets']) < 3 and snip:
+        # Проверяем на дубликаты сниппетов
+        if len(tinfo['snippets']) < 3 and snip and snip not in tinfo['snippets']:
             tinfo['snippets'].append(snip)
 
     # Обновим статусы известных файлов и подготовим выдачу
@@ -107,11 +112,20 @@ def _search_in_files(search_terms):
             'processed_at': datetime.now().isoformat()
         }
         
-        # Получаем предыдущий статус (для реальных и виртуальных файлов)
+        # Получаем char_count из индекса или предыдущего статуса
+        char_count = all_indexed_files.get(rel_path)
         prev = files_state.get_file_status(rel_path)
-        # Не затираем ранее сохранённые поля (char_count, error, original_name)
-        for k in ('char_count','error','original_name'):
-            if k in prev:
+        if char_count is None and isinstance(prev, dict):
+            char_count = prev.get('char_count', 0)
+        if char_count is None:
+            char_count = 0
+            
+        # Убеждаемся, что char_count сохраняется
+        new_entry['char_count'] = char_count
+            
+        # Не затираем ранее сохранённые поля (error, original_name)
+        for k in ('error','original_name'):
+            if isinstance(prev, dict) and k in prev:
                 new_entry[k] = prev[k]
         
         # Обновляем статус для всех найденных файлов (включая виртуальные из архивов)
@@ -127,6 +141,7 @@ def _search_in_files(search_terms):
                 'count': info['count'],
                 'snippets': info['snippets']
             })
+        
         results.append({
             'filename': os.path.basename(rel_path) if isinstance(rel_path, str) else str(rel_path),
             'source': rel_path,
@@ -135,26 +150,46 @@ def _search_in_files(search_terms):
             'per_term': per_term
         })
 
-    # Реальным файлам без совпадений — статус "нет ключевых слов"
-    for rel_path in files_to_search:
-        if rel_path not in found_files:
-            prev = files_state.get_file_status(rel_path)
-            # Проверяем char_count - если 0, то файл не удалось прочитать
-            char_count = prev.get('char_count', 0) if isinstance(prev, dict) else 0
+    # Обновляем статусы ВСЕХ файлов (реальные + архивные)
+    # Объединяем реальные файлы и файлы из индекса
+    all_files_to_process = set(files_to_search)  # Реальные файлы
+    all_files_to_process.update(all_indexed_files.keys())  # + архивные
+    
+    current_app.logger.debug(f'Обрабатываем {len(all_files_to_process)} файлов для обновления статусов')
+    
+    for file_path in all_files_to_process:
+        if file_path not in found_files:  # Файл без совпадений
+            prev = files_state.get_file_status(file_path)
+            
+            # Получаем char_count из индекса или из предыдущего статуса
+            char_count = all_indexed_files.get(file_path)
+            if char_count is None and isinstance(prev, dict):
+                char_count = prev.get('char_count', 0)
+            if char_count is None:
+                char_count = 0
+            
             if char_count == 0:
+                # Файл не удалось прочитать
                 new_entry = {
                     'status': 'error',
+                    'char_count': char_count,
                     'processed_at': datetime.now().isoformat()
                 }
             else:
+                # Файл прочитан, но совпадений нет
                 new_entry = {
                     'status': 'no_keywords',
+                    'char_count': char_count,
                     'processed_at': datetime.now().isoformat()
                 }
-            for k in ('char_count','error','original_name'):
-                if k in prev:
+            
+            # Сохраняем дополнительные поля
+            for k in ('error', 'original_name'):
+                if isinstance(prev, dict) and k in prev:
                     new_entry[k] = prev[k]
-            new_statuses[rel_path] = new_entry
+            
+            new_statuses[file_path] = new_entry
+            current_app.logger.debug(f'Файл {file_path}: char_count={char_count}, status={new_entry["status"]}')
 
     # Атомарное обновление всех статусов
     if new_statuses:
