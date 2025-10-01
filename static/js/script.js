@@ -9,6 +9,8 @@ const filesList = document.getElementById('filesList');
 const fileCount = document.getElementById('fileCount');
 const searchInput = document.getElementById('searchInput');
 const searchBtn = document.getElementById('searchBtn');
+const excludeModeToggle = document.getElementById('excludeModeToggle');
+const toggleLabel = document.getElementById('toggleLabel');
 // FR-008: Удалена кнопка clearAllBtn - только deleteFilesBtn
 const deleteFilesBtn = document.getElementById('deleteFilesBtn');
 // Кнопки построения индекса нет — индекс строится автоматически
@@ -16,6 +18,17 @@ const messageModal = document.getElementById('messageModal');
 const modalMessage = document.getElementById('modalMessage');
 const closeModal = document.querySelector('.close');
 const indexStatus = document.getElementById('indexStatus');
+
+// --- Exclude Mode Toggle (FR-009) ---
+if (excludeModeToggle && toggleLabel) {
+    excludeModeToggle.addEventListener('change', () => {
+        if (excludeModeToggle.checked) {
+            toggleLabel.textContent = 'Не содержит';
+        } else {
+            toggleLabel.textContent = 'Содержит';
+        }
+    });
+}
 
 // --- File Select --- (удалено: выбор одиночных файлов)
 
@@ -233,6 +246,7 @@ function renderFileItem(file, archivesMap, file_statuses) {
         const archiveContents = archivesMap.get(file.path);
         fileDiv.className = 'folder-container archive-folder';
         fileDiv.id = `archive-${file.path.replace(/[^a-zA-Z0-9]/g, '-')}`;
+        fileDiv.dataset.path = file.path; // FR-009: Сохраняем путь для localStorage
         
         // Вычисляем агрегированный статус для архива
         const archiveStatus = calculateArchiveStatus(archiveContents, file_statuses);
@@ -382,6 +396,12 @@ function toggleArchive(archivePath) {
             contentDiv.style.display = isHidden ? 'block' : 'none';
             if (toggleIcon) {
                 toggleIcon.textContent = isHidden ? '▼' : '▶';
+            }
+            // FR-009: Сохраняем состояние архива в localStorage
+            try {
+                localStorage.setItem('archive-' + archivePath, isHidden ? 'expanded' : 'collapsed');
+            } catch (e) {
+                console.warn('Не удалось сохранить состояние архива в localStorage', e);
             }
         }
     }
@@ -598,10 +618,15 @@ async function performSearch(terms) {
     document.querySelectorAll('.file-item-wrapper[data-has-results]')
         .forEach(w => w.removeAttribute('data-has-results'));
     
+    const excludeMode = excludeModeToggle && excludeModeToggle.checked;
+    
     const resp = await fetch('/search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ search_terms: terms })
+        body: JSON.stringify({ 
+            search_terms: terms,
+            exclude_mode: excludeMode 
+        })
     });
     const data = await resp.json();
     try { localStorage.setItem('last_search_terms', terms); } catch (e) {}
@@ -632,13 +657,26 @@ async function performSearch(terms) {
                 if (fileWrapper) {
                     const resultsContainer = fileWrapper.querySelector('.file-search-results');
                     if (resultsContainer) {
-                        // FR-004: До 2 сниппетов на термин
+                        // FR-004, FR-009: До 2 сниппетов на термин (или 1 в режиме exclude)
+                        const isExcludeMode = excludeModeToggle && excludeModeToggle.checked;
+                        const maxSnippets = isExcludeMode ? 1 : 2;
+                        
                         const perTermHtml = resultsByFile[filePath].perTerm.map(entry => {
-                            const snips = (entry.snippets || []).slice(0, 2).map(s => 
+                            const snips = (entry.snippets || []).slice(0, maxSnippets).map(s => 
                                 `<div class="context-snippet">${escapeHtml(s)}</div>`
                             ).join('');
+                            
+                            // FR-009: Если термин начинается с "не содержит:", выделяем префикс красным
+                            let termHtml;
+                            if (entry.term.startsWith('не содержит:')) {
+                                const parts = entry.term.split(':');
+                                termHtml = `<span class="exclude-prefix">${escapeHtml(parts[0])}:</span> ${escapeHtml(parts.slice(1).join(':').trim())}`;
+                            } else {
+                                termHtml = `${escapeHtml(entry.term)} (${entry.count})`;
+                            }
+                            
                             return `<div class="per-term-block">
-                                <div class="found-terms"><span class="found-term">${escapeHtml(entry.term)} (${entry.count})</span></div>
+                                <div class="found-terms"><span class="found-term">${termHtml}</span></div>
                                 <div class="context-snippets">${snips || '<div class="context-empty">Нет сниппетов</div>'}</div>
                             </div>`;
                         }).join('');
@@ -835,6 +873,36 @@ function restoreFolderStates() {
                 container.classList.add('collapsed');
             } else {
                 container.classList.remove('collapsed');
+            }
+        }
+    });
+    
+    // FR-009: Восстанавливаем состояния архивов из localStorage
+    const archiveFolders = document.querySelectorAll('.folder-container.archive-folder');
+    archiveFolders.forEach(archiveDiv => {
+        const archiveId = archiveDiv.id;
+        if (archiveId && archiveId.startsWith('archive-')) {
+            // Извлекаем путь архива из ID
+            const archivePath = archiveId.replace('archive-', '').replace(/-/g, '/');
+            const contentDiv = archiveDiv.querySelector('.folder-content');
+            const toggleIcon = archiveDiv.querySelector('.toggle-icon');
+            
+            if (contentDiv) {
+                // Попробуем несколько вариантов ключа
+                let savedState = localStorage.getItem('archive-' + archivePath);
+                
+                // Если не нашли - попробуем через оригинальный путь из data-атрибута, если есть
+                if (!savedState && archiveDiv.dataset && archiveDiv.dataset.path) {
+                    savedState = localStorage.getItem('archive-' + archiveDiv.dataset.path);
+                }
+                
+                if (savedState === 'expanded') {
+                    contentDiv.style.display = 'block';
+                    if (toggleIcon) toggleIcon.textContent = '▼';
+                } else if (savedState === 'collapsed') {
+                    contentDiv.style.display = 'none';
+                    if (toggleIcon) toggleIcon.textContent = '▶';
+                }
             }
         }
     });
