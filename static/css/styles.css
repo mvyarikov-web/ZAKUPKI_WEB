@@ -90,12 +90,15 @@ section h2 {
 }
 
 .btn-danger {
-    background: #e74c3c;
-    color: white;
+    background: #f8d7da;
+    color: #721c24;
+    border: 1px solid #f5c6cb;
 }
 
 .btn-danger:hover {
-    background: #c0392b;
+    background: #f1b0b7;
+    color: #491217;
+    border-color: #e2a6ac;
 }
 
 /* Область загрузки */
@@ -771,6 +774,14 @@ section h2 {
     font-weight: 600;
     color: #2c3e50;
     min-width: 90px;
+    padding: 4px 8px;
+    border-radius: 4px;
+    transition: all 0.3s ease;
+}
+
+.toggle-label.exclude-mode {
+    background-color: #e74c3c;
+    color: white;
 }
 
 /* Стили для результатов в режиме "не содержит" */

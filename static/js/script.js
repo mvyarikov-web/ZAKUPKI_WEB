@@ -24,8 +24,10 @@ if (excludeModeToggle && toggleLabel) {
     excludeModeToggle.addEventListener('change', () => {
         if (excludeModeToggle.checked) {
             toggleLabel.textContent = 'Не содержит';
+            toggleLabel.classList.add('exclude-mode');
         } else {
             toggleLabel.textContent = 'Содержит';
+            toggleLabel.classList.remove('exclude-mode');
         }
     });
 }
@@ -251,6 +253,10 @@ function renderFileItem(file, archivesMap, file_statuses) {
         // Вычисляем агрегированный статус для архива
         const archiveStatus = calculateArchiveStatus(archiveContents, file_statuses);
         
+        // Проверяем сохранённое состояние архива
+        const savedArchiveState = localStorage.getItem('archive-' + file.path);
+        const isArchiveExpanded = savedArchiveState !== 'collapsed'; // По умолчанию развернуто
+        
         const archiveHeaderDiv = document.createElement('div');
         archiveHeaderDiv.className = 'folder-header';
         archiveHeaderDiv.onclick = () => toggleArchive(file.path);
@@ -267,12 +273,12 @@ function renderFileItem(file, archivesMap, file_statuses) {
                     <path d="M9 3h6a1 1 0 0 1 1 1v2h4v2h-1v12a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V8H4V6h4V4a1 1 0 0 1 1-1zm1 3h4V5h-4v1zM7 8v12h10V8H7zm3 3h2v7h-2v-7zm4 0h2v7h-2v-7z"></path>
                 </svg>
             </button>
-            <span class="toggle-icon">▶</span>
+            <span class="toggle-icon">${isArchiveExpanded ? '▼' : '▶'}</span>
         `;
         
         const archiveContentDiv = document.createElement('div');
         archiveContentDiv.className = 'folder-content';
-        archiveContentDiv.style.display = 'none';
+        archiveContentDiv.style.display = isArchiveExpanded ? 'block' : 'none';
         
         // Добавляем содержимое архива
         archiveContents.forEach(entry => {
@@ -688,17 +694,33 @@ async function performSearch(terms) {
                 }
             });
             
-            // Сортировка: файлы с результатами наверх, без результатов вниз
+            // Сортировка: файлы с результатами наверх, проиндексированные в середине, неиндексированные вниз
             document.querySelectorAll('.folder-content').forEach(contentDiv => {
                 const wrappers = Array.from(contentDiv.querySelectorAll(':scope > .file-item-wrapper, :scope > .file-item, :scope > .folder-container.archive-folder'));
                 // Для архивов: нужен порядок внутри archiveContentDiv, ищем дочерние-обёртки
                 const scored = wrappers.map(el => {
                     const hasResults = el.classList.contains('file-item-wrapper') ? el.getAttribute('data-has-results') === '1' : !!el.querySelector('.file-search-results[style*="display: block"]');
-                    return { el, score: hasResults ? 1 : 0 };
+                    
+                    // Проверяем, проиндексирован ли файл (не disabled)
+                    const isIndexed = !el.classList.contains('file-disabled') && !el.querySelector('.file-item.file-disabled');
+                    
+                    // Трёхуровневая сортировка:
+                    // 3 - есть результаты поиска (наверх)
+                    // 2 - проиндексирован, но нет результатов (середина)  
+                    // 1 - не проиндексирован (вниз)
+                    let score = 1; // по умолчанию считаем неиндексированным
+                    if (isIndexed) {
+                        score = hasResults ? 3 : 2;
+                    }
+                    
+                    return { el, score };
                 });
                 scored.sort((a, b) => b.score - a.score);
                 scored.forEach(({ el }) => contentDiv.appendChild(el));
             });
+
+            // Раскрываем папки с результатами, если они не были вручную свернуты
+            expandFoldersWithResults();
 
             highlightSnippets(t);
             applyQueryToViewLinks();
@@ -718,6 +740,51 @@ function refreshSearchResultsIfActive() {
     }
     // Если есть термины - перезапускаем поиск
     performSearch(terms);
+}
+
+// Функция для раскрытия папок с результатами (учитывает ручное состояние)
+function expandFoldersWithResults() {
+    // Собираем папки, которые содержат результаты поиска
+    const foldersWithResults = new Set();
+    
+    // Проверяем обычные папки
+    document.querySelectorAll('.folder-container:not(.archive-folder)').forEach(folderContainer => {
+        const hasResults = folderContainer.querySelector('.file-search-results[style*="display: block"]');
+        if (hasResults) {
+            const folderName = folderContainer.querySelector('.folder-name')?.textContent;
+            if (folderName) {
+                // Проверяем, не была ли папка вручную свернута
+                const savedState = localStorage.getItem('folder-' + folderName);
+                if (savedState !== 'collapsed') {
+                    folderContainer.classList.remove('collapsed');
+                    const contentDiv = folderContainer.querySelector('.folder-content');
+                    const toggleIcon = folderContainer.querySelector('.toggle-icon');
+                    if (contentDiv) contentDiv.style.display = 'block';
+                    if (toggleIcon) toggleIcon.textContent = '▼';
+                }
+            }
+        }
+    });
+    
+    // Проверяем архивные папки
+    document.querySelectorAll('.folder-container.archive-folder').forEach(archiveContainer => {
+        const hasResults = archiveContainer.querySelector('.file-search-results[style*="display: block"]');
+        if (hasResults) {
+            const archiveId = archiveContainer.id;
+            if (archiveId && archiveId.startsWith('archive-')) {
+                // Извлекаем путь архива
+                const archivePath = archiveId.replace('archive-', '').replace(/-/g, '/');
+                // Проверяем, не был ли архив вручную свернут
+                const savedState = localStorage.getItem('archive-' + archivePath);
+                if (savedState !== 'collapsed') {
+                    const contentDiv = archiveContainer.querySelector('.folder-content');
+                    const toggleIcon = archiveContainer.querySelector('.toggle-icon');
+                    if (contentDiv) contentDiv.style.display = 'block';
+                    if (toggleIcon) toggleIcon.textContent = '▼';
+                }
+            }
+        }
+    });
 }
 
 searchBtn.addEventListener('click', () => {
