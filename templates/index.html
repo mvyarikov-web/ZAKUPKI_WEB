@@ -14,15 +14,25 @@
         </header>
 
         <main>
+            <!-- FR-014: Секция очистки (выше загрузки) -->
+            <section class="cleanup-section">
+                <h2>Очистка</h2>
+                <div class="cleanup-buttons">
+                    <button id="deleteFilesBtn" class="btn btn-danger">
+                        <i class="icon">🗑️</i> Удалить файлы
+                    </button>
+                    <button id="clearAllBtn" class="btn btn-danger">
+                        <i class="icon">🧹</i> Очистить всё
+                    </button>
+                </div>
+            </section>
+            
             <!-- Секция загрузки папки -->
             <section class="upload-section">
                 <h2>Загрузка папки</h2>
                 <div class="upload-buttons">
                     <button id="selectFolderBtn" class="btn btn-secondary">
                         <i class="icon">📂</i> Выбрать папку
-                    </button>
-                    <button id="clearAllBtn" class="btn btn-danger">
-                        <i class="icon">🗑️</i> Очистить все
                     </button>
                     <span id="selectedFolderPath" class="folder-path" style="margin-left:12px; color:#555;"></span>
                 </div>
@@ -62,10 +72,14 @@
                         <i class="icon">🔍</i> Найти
                     </button>
                 </div>
-                
-                <!-- Результаты поиска (с подсветкой в сниппетах) -->
+            </section>
+            
+            <!-- FR-010: Секция результатов (отдельный блок под поиском) -->
+            <section class="results-section" id="resultsSection" style="display: none;">
+                <h2>Результаты</h2>
                 <div id="searchResults" class="search-results"></div>
             </section>
+            
             <!-- Список файлов с метриками извлечения -->
             <section class="files-section">
                 <h2>Файлы</h2>
