@@ -51,6 +51,13 @@
                 <h2>Поиск по содержимому</h2>
                 <div class="search-container">
                     <input type="text" id="searchInput" placeholder="Введите ключевые слова через запятую..." value="{{ last_search_terms or '' }}">
+                    <div class="search-mode-toggle">
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="excludeModeToggle">
+                            <span class="toggle-slider"></span>
+                        </label>
+                        <span class="toggle-label" id="toggleLabel">Содержит</span>
+                    </div>
                     <button id="searchBtn" class="btn btn-primary">
                         <i class="icon">🔍</i> Найти
                     </button>

@@ -23,9 +23,10 @@ def _get_files_state():
     return FilesState(results_file)
 
 
-def _search_in_files(search_terms):
+def _search_in_files(search_terms, exclude_mode=False):
     """НОВАЯ логика: поиск по сводному индексу (_search_index.txt), игнорируя заголовки.
     Группирует результаты по файлам и обновляет статусы file_status.
+    Параметр exclude_mode: если True, ищет файлы, которые НЕ содержат ключевые слова.
     """
     results = []
     terms = [t.strip() for t in search_terms.split(',') if t.strip()]
@@ -66,8 +67,8 @@ def _search_in_files(search_terms):
     # Поиск по индексу с привязкой к файлам
     try:
         s = Searcher()
-        current_app.logger.info(f"Поиск по индексу: terms={terms}")
-        matches = s.search(index_path, terms, context=80)
+        current_app.logger.info(f"Поиск по индексу: terms={terms}, exclude_mode={exclude_mode}")
+        matches = s.search(index_path, terms, context=80, exclude_mode=exclude_mode)
     except Exception as e:
         current_app.logger.exception(f'Ошибка поиска по индексу: {e}')
         matches = []
@@ -78,11 +79,14 @@ def _search_in_files(search_terms):
         title = m.get('title') or m.get('source') or 'индекс'
         kw = m.get('keyword', '')
         snip = m.get('snippet', '')
-        g = grouped.setdefault(title, { 'by_term': {}, 'total': 0 })
+        is_exclude = m.get('exclude_mode', False)
+        g = grouped.setdefault(title, { 'by_term': {}, 'total': 0, 'exclude_mode': is_exclude })
         tinfo = g['by_term'].setdefault(kw, { 'count': 0, 'snippets': [] })
         tinfo['count'] += 1
         g['total'] += 1
-        if len(tinfo['snippets']) < 3 and snip:
+        # В режиме исключения - только 1 сниппет
+        max_snippets = 1 if is_exclude else 3
+        if len(tinfo['snippets']) < max_snippets and snip:
             tinfo['snippets'].append(snip)
 
     # Обновим статусы известных файлов и подготовим выдачу
@@ -94,11 +98,21 @@ def _search_in_files(search_terms):
         # Составим агрегированный список терминов и до 3 сниппетов на термин
         found_terms = []
         context = []
-        for term, info in data['by_term'].items():
-            if not term:
-                continue
-            found_terms.append(f"{term} ({info['count']})")
-            context.extend(info['snippets'][:3])
+        is_exclude = data.get('exclude_mode', False)
+        
+        if is_exclude:
+            # В режиме исключения добавляем префикс "не содержит" для каждого термина
+            for term in terms:
+                found_terms.append(f"не содержит: {term}")
+            # В режиме исключения только 1 сниппет
+            for term, info in data['by_term'].items():
+                context.extend(info['snippets'][:1])
+        else:
+            for term, info in data['by_term'].items():
+                if not term:
+                    continue
+                found_terms.append(f"{term} ({info['count']})")
+                context.extend(info['snippets'][:3])
         
         new_entry = {
             'status': 'contains_keywords',
@@ -168,6 +182,7 @@ def _search_in_files(search_terms):
 def search():
     """Поиск по ключевым словам"""
     search_terms = request.json.get('search_terms', '')
+    exclude_mode = request.json.get('exclude_mode', False)
     
     if not search_terms.strip():
         return jsonify({'error': 'Введите ключевые слова для поиска'}), 400
@@ -186,8 +201,8 @@ def search():
         return jsonify({'error': 'Слишком короткие/длинные или пустые ключевые слова'}), 400
 
     # Новый поиск через индекс
-    current_app.logger.info(f"Запрос поиска: terms='{','.join(filtered)}' (из {len(raw_terms)} входных)")
-    results = _search_in_files(','.join(filtered))
+    current_app.logger.info(f"Запрос поиска: terms='{','.join(filtered)}' (из {len(raw_terms)} входных), exclude_mode={exclude_mode}")
+    results = _search_in_files(','.join(filtered), exclude_mode=exclude_mode)
     
     # Сохраняем результаты поиска
     files_state = _get_files_state()
