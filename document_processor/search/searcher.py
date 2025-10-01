@@ -21,6 +21,7 @@ class Searcher:
         text = self._read_index(index_path)
         entries = self._parse_entries(text)
         results: List[Dict[str, Any]] = []
+        copilot/fix-64f139d8-0d1c-4877-ae42-3cf7dabd01c6
         
         if exclude_mode:
             # Режим исключения: возвращаем файлы, которые НЕ содержат ни одного из ключевых слов
@@ -51,12 +52,48 @@ class Searcher:
                     results.append({
                         "keyword": "",  # В режиме исключения нет конкретного ключевого слова
                         "position": 0,
+#=======
+#        # Разделители, которые иногда встречаются внутри слов при извлечении из PDF
+#        # \u00A0 (NBSP), \u00AD (soft hyphen), \u200B (zero-width space), \uFEFF (BOM/ZWNBSP)
+#        gap_class = r"[\s\u00A0\u00AD\u200B\uFEFF\-]*"
+#        for entry in entries:
+#            body = entry.get("body", "")
+#            for kw in [k.strip() for k in keywords if k and k.strip()]:
+#                if not kw:
+#                    continue
+#                
+#                # Собираем все найденные позиции для дедупликации
+#                found_positions = set()
+#                
+#                # 1) Прямое подстрочное совпадение
+#                for m in re.finditer(re.escape(kw), body, flags=re.IGNORECASE):
+#                    found_positions.add(m.start())
+#                
+#                # 2) Толерантное совпадение: допускаем разделители между буквами (актуально для PDF)
+#                # Применяем только для коротких терминов (2..8), чтобы не раздувать шум
+#                if 2 <= len(kw) <= 8:
+#                    # Построим шаблон вида: з[gap]а[gap]х[gap]...
+#                    parts = [re.escape(ch) for ch in kw]
+#                    pattern = re.compile("".join([parts[0]] + [gap_class + p for p in parts[1:]]), re.IGNORECASE)
+#                    for m in pattern.finditer(body):
+#                        found_positions.add(m.start())
+#                
+#                # Добавляем результаты только для уникальных позиций
+#                for pos in found_positions:
+#                    start = max(0, pos - context)
+#                    end = min(len(body), pos + len(kw) + context)
+#                    snippet = body[start:end]
+#                    results.append({
+#                        "keyword": kw,
+#                        "position": pos,
+#>>>>>>> main
                         "snippet": snippet,
                         "title": entry.get("title"),
                         "source": entry.get("source"),
                         "format": entry.get("format"),
                         "exclude_mode": True
                     })
+
         else:
             # Обычный режим: ищем файлы, которые СОДЕРЖАТ ключевые слова
             # Разделители, которые иногда встречаются внутри слов при извлечении из PDF
@@ -98,6 +135,7 @@ class Searcher:
                                 "source": entry.get("source"),
                                 "format": entry.get("format"),
                             })
+
         # naive ranking: order by keyword then position
         results.sort(key=lambda r: (r.get("title") or "", r.get("keyword", "").lower(), r["position"]))
         log.info("Поиск завершён: найдено %d совпадений", len(results))
