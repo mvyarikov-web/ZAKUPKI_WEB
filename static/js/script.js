@@ -595,6 +595,8 @@ async function performSearch(terms) {
         el.style.display = 'none';
         el.innerHTML = '';
     });
+    document.querySelectorAll('.file-item-wrapper[data-has-results]')
+        .forEach(w => w.removeAttribute('data-has-results'));
     
     const resp = await fetch('/search', {
         method: 'POST',
@@ -643,10 +645,23 @@ async function performSearch(terms) {
                         
                         resultsContainer.innerHTML = perTermHtml;
                         resultsContainer.style.display = 'block';
+                        fileWrapper.setAttribute('data-has-results', '1');
                     }
                 }
             });
             
+            // Сортировка: файлы с результатами наверх, без результатов вниз
+            document.querySelectorAll('.folder-content').forEach(contentDiv => {
+                const wrappers = Array.from(contentDiv.querySelectorAll(':scope > .file-item-wrapper, :scope > .file-item, :scope > .folder-container.archive-folder'));
+                // Для архивов: нужен порядок внутри archiveContentDiv, ищем дочерние-обёртки
+                const scored = wrappers.map(el => {
+                    const hasResults = el.classList.contains('file-item-wrapper') ? el.getAttribute('data-has-results') === '1' : !!el.querySelector('.file-search-results[style*="display: block"]');
+                    return { el, score: hasResults ? 1 : 0 };
+                });
+                scored.sort((a, b) => b.score - a.score);
+                scored.forEach(({ el }) => contentDiv.appendChild(el));
+            });
+
             highlightSnippets(t);
             applyQueryToViewLinks();
     }

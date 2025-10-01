@@ -341,15 +341,17 @@ section h2 {
 }
 
 .folder-content {
-    max-height: 1000px;
-    overflow: hidden;
-    transition: max-height 0.3s ease;
+    /* Убираем жёсткое ограничение высоты, чтобы результаты поиска не обрезались */
+    max-height: none;
+    overflow: visible;
     border-left: 2px dashed #e9ecef;
     padding-left: 16px;
 }
 
 .folder-container.collapsed .folder-content {
+    /* При сворачивании скрываем содержимое */
     max-height: 0;
+    overflow: hidden;
 }
 
 /* Файлы внутри папок */
@@ -451,9 +453,6 @@ section h2 {
 }
 
 /* FR-003, FR-004, FR-005: Результаты поиска под файлами */
-.file-item-wrapper {
-    /* Обёртка для файла и его результатов */
-}
 
 .file-search-results {
     padding: 10px 15px 10px 40px;
