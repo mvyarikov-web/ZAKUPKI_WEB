@@ -224,7 +224,7 @@ function renderFileItem(file, archivesMap, file_statuses) {
     
     // FR-005: Определяем цвет светофора
     // Зелёный=найдено, Жёлтый=не найдено, Красный=ошибка, Серый=нейтральный
-    let trafficLight = 'gray'; // по умолчанию
+    let trafficLight = getTrafficLightColor(status, charCount);
 
     
     // Проверяем, является ли файл архивом
@@ -373,14 +373,15 @@ function getTrafficLightColor(status, charCount = null) {
 }
 
 // FR-006, FR-007: Calculate folder status based on files inside
-// Логика: серый = файлы не считаны, зелёный = есть совпадения, жёлтый = нет совпадений, красный = все файлы с ошибками
+// Логика: серый = файлы не считаны, зелёный = есть совпадения, жёлтый = нет совпадений но файлы прочитаны, красный = все файлы с ошибками
 function calculateFolderStatus(files, file_statuses, archivesMap) {
-    let hasGreen = false;
-    let hasYellow = false;
-    let hasRed = false;
-    let hasNotChecked = false;
+    let hasGreen = false;   // есть совпадения
+    let hasYellow = false;  // есть прочитанные файлы без совпадений
+    let hasRed = false;     // есть файлы с ошибками
+    let hasNotChecked = false; // есть непроверенные файлы
     let totalFiles = 0;
     let errorFiles = 0;
+    let readableFiles = 0;  // файлы, которые удалось прочитать
     
     for (const file of files) {
         const fileStatus = file_statuses[file.path] || {};
@@ -391,8 +392,10 @@ function calculateFolderStatus(files, file_statuses, archivesMap) {
         
         if (status === 'contains_keywords') {
             hasGreen = true;
+            readableFiles++;
         } else if (status === 'no_keywords') {
             hasYellow = true;
+            readableFiles++;
         } else if (status === 'error' || charCount === 0) {
             hasRed = true;
             errorFiles++;
@@ -410,8 +413,10 @@ function calculateFolderStatus(files, file_statuses, archivesMap) {
                 
                 if (entryStatus.status === 'contains_keywords') {
                     hasGreen = true;
+                    readableFiles++;
                 } else if (entryStatus.status === 'no_keywords') {
                     hasYellow = true;
+                    readableFiles++;
                 } else if (entryStatus.status === 'error' || entryCharCount === 0) {
                     hasRed = true;
                     errorFiles++;
@@ -423,27 +428,31 @@ function calculateFolderStatus(files, file_statuses, archivesMap) {
     }
     
     // Новая логика светофоров для папок:
-    // Зелёный: есть хотя бы одно совпадение
-    // Красный: все файлы не удалось прочитать
-    // Жёлтый: совпадений нет, но файлы прочитаны
-    // Серый: файлы не считаны
+    // 1. Зелёный: есть хотя бы одно совпадение
     if (hasGreen) return 'green';
+    
+    // 2. Красный: все файлы не удалось прочитать
     if (totalFiles > 0 && errorFiles === totalFiles) return 'red';
-    if (hasYellow && !hasNotChecked) return 'yellow';
-    if (hasRed) return 'red';
+    
+    // 3. Жёлтый: нет совпадений, но хотя бы один файл прочитан
+    if (hasYellow && readableFiles > 0) return 'yellow';
+    
+    // 4. Серый: файлы не считаны (все not_checked)
+    return 'gray';
     if (hasYellow) return 'yellow';
     return 'gray';
 }
 
 // FR-006: Calculate archive status based on its contents
-// Логика: серый = файлы не считаны, зелёный = есть совпадения, жёлтый = нет совпадений, красный = все файлы с ошибками
+// Логика: серый = файлы не считаны, зелёный = есть совпадения, жёлтый = нет совпадений но файлы прочитаны, красный = все файлы с ошибками
 function calculateArchiveStatus(archiveContents, file_statuses) {
-    let hasGreen = false;
-    let hasYellow = false;
-    let hasRed = false;
-    let hasNotChecked = false;
+    let hasGreen = false;   // есть совпадения
+    let hasYellow = false;  // есть прочитанные файлы без совпадений
+    let hasRed = false;     // есть файлы с ошибками
+    let hasNotChecked = false; // есть непроверенные файлы
     let totalFiles = 0;
     let errorFiles = 0;
+    let readableFiles = 0;  // файлы, которые удалось прочитать
     
     for (const entry of archiveContents) {
         if (entry.is_virtual_folder) {
@@ -464,8 +473,10 @@ function calculateArchiveStatus(archiveContents, file_statuses) {
         
         if (status === 'contains_keywords') {
             hasGreen = true;
+            readableFiles++;
         } else if (status === 'no_keywords') {
             hasYellow = true;
+            readableFiles++;
         } else if (status === 'error' || charCount === 0) {
             hasRed = true;
             errorFiles++;
@@ -475,11 +486,16 @@ function calculateArchiveStatus(archiveContents, file_statuses) {
     }
     
     // Новая логика светофоров для архивов:
+    // 1. Зелёный: есть хотя бы одно совпадение
     if (hasGreen) return 'green';
+    
+    // 2. Красный: все файлы не удалось прочитать
     if (totalFiles > 0 && errorFiles === totalFiles) return 'red';
-    if (hasYellow && !hasNotChecked) return 'yellow';
-    if (hasRed) return 'red';
-    if (hasYellow) return 'yellow';
+    
+    // 3. Жёлтый: нет совпадений, но хотя бы один файл прочитан
+    if (hasYellow && readableFiles > 0) return 'yellow';
+    
+    // 4. Серый: файлы не считаны (все not_checked)
     return 'gray';
 }
 
