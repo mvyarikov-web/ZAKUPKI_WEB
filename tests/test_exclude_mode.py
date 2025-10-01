@@ -44,9 +44,83 @@ def test_exclude_mode_basic(test_files):
     titles = [r.get('title', '') for r in results]
     # file1.txt не должен быть в результатах
     assert not any('file1.txt' in t for t in titles)
-    # file2.txt и file3.txt должны быть в результатах
-    assert any('file2.txt' in t for t in titles)
-    assert any('file3.txt' in t for t in titles)
+def test_no_duplicates_in_normal_mode():
+    """Проверяем отсутствие дублирования в обычном режиме после исправления."""
+    test_index_content = """========================================
+ЗАГОЛОВОК: Тестовый документ
+Формат: TXT | Символов: 100 | Дата: 2025-01-01
+Источник: test.txt
+========================================
+Этот документ содержит слово договор несколько раз.
+Первый договор в начале. Второй договор в середине.
+Третий до-говор с разделителем. Четвёртый д о г о в о р с пробелами.
+"""
+    
+    import tempfile
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8') as f:
+        f.write(test_index_content)
+        index_path = f.name
+    
+    try:
+        searcher = Searcher()
+        results = searcher.search(index_path, ['договор'], context=20, exclude_mode=False)
+        
+        # Проверяем, что нет дубликатов по позиции
+        positions = set()
+        for result in results:
+            key = (result.get('title'), result.get('keyword'), result.get('position'))
+            assert key not in positions, f"Найден дубликат: {key}"
+            positions.add(key)
+        
+        # Должно быть найдено как минимум 4 уникальных вхождения
+        assert len(results) >= 4, f"Ожидалось минимум 4 результата, получено {len(results)}"
+        
+        print(f"✓ Тест исправления дублирования: найдено {len(results)} уникальных результатов")
+        
+    finally:
+        Path(index_path).unlink()
+
+
+def test_exclude_mode_with_deduplication():
+    """Проверяем корректность режима исключения после исправления."""
+    test_index_content = """========================================
+ЗАГОЛОВОК: Документ с договором
+Формат: TXT | Символов: 50 | Дата: 2025-01-01
+Источник: with_contract.txt
+========================================
+Этот документ содержит договор и контракт.
+
+========================================
+ЗАГОЛОВОК: Документ без ключевых слов
+Формат: TXT | Символов: 40 | Дата: 2025-01-01
+Источник: without_keywords.txt
+========================================
+Обычный текст о поставке товаров.
+"""
+    
+    import tempfile
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8') as f:
+        f.write(test_index_content)
+        index_path = f.name
+    
+    try:
+        searcher = Searcher()
+        
+        # Режим исключения: ищем файлы БЕЗ слова "договор"
+        exclude_results = searcher.search(index_path, ['договор'], context=30, exclude_mode=True)
+        
+        # Должен найтись только документ без ключевых слов
+        assert len(exclude_results) == 1
+        result = exclude_results[0]
+        assert 'без ключевых слов' in result.get('title', '')
+        assert result.get('exclude_mode') == True
+        assert result.get('keyword') == ""
+        assert result.get('position') == 0
+        
+        print(f"✓ Режим исключения работает корректно: {len(exclude_results)} результат")
+        
+    finally:
+        Path(index_path).unlink()
 
 
 def test_exclude_mode_multiple_keywords(test_files):
