@@ -9,6 +9,8 @@ const filesList = document.getElementById('filesList');
 const fileCount = document.getElementById('fileCount');
 const searchInput = document.getElementById('searchInput');
 const searchBtn = document.getElementById('searchBtn');
+// FR-014: Две кнопки очистки
+const deleteFilesBtn = document.getElementById('deleteFilesBtn');
 const clearAllBtn = document.getElementById('clearAllBtn');
 // Кнопки построения индекса нет — индекс строится автоматически
 const searchResults = document.getElementById('searchResults');
@@ -220,46 +222,51 @@ function renderFileItem(file, archivesMap, file_statuses) {
     const status = fileStatus.status || 'not_checked';
     const charCount = fileStatus.char_count;
     
-    // Определяем цвет светофора
+    // FR-005: Определяем цвет светофора
+    // Зелёный=найдено, Жёлтый=не найдено, Красный=ошибка, Серый=нейтральный
     let trafficLight = 'gray'; // по умолчанию
     if (status === 'contains_keywords') {
-        trafficLight = 'green';
+        trafficLight = 'green';  // Зелёный: слова найдены
     } else if (status === 'no_keywords') {
-        trafficLight = 'red';
-    } else if (status === 'error' || status === 'unsupported') {
-        trafficLight = 'gray';
+        trafficLight = 'yellow';  // Жёлтый: слова не найдены
+    } else if (status === 'error') {
+        trafficLight = 'red';  // Красный: ошибка чтения/индексации
+    } else if (status === 'unsupported') {
+        trafficLight = 'gray';  // Серый: неподдерживаемый формат
     }
     
     // Проверяем, является ли файл архивом
     if (file.is_archive && archivesMap.has(file.path)) {
-        // Это архив - отображаем как раскрываемую папку
+        // FR-008: Это архив - отображаем как раскрываемую папку со словом "Архив" в названии
         const archiveContents = archivesMap.get(file.path);
-        fileDiv.className = 'file-item archive-item';
+        fileDiv.className = 'folder-container archive-folder';
+        fileDiv.id = `archive-${file.path.replace(/[^a-zA-Z0-9]/g, '-')}`;
         
         // Вычисляем агрегированный статус для архива
         const archiveStatus = calculateArchiveStatus(archiveContents, file_statuses);
         
         const archiveHeaderDiv = document.createElement('div');
-        archiveHeaderDiv.className = 'file-info archive-header';
-        archiveHeaderDiv.style.cursor = 'pointer';
+        archiveHeaderDiv.className = 'folder-header';
         archiveHeaderDiv.onclick = () => toggleArchive(file.path);
         
+        // FR-008: В названии добавляем слово "Архив", отображаем как обычную папку
+        const archiveName = file.name.replace(/\.(zip|rar)$/i, '');
         archiveHeaderDiv.innerHTML = `
-            <span class="folder-icon">📦</span>
-            <div class="file-details">
-                <span class="file-name">${escapeHtml(file.name)}</span>
-                <span class="file-size">${(file.size / 1024).toFixed(1)} KB</span>
-                <span class="archive-badge">Архив (${archiveContents.length} элементов)</span>
-            </div>
-            <span class="traffic-light traffic-light-${archiveStatus}" title="Статус архива: ${archiveStatus}"></span>
-            <span class="toggle-icon archive-toggle">▶</span>
+            <span class="folder-icon">📁</span>
+            <span class="folder-name">${escapeHtml(archiveName)} (Архив)</span>
+            <span class="file-count-badge">${archiveContents.length}</span>
+            <span class="traffic-light traffic-light-${archiveStatus}" title="Статус: ${archiveStatus}"></span>
+            <button class="delete-btn" title="Удалить архив" onclick="event.stopPropagation(); deleteFile('${escapeHtml(file.path)}')">
+                <svg class="icon-trash" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M9 3h6a1 1 0 0 1 1 1v2h4v2h-1v12a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V8H4V6h4V4a1 1 0 0 1 1-1zm1 3h4V5h-4v1zM7 8v12h10V8H7zm3 3h2v7h-2v-7zm4 0h2v7h-2v-7z"></path>
+                </svg>
+            </button>
+            <span class="toggle-icon">▶</span>
         `;
         
         const archiveContentDiv = document.createElement('div');
-        archiveContentDiv.className = 'archive-content';
-        archiveContentDiv.id = `archive-${file.path.replace(/[^a-zA-Z0-9]/g, '-')}`;
+        archiveContentDiv.className = 'folder-content';
         archiveContentDiv.style.display = 'none';
-        archiveContentDiv.style.marginLeft = '30px';
         
         // Добавляем содержимое архива
         archiveContents.forEach(entry => {
@@ -345,31 +352,38 @@ function renderFileItem(file, archivesMap, file_statuses) {
 }
 
 function toggleArchive(archivePath) {
-    // FR-009: Переключение отображения содержимого архива
+    // FR-008, FR-009: Переключение отображения содержимого архива (как обычная папка)
     const archiveId = `archive-${archivePath.replace(/[^a-zA-Z0-9]/g, '-')}`;
-    const contentDiv = document.getElementById(archiveId);
-    const toggleIcon = event.currentTarget.querySelector('.archive-toggle');
+    const archiveDiv = document.getElementById(archiveId);
     
-    if (contentDiv) {
-        const isHidden = contentDiv.style.display === 'none';
-        contentDiv.style.display = isHidden ? 'block' : 'none';
-        if (toggleIcon) {
-            toggleIcon.textContent = isHidden ? '▼' : '▶';
+    if (archiveDiv) {
+        const contentDiv = archiveDiv.querySelector('.folder-content');
+        const toggleIcon = event.currentTarget.querySelector('.toggle-icon');
+        
+        if (contentDiv) {
+            const isHidden = contentDiv.style.display === 'none';
+            contentDiv.style.display = isHidden ? 'block' : 'none';
+            if (toggleIcon) {
+                toggleIcon.textContent = isHidden ? '▼' : '▶';
+            }
         }
     }
 }
 
-// Helper function to get traffic light color based on status
+// FR-005: Helper function to get traffic light color based on status
+// Зелёный=найдено, Жёлтый=не найдено, Красный=ошибка, Серый=нейтральный
 function getTrafficLightColor(status) {
-    if (status === 'contains_keywords') return 'green';
-    if (status === 'no_keywords') return 'red';
-    if (status === 'error' || status === 'unsupported') return 'gray';
+    if (status === 'contains_keywords') return 'green';  // Зелёный: слова найдены
+    if (status === 'no_keywords') return 'yellow';  // Жёлтый: слова не найдены
+    if (status === 'error') return 'red';  // Красный: ошибка чтения/индексации
+    if (status === 'unsupported') return 'gray';  // Серый: неподдерживаемый формат
     return 'gray'; // not_checked or unknown
 }
 
-// Calculate folder status based on files inside
+// FR-006, FR-007: Calculate folder status based on files inside
 function calculateFolderStatus(files, file_statuses, archivesMap) {
     let hasGreen = false;
+    let hasYellow = false;
     let hasRed = false;
     
     for (const file of files) {
@@ -379,10 +393,12 @@ function calculateFolderStatus(files, file_statuses, archivesMap) {
         if (status === 'contains_keywords') {
             hasGreen = true;
         } else if (status === 'no_keywords') {
+            hasYellow = true;
+        } else if (status === 'error') {
             hasRed = true;
         }
         
-        // Если это архив, проверяем его содержимое
+        // FR-006: Если это архив, проверяем его содержимое
         if (file.is_archive && archivesMap.has(file.path)) {
             const archiveContents = archivesMap.get(file.path);
             for (const entry of archiveContents) {
@@ -390,25 +406,33 @@ function calculateFolderStatus(files, file_statuses, archivesMap) {
                 if (entryStatus.status === 'contains_keywords') {
                     hasGreen = true;
                 } else if (entryStatus.status === 'no_keywords') {
+                    hasYellow = true;
+                } else if (entryStatus.status === 'error') {
                     hasRed = true;
                 }
             }
         }
     }
     
-    // Логика: зелёный если есть хотя бы одно совпадение, красный если все проверены и нет совпадений, серый иначе
+    // Логика: зелёный если есть хотя бы одно совпадение, 
+    // красный если есть ошибки, жёлтый если все проверены и нет совпадений, серый иначе
     if (hasGreen) return 'green';
     if (hasRed) return 'red';
+    if (hasYellow) return 'yellow';
     return 'gray';
 }
 
-// Calculate archive status based on its contents
+// FR-006: Calculate archive status based on its contents
 function calculateArchiveStatus(archiveContents, file_statuses) {
     let hasGreen = false;
+    let hasYellow = false;
     let hasRed = false;
     
     for (const entry of archiveContents) {
-        if (entry.status === 'error' || entry.is_virtual_folder) continue;
+        if (entry.status === 'error' || entry.is_virtual_folder) {
+            if (entry.status === 'error') hasRed = true;
+            continue;
+        }
         
         const entryStatus = file_statuses[entry.path] || {};
         const status = entryStatus.status || 'not_checked';
@@ -416,12 +440,15 @@ function calculateArchiveStatus(archiveContents, file_statuses) {
         if (status === 'contains_keywords') {
             hasGreen = true;
         } else if (status === 'no_keywords') {
+            hasYellow = true;
+        } else if (status === 'error') {
             hasRed = true;
         }
     }
     
     if (hasGreen) return 'green';
     if (hasRed) return 'red';
+    if (hasYellow) return 'yellow';
     return 'gray';
 }
 
@@ -490,8 +517,11 @@ function deleteFolder(folderKey, folderDisplayName) {
 
 // --- Search ---
 function performSearch(terms) {
-    searchResults.style.display = 'block';
+    const resultsSection = document.getElementById('resultsSection');
     searchResults.innerHTML = '<div>Поиск...</div>';
+    // FR-010: Показываем секцию результатов
+    if (resultsSection) resultsSection.style.display = 'block';
+    
     return fetch('/search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -509,30 +539,30 @@ function performSearch(terms) {
                 const item = document.createElement('div');
                 item.className = 'search-result-item';
                 
-                // Улучшенная логика для отображения пути (включая архивы)
+                // FR-011: Упрощённая логика отображения - только имя папки и имя файла
                 const hasPath = !!result.path;
-                let breadcrumb = '';
+                let folderName = '';
                 
                 if (result.source && result.source.includes('://')) {
-                    // Это файл из архива (формат: zip://archive.zip/path/to/file.txt)
+                    // FR-011: Это файл из архива - показываем имя архива с пометкой "Архив"
                     const parts = result.source.split('://');
                     if (parts.length === 2) {
                         const [protocol, fullPath] = parts;
                         const pathParts = fullPath.split('/');
-                        const archiveName = pathParts[0];
-                        const innerPath = pathParts.slice(1).join(' › ');
-                        breadcrumb = `${archiveName} › ${innerPath}`;
+                        const archiveName = pathParts[0].replace(/\.(zip|rar)$/i, '');
+                        folderName = `${archiveName} (Архив)`;
                     } else {
-                        breadcrumb = result.source;
+                        folderName = result.source;
                     }
                 } else if (hasPath && result.path.includes('/')) {
-                    // Обычный файл в подпапке
+                    // Обычный файл в подпапке - показываем только последнюю папку
                     const pathParts = result.path.split('/');
-                    breadcrumb = pathParts.slice(0, -1).join(' › ') || 'Загруженные файлы';
+                    folderName = pathParts[pathParts.length - 2] || 'Загруженные файлы';
                 } else {
-                    breadcrumb = 'Загруженные файлы';
+                    folderName = 'Загруженные файлы';
                 }
                 
+                // FR-012: Имя файла должно быть кликабельным
                 const fileNameHtml = hasPath
                     ? `<a class="result-file-link" href="/view/${encodeURIComponent(result.path)}?q=${encodeURIComponent(t.join(','))}" target="_blank" rel="noopener">${escapeHtml(result.filename)}</a>`
                     : `${escapeHtml(result.filename)}`;
@@ -547,8 +577,8 @@ function performSearch(terms) {
                 }).join('');
                 item.innerHTML = `
                     <div class="result-header">
-                        <span class="result-folder">${escapeHtml(breadcrumb)}</span>
-                        <span class="result-filename" title="Источник: ${escapeHtml(result.source || '')}">${fileNameHtml}</span>
+                        <span class="result-folder">${escapeHtml(folderName)}</span>
+                        <span class="result-filename">${fileNameHtml}</span>
                     </div>
                     ${perTermHtml}
                 `;
@@ -567,13 +597,15 @@ function performSearch(terms) {
 
 function refreshSearchResultsIfActive() {
     const terms = searchInput.value.trim();
+    const resultsSection = document.getElementById('resultsSection');
+    
     if (!terms) {
-        // если запрос пуст — просто скрываем блок
-        searchResults.style.display = 'none';
+        // FR-010: если запрос пуст — скрываем блок результатов
+        if (resultsSection) resultsSection.style.display = 'none';
         searchResults.innerHTML = '';
         return;
     }
-    if (searchResults && searchResults.style.display !== 'none') {
+    if (resultsSection && resultsSection.style.display !== 'none') {
         // пере запускаем поиск, чтобы убрать удалённые документы из выдачи
         performSearch(terms);
     }
@@ -596,9 +628,9 @@ searchBtn.addEventListener('click', () => {
     performSearch(terms);
 });
 
-// Clear All button handler - удаляет все файлы и индекс, но сохраняет поисковый запрос
-if (clearAllBtn) {
-    clearAllBtn.addEventListener('click', () => {
+// FR-014: "Удалить файлы" - удаляет загруженные данные и результаты, НЕ очищает строки поиска
+if (deleteFilesBtn) {
+    deleteFilesBtn.addEventListener('click', () => {
         if (!confirm('Удалить ВСЕ загруженные файлы и папки, а также сводный файл? Это действие необратимо!\n\nПоисковый запрос будет сохранён.')) {
             return;
         }
@@ -606,7 +638,7 @@ if (clearAllBtn) {
         // Сохраняем текущие поисковые термины
         const savedSearchTerms = searchInput.value;
         
-        // Вызываем новый маршрут для полной очистки
+        // Вызываем маршрут для полной очистки
         fetch('/clear_all', { 
             method: 'POST', 
             headers: { 'Content-Type': 'application/json' } 
@@ -618,7 +650,8 @@ if (clearAllBtn) {
                 searchInput.value = savedSearchTerms;
                 
                 // Очищаем результаты поиска на UI
-                searchResults.style.display = 'none';
+                const resultsSection = document.getElementById('resultsSection');
+                if (resultsSection) resultsSection.style.display = 'none';
                 searchResults.innerHTML = '';
                 
                 // Обновляем список файлов (покажет пустое дерево)
@@ -627,6 +660,52 @@ if (clearAllBtn) {
                 
                 // Показываем результат
                 const message = `Очистка завершена:\n• Удалено элементов: ${data.deleted_count}\n• Индекс удалён: ${data.index_deleted ? 'да' : 'нет'}`;
+                if (data.errors && data.errors.length > 0) {
+                    const errorList = data.errors.map(e => `  - ${e.path}: ${e.error}`).join('\n');
+                    showMessage(message + `\n• Ошибки:\n${errorList}`);
+                } else {
+                    showMessage(message);
+                }
+            } else {
+                showMessage('Ошибка при очистке: ' + (data.error || 'Неизвестная ошибка'));
+            }
+        })
+        .catch(error => {
+            console.error('Ошибка при очистке:', error);
+            showMessage('Ошибка при очистке данных');
+        });
+    });
+}
+
+// FR-014: "Очистить всё" - удаляет файлы И очищает строки поиска
+if (clearAllBtn) {
+    clearAllBtn.addEventListener('click', () => {
+        if (!confirm('Удалить ВСЕ загруженные файлы, папки, сводный файл И очистить поисковый запрос? Это действие необратимо!')) {
+            return;
+        }
+        
+        // Вызываем маршрут для полной очистки
+        fetch('/clear_all', { 
+            method: 'POST', 
+            headers: { 'Content-Type': 'application/json' } 
+        })
+        .then(res => res.json())
+        .then(data => {
+            if (data.success) {
+                // Очищаем поисковые термины
+                searchInput.value = '';
+                
+                // Очищаем результаты поиска на UI
+                const resultsSection = document.getElementById('resultsSection');
+                if (resultsSection) resultsSection.style.display = 'none';
+                searchResults.innerHTML = '';
+                
+                // Обновляем список файлов (покажет пустое дерево)
+                updateFilesList();
+                refreshIndexStatus();
+                
+                // Показываем результат
+                const message = `Полная очистка завершена:\n• Удалено элементов: ${data.deleted_count}\n• Индекс удалён: ${data.index_deleted ? 'да' : 'нет'}`;
                 if (data.errors && data.errors.length > 0) {
                     const errorList = data.errors.map(e => `  - ${e.path}: ${e.error}`).join('\n');
                     showMessage(message + `\n• Ошибки:\n${errorList}`);
