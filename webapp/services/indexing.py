@@ -5,7 +5,7 @@ from document_processor import DocumentProcessor
 
 
 def parse_index_char_counts(index_path: str) -> dict:
-    """Парсит _search_index.txt и возвращает {relative_path: char_count} только для файлов из ФС (без zip://, rar://).
+    """Парсит _search_index.txt и возвращает {relative_path: char_count} для всех файлов, включая файлы из архивов.
     
     Безопасен к ошибкам формата; игнорирует записи без чисел.
     
@@ -26,8 +26,8 @@ def parse_index_char_counts(index_path: str) -> dict:
                 line = raw.strip()
                 if line.startswith('ЗАГОЛОВОК:'):
                     title = line.split(':', 1)[1].strip()
-                    # интересуют только реальные файлы из uploads (без схем)
-                    if title and '://' not in title:
+                    # Теперь обрабатываем все файлы, включая из архивов
+                    if title:
                         current_title = title
                     else:
                         current_title = None

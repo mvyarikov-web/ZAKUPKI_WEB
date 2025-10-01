@@ -91,31 +91,34 @@ def _search_in_files(search_terms):
     new_statuses = {}
     
     for rel_path, data in grouped.items():
-        # Статус обновляем только для реальных файлов из uploads
-        if rel_path in files_to_search:
-            prev = files_state.get_file_status(rel_path)
-            # Составим агрегированный список терминов и до 3 сниппетов на термин
-            found_terms = []
-            context = []
-            for term, info in data['by_term'].items():
-                if not term:
-                    continue
-                found_terms.append(f"{term} ({info['count']})")
-                context.extend(info['snippets'][:3])
-            new_entry = {
-                'status': 'contains_keywords',
-                'found_terms': found_terms,
-                'context': context[: max(3, len(context))],
-                'processed_at': datetime.now().isoformat()
-            }
-            # Не затираем ранее сохранённые поля (char_count, error, original_name)
-            for k in ('char_count','error','original_name'):
-                if k in prev:
-                    new_entry[k] = prev[k]
-            new_statuses[rel_path] = new_entry
-            found_files.add(rel_path)
+        # Составим агрегированный список терминов и до 3 сниппетов на термин
+        found_terms = []
+        context = []
+        for term, info in data['by_term'].items():
+            if not term:
+                continue
+            found_terms.append(f"{term} ({info['count']})")
+            context.extend(info['snippets'][:3])
         
-        # Добавляем в выдачу, даже если файл виртуальный (например, внутри архива)
+        new_entry = {
+            'status': 'contains_keywords',
+            'found_terms': found_terms,
+            'context': context[: max(3, len(context))],
+            'processed_at': datetime.now().isoformat()
+        }
+        
+        # Получаем предыдущий статус (для реальных и виртуальных файлов)
+        prev = files_state.get_file_status(rel_path)
+        # Не затираем ранее сохранённые поля (char_count, error, original_name)
+        for k in ('char_count','error','original_name'):
+            if k in prev:
+                new_entry[k] = prev[k]
+        
+        # Обновляем статус для всех найденных файлов (включая виртуальные из архивов)
+        new_statuses[rel_path] = new_entry
+        found_files.add(rel_path)
+        
+        # Добавляем в выдачу
         # Формируем блоки по каждому ключевому слову
         per_term = []
         for term, info in data['by_term'].items():
@@ -214,11 +217,11 @@ def build_index_route():
         size = os.path.getsize(index_path) if os.path.exists(index_path) else 0
         current_app.logger.info(f"Индекс собран: {index_path}, размер: {size} байт")
         
-        # Обновим количество распознанных символов по каждому реальному файлу и статусы ошибок/неподдержки
+        # Обновим количество распознанных символов по каждому файлу (включая виртуальные из архивов) и статусы ошибок/неподдержки
         try:
             counts = parse_index_char_counts(index_path)
             
-            # Список всех файлов в uploads
+            # Список всех реальных файлов в uploads
             all_files: list[str] = []
             for root, dirs, files in os.walk(uploads):
                 for fname in files:
@@ -230,6 +233,7 @@ def build_index_route():
             files_state = _get_files_state()
             new_statuses = {}
             
+            # Обрабатываем реальные файлы
             for rel_path in all_files:
                 ext_ok = allowed_file(rel_path, current_app.config['ALLOWED_EXTENSIONS'])
                 entry = files_state.get_file_status(rel_path).copy()
@@ -261,6 +265,20 @@ def build_index_route():
                         # если 0 символов, оставим это как индикатор качества (UI подсветит)
                 
                 new_statuses[rel_path] = entry
+            
+            # Обрабатываем виртуальные файлы из архивов (те, что есть в индексе, но не в all_files)
+            for indexed_path, char_count in counts.items():
+                if indexed_path not in all_files and '://' in indexed_path:
+                    # Это виртуальный файл из архива
+                    entry = files_state.get_file_status(indexed_path).copy()
+                    entry.update({
+                        'char_count': char_count,
+                        'processed_at': datetime.now().isoformat()
+                    })
+                    # Если статус не установлен, устанавливаем в not_checked
+                    if not entry.get('status'):
+                        entry['status'] = 'not_checked'
+                    new_statuses[indexed_path] = entry
             
             # Атомарно сохраняем все статусы
             files_state.update_file_statuses(new_statuses)

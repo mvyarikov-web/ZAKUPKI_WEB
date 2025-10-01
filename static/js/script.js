@@ -311,7 +311,7 @@ function renderFileItem(file, archivesMap, file_statuses) {
                     <div class="file-info">
                         <span class="file-icon">${icon}</span>
                         <div class="file-details">
-                            <a class="file-name result-file-link" href="/download/${encodeURIComponent(entry.path)}" target="_blank" rel="noopener">${escapeHtml(entry.name)}</a>
+                            <a class="file-name result-file-link" href="/view/${encodeURIComponent(entry.path)}" target="_blank" rel="noopener">${escapeHtml(entry.name)}</a>
                             <span class="file-size">${(entry.size / 1024).toFixed(1)} KB</span>
                             ${entryCharCount !== undefined ? `<span class="file-chars">Символов: ${entryCharCount}</span>` : ''}
                         </div>
@@ -331,7 +331,7 @@ function renderFileItem(file, archivesMap, file_statuses) {
             <div class="file-info">
                 <span class="file-icon">${icon}</span>
                 <div class="file-details">
-                    <a class="file-name result-file-link" href="/download/${encodeURIComponent(file.path)}" target="_blank" rel="noopener">${escapeHtml(file.name)}</a>
+                    <a class="file-name result-file-link" href="/view/${encodeURIComponent(file.path)}" target="_blank" rel="noopener">${escapeHtml(file.name)}</a>
                     <span class="file-size">${(file.size / 1024).toFixed(1)} KB</span>
                     ${charCount !== undefined ? `<span class="file-chars${charCount === 0 ? ' text-danger' : ''}">Символов: ${charCount}</span>` : ''}
                     ${fileStatus.error ? `<span class="file-error text-danger">${escapeHtml(fileStatus.error)}</span>` : ''}
@@ -563,8 +563,10 @@ function performSearch(terms) {
                 }
                 
                 // FR-012: Имя файла должно быть кликабельным
-                const fileNameHtml = hasPath
-                    ? `<a class="result-file-link" href="/view/${encodeURIComponent(result.path)}?q=${encodeURIComponent(t.join(','))}" target="_blank" rel="noopener">${escapeHtml(result.filename)}</a>`
+                // Для файлов из архивов используем source вместо path
+                const linkPath = result.source || result.path;
+                const fileNameHtml = linkPath
+                    ? `<a class="result-file-link" href="/view/${encodeURIComponent(linkPath)}?q=${encodeURIComponent(t.join(','))}" target="_blank" rel="noopener">${escapeHtml(result.filename)}</a>`
                     : `${escapeHtml(result.filename)}`;
                 
                 // Рендер по каждому термину: количество и до 3 сниппетов
