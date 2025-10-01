@@ -112,7 +112,7 @@ function handleFiles(e) {
 // --- Update Files List ---
 function updateFilesList() {
     // FR-001, FR-009: Обновлённая версия с поддержкой архивов как виртуальных папок
-    fetch('/files_json')
+    return fetch('/files_json')
         .then(res => res.json())
         .then(data => {
             const { folders = {}, archives = [], file_statuses = {} } = data;
@@ -192,11 +192,12 @@ function updateFilesList() {
             
             // Применяем термины поиска к ссылкам
             applyQueryToViewLinks();
+            return true;
         })
         .catch(err => {
             console.error('Ошибка загрузки списка файлов:', err);
             // Fallback: используем старый метод
-            fetch('/')
+            return fetch('/')
                 .then(res => res.text())
                 .then(html => {
                     const parser = new DOMParser();
@@ -206,6 +207,7 @@ function updateFilesList() {
                         filesList.innerHTML = newFilesList.innerHTML;
                         setTimeout(restoreFolderStates, 100);
                     }
+                    return true;
                 });
         });
 }
@@ -287,26 +289,38 @@ function renderFileItem(file, archivesMap, file_statuses) {
                 `;
                 archiveContentDiv.appendChild(folderDiv);
             } else {
-                // Обычный файл внутри архива
+                // Обычный файл внутри архива - тоже нужен контейнер для результатов поиска
                 const entryDiv = document.createElement('div');
-                entryDiv.className = 'file-item';
+                entryDiv.className = 'file-item-wrapper';
+                entryDiv.setAttribute('data-file-path', entry.path);
+                
                 const icon = entry.is_archive ? '📦' : '📄';
                 
                 // Получаем статус для файла из архива
                 const entryStatus = file_statuses[entry.path] || {};
                 const entryCharCount = entryStatus.char_count || 0;
                 const entryTrafficLight = getTrafficLightColor(entryStatus.status || 'not_checked', entryCharCount);
+                const isUnreadable = (entryStatus.status === 'unsupported') || (entryStatus.status === 'error') || (entryCharCount === 0);
                 
                 entryDiv.innerHTML = `
-                    <div class="file-info">
-                        <span class="file-icon">${icon}</span>
-                        <div class="file-details">
-                            <a class="file-name result-file-link" href="/view/${encodeURIComponent(entry.path)}" target="_blank" rel="noopener">${escapeHtml(entry.name)}</a>
-                            <span class="file-size">${(entry.size / 1024).toFixed(1)} KB</span>
-                            ${entryCharCount !== undefined ? `<span class="file-chars${entryCharCount === 0 ? ' text-danger' : ''}">Символов: ${entryCharCount}</span>` : ''}
+                    <div class="file-item${isUnreadable ? ' file-disabled' : ''}">
+                        <div class="file-info">
+                            <span class="file-icon">${icon}</span>
+                            <div class="file-details">
+                                ${isUnreadable ? 
+                                    `<span class="file-name" title="Файл недоступен для просмотра/скачивания">${escapeHtml(entry.name)}</span>` :
+                                    `<a class="file-name result-file-link" href="/view/${encodeURIComponent(entry.path)}" target="_blank" rel="noopener">${escapeHtml(entry.name)}</a>`
+                                }
+                                <span class="file-size">${(entry.size / 1024).toFixed(1)} KB</span>
+                                ${entryCharCount !== undefined ? `<span class="file-chars${entryCharCount === 0 ? ' text-danger' : ''}">Символов: ${entryCharCount}</span>` : ''}
+                                ${entryStatus.error ? `<span class="file-error text-danger">${escapeHtml(entryStatus.error)}</span>` : ''}
+                                ${entryStatus.status === 'unsupported' ? `<span class="file-error text-danger">Неподдерживаемый формат</span>` : ''}
+                            </div>
                         </div>
+                        <span class="traffic-light traffic-light-${entryTrafficLight}" title="Статус: ${entryStatus.status || 'not_checked'}"></span>
                     </div>
-                    <span class="traffic-light traffic-light-${entryTrafficLight}" title="Статус: ${entryStatus.status || 'not_checked'}"></span>
+                    <!-- Контейнер для результатов поиска под файлом из архива -->
+                    <div class="file-search-results" style="display:none;"></div>
                 `;
                 archiveContentDiv.appendChild(entryDiv);
             }
@@ -315,26 +329,39 @@ function renderFileItem(file, archivesMap, file_statuses) {
         fileDiv.appendChild(archiveHeaderDiv);
         fileDiv.appendChild(archiveContentDiv);
     } else {
-        // Обычный файл
+        // Обычный файл - создаем обертку для поддержки результатов поиска
+        fileDiv.className = 'file-item-wrapper';
+        fileDiv.setAttribute('data-file-path', file.path);
+        
         const icon = file.is_archive ? '📦' : '📄';
+        const isUnreadable = (status === 'unsupported') || (status === 'error') || (charCount !== undefined && charCount === 0);
+        
         fileDiv.innerHTML = `
-            <div class="file-info">
-                <span class="file-icon">${icon}</span>
-                <div class="file-details">
-                    <a class="file-name result-file-link" href="/view/${encodeURIComponent(file.path)}" target="_blank" rel="noopener">${escapeHtml(file.name)}</a>
-                    <span class="file-size">${(file.size / 1024).toFixed(1)} KB</span>
-                    ${charCount !== undefined ? `<span class="file-chars${charCount === 0 ? ' text-danger' : ''}">Символов: ${charCount}</span>` : ''}
-                    ${fileStatus.error ? `<span class="file-error text-danger">${escapeHtml(fileStatus.error)}</span>` : ''}
+            <div class="file-item${isUnreadable ? ' file-disabled' : ''}">
+                <div class="file-info">
+                    <span class="file-icon">${icon}</span>
+                    <div class="file-details">
+                        ${isUnreadable ? 
+                            `<span class="file-name" title="Файл недоступен для просмотра/скачивания">${escapeHtml(file.name)}</span>` :
+                            `<a class="file-name result-file-link" href="/view/${encodeURIComponent(file.path)}" target="_blank" rel="noopener">${escapeHtml(file.name)}</a>`
+                        }
+                        <span class="file-size">${(file.size / 1024).toFixed(1)} KB</span>
+                        ${charCount !== undefined ? `<span class="file-chars${charCount === 0 ? ' text-danger' : ''}">Символов: ${charCount}</span>` : ''}
+                        ${fileStatus.error ? `<span class="file-error text-danger">${escapeHtml(fileStatus.error)}</span>` : ''}
+                        ${status === 'unsupported' ? `<span class="file-error text-danger">Неподдерживаемый формат</span>` : ''}
+                    </div>
+                </div>
+                <div class="file-status">
+                    <span class="traffic-light traffic-light-${trafficLight}" title="Статус: ${status}"></span>
+                    <button class="delete-btn" title="Удалить файл" onclick="deleteFile('${escapeHtml(file.path)}')">
+                        <svg class="icon-trash" viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M9 3h6a1 1 0 0 1 1 1v2h4v2h-1v12a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V8H4V6h4V4a1 1 0 0 1 1-1zm1 3h4V5h-4v1zM7 8v12h10V8H7zm3 3h2v7h-2v-7zm4 0h2v7h-2v-7z"></path>
+                        </svg>
+                    </button>
                 </div>
             </div>
-            <div class="file-status">
-                <span class="traffic-light traffic-light-${trafficLight}" title="Статус: ${status}"></span>
-                <button class="delete-btn" title="Удалить файл" onclick="deleteFile('${escapeHtml(file.path)}')">
-                    <svg class="icon-trash" viewBox="0 0 24 24" aria-hidden="true">
-                        <path d="M9 3h6a1 1 0 0 1 1 1v2h4v2h-1v12a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V8H4V6h4V4a1 1 0 0 1 1-1zm1 3h4V5h-4v1zM7 8v12h10V8H7zm3 3h2v7h-2v-7zm4 0h2v7h-2v-7z"></path>
-                    </svg>
-                </button>
-            </div>
+            <!-- FR-003, FR-004, FR-005: Контейнер для результатов поиска под файлом -->
+            <div class="file-search-results" style="display:none;"></div>
         `;
     }
     
@@ -561,7 +588,7 @@ function deleteFolder(folderKey, folderDisplayName) {
 }
 
 // --- Search ---
-function performSearch(terms) {
+async function performSearch(terms) {
     // FR-003: Убираем отдельную секцию результатов - результаты будут под файлами
     // Очищаем все предыдущие результаты под файлами
     document.querySelectorAll('.file-search-results').forEach(el => {
@@ -569,18 +596,17 @@ function performSearch(terms) {
         el.innerHTML = '';
     });
     
-    return fetch('/search', {
+    const resp = await fetch('/search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ search_terms: terms })
-    })
-    .then(res => res.json())
-    .then(data => {
-        try { localStorage.setItem('last_search_terms', terms); } catch (e) {}
-        // Критично: сразу обновляем список файлов, чтобы светофоры отобразились на первом поиске
-        updateFilesList();
-        
-        if (data.results && data.results.length > 0) {
+    });
+    const data = await resp.json();
+    try { localStorage.setItem('last_search_terms', terms); } catch (e) {}
+    // Критично: сначала обновляем список файлов и дожидаемся рендера, чтобы не потерять результаты
+    await updateFilesList();
+    
+    if (data.results && data.results.length > 0) {
             const t = termsFromInput();
             
             // FR-004, FR-005: Группируем результаты по файлам и отображаем под каждым файлом
@@ -623,11 +649,7 @@ function performSearch(terms) {
             
             highlightSnippets(t);
             applyQueryToViewLinks();
-        }
-    })
-    .catch(() => {
-        console.error('Ошибка поиска.');
-    });
+    }
 }
 
 function refreshSearchResultsIfActive() {
