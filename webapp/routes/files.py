@@ -361,6 +361,69 @@ def download_from_archive(virtual_path: str):
         current_app.logger.exception('download_from_archive error')
         return jsonify({'error': str(e)}), 500
 
+@files_bp.route('/clear_all', methods=['POST'])
+def clear_all():
+    """Очистка всех загруженных файлов и индекса (increment-002)."""
+    try:
+        uploads = current_app.config['UPLOAD_FOLDER']
+        index_folder = current_app.config['INDEX_FOLDER']
+        
+        deleted_files_count = 0
+        index_deleted = False
+        errors = []
+        
+        # Удаляем все файлы и папки из uploads/
+        if os.path.exists(uploads):
+            for item in os.listdir(uploads):
+                item_path = os.path.join(uploads, item)
+                try:
+                    if os.path.isfile(item_path):
+                        os.remove(item_path)
+                        deleted_files_count += 1
+                    elif os.path.isdir(item_path):
+                        shutil.rmtree(item_path)
+                        deleted_files_count += 1
+                except Exception as e:
+                    current_app.logger.warning(f"Не удалось удалить {item_path}: {e}")
+                    errors.append({'path': item, 'error': str(e)})
+        
+        # Удаляем индексный файл
+        index_path = os.path.join(index_folder, '_search_index.txt')
+        if os.path.exists(index_path):
+            try:
+                os.remove(index_path)
+                index_deleted = True
+            except Exception as e:
+                current_app.logger.warning(f"Не удалось удалить индекс: {e}")
+                errors.append({'path': '_search_index.txt', 'error': str(e)})
+        
+        # Очищаем файл с результатами поиска
+        results_file = current_app.config['SEARCH_RESULTS_FILE']
+        if os.path.exists(results_file):
+            try:
+                os.remove(results_file)
+            except Exception as e:
+                current_app.logger.warning(f"Не удалось удалить результаты поиска: {e}")
+                errors.append({'path': 'search_results.json', 'error': str(e)})
+        
+        # Очищаем состояние в памяти
+        files_state = _get_files_state()
+        files_state.clear()
+        
+        current_app.logger.info(f"Очистка завершена: удалено элементов={deleted_files_count}, индекс={index_deleted}, ошибок={len(errors)}")
+        
+        return jsonify({
+            'success': True,
+            'deleted_count': deleted_files_count,
+            'index_deleted': index_deleted,
+            'errors': errors
+        })
+        
+    except Exception as e:
+        current_app.logger.exception('Ошибка при полной очистке')
+        return jsonify({'error': str(e)}), 500
+
+
 @files_bp.get('/files_json')
 def files_json():
     """JSON-список файлов в uploads, включая виртуальное содержимое архивов (FR-001, FR-009)."""
