@@ -17,6 +17,7 @@ class Config:
     # Flask
     JSON_AS_ASCII = False  # корректная кириллица в JSON
     MAX_CONTENT_LENGTH = 100 * 1024 * 1024  # 100MB max file size
+    REQUEST_TIMEOUT = int(os.environ.get('REQUEST_TIMEOUT', '30'))  # таймаут обработки запроса (сек)
     
     # Приложение
     SEARCH_RESULTS_FILE = os.path.join(BASE_DIR, 'index', 'search_results.json')

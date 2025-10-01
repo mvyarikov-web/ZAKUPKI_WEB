@@ -3,6 +3,7 @@ from flask import Flask
 from webapp.config import get_config
 from webapp.utils.logging import setup_logging
 from webapp.utils.errors import register_error_handlers
+from webapp.utils.timeout_middleware import TimeoutMiddleware
 
 
 def create_app(config_name=None):
@@ -27,6 +28,20 @@ def create_app(config_name=None):
     os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
     os.makedirs(app.config['INDEX_FOLDER'], exist_ok=True)
     os.makedirs(app.config['LOGS_DIR'], exist_ok=True)
+
+    # Таймаут для долгих запросов (например, сборка индекса)
+    try:
+        timeout_seconds = int(app.config.get('REQUEST_TIMEOUT', 30))
+    except Exception:
+        timeout_seconds = 30
+    app.wsgi_app = TimeoutMiddleware(
+        app.wsgi_app,
+        timeout=timeout_seconds,
+        skip_paths=[
+            '/static/',          # статика не ограничивается
+            '/download/',        # скачивания
+        ]
+    )
     
         # Настраиваем логирование
     setup_logging(app)

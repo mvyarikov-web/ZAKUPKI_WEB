@@ -91,6 +91,11 @@ def _search_in_files(search_terms, exclude_mode=False):
 
     # Обновим статусы известных файлов и подготовим выдачу
     files_state = _get_files_state()
+    # Получаем словарь количеств символов из индекса (реальные и виртуальные пути)
+    try:
+        counts = parse_index_char_counts(index_path)
+    except Exception:
+        counts = {}
     found_files = set()
     new_statuses = {}
     
@@ -127,6 +132,9 @@ def _search_in_files(search_terms, exclude_mode=False):
         for k in ('char_count','error','original_name'):
             if k in prev:
                 new_entry[k] = prev[k]
+        # Обновляем char_count из индекса при наличии
+        if isinstance(rel_path, str) and rel_path in counts:
+            new_entry['char_count'] = counts[rel_path]
         
         # Обновляем статус для всех найденных файлов (включая виртуальные из архивов)
         new_statuses[rel_path] = new_entry
@@ -181,6 +189,9 @@ def _search_in_files(search_terms, exclude_mode=False):
             for k in ('char_count','error','original_name'):
                 if k in prev:
                     new_entry[k] = prev[k]
+            # Если есть счётчик символов в индексе — сохраним его
+            if rel_path in counts:
+                new_entry['char_count'] = counts[rel_path]
             new_statuses[rel_path] = new_entry
 
     # Атомарное обновление всех статусов

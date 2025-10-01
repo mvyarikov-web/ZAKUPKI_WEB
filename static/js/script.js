@@ -164,7 +164,9 @@ function updateFilesList() {
                 
         // Вычисляем агрегированный статус для папки
         const searchPerformed = document.querySelectorAll('.file-search-results[style*="display: block"]').length > 0;
-        const folderStatus = calculateFolderStatus(files, file_statuses, archivesMap, searchPerformed);                const headerDiv = document.createElement('div');
+    // Папка до первого поиска должна быть серой, поэтому если поиск не выполнялся — принудительно используем gray
+    const folderStatus = searchPerformed ? calculateFolderStatus(files, file_statuses, archivesMap, searchPerformed) : 'gray';
+        const headerDiv = document.createElement('div');
                 headerDiv.className = 'folder-header';
                 headerDiv.onclick = () => toggleFolder(folderName);
                 
@@ -251,8 +253,8 @@ function renderFileItem(file, archivesMap, file_statuses) {
         fileDiv.id = `archive-${file.path.replace(/[^a-zA-Z0-9]/g, '-')}`;
         fileDiv.dataset.path = file.path; // FR-009: Сохраняем путь для localStorage
         
-        // Вычисляем агрегированный статус для архива
-        const archiveStatus = calculateArchiveStatus(archiveContents, file_statuses, searchPerformed);
+    // Вычисляем агрегированный статус для архива; до первого поиска всегда серый
+    const archiveStatus = searchPerformed ? calculateArchiveStatus(archiveContents, file_statuses, searchPerformed) : 'gray';
         
         // Проверяем сохранённое состояние архива
         const savedArchiveState = localStorage.getItem('archive-' + file.path);
@@ -320,7 +322,8 @@ function renderFileItem(file, archivesMap, file_statuses) {
                 // Получаем статус для файла из архива
                 const entryStatus = file_statuses[entry.path] || {};
                 const entryCharCount = entryStatus.char_count || 0;
-                const entryTrafficLight = getTrafficLightColor(entryStatus.status || 'not_checked', entryCharCount);
+                const entryHasResults = window.TrafficLights.hasSearchResultsForFile(entry.path);
+                const entryTrafficLight = window.TrafficLights.getFileTrafficLightColor(entryStatus.status || 'not_checked', entryCharCount, entryHasResults, searchPerformed);
                 const isUnreadable = (entryStatus.status === 'unsupported') || (entryStatus.status === 'error') || (entryCharCount === 0);
                 
                 entryDiv.innerHTML = `
@@ -338,7 +341,7 @@ function renderFileItem(file, archivesMap, file_statuses) {
                                 ${entryStatus.status === 'unsupported' ? `<span class="file-error text-danger">Неподдерживаемый формат</span>` : ''}
                             </div>
                         </div>
-                        <span class="traffic-light traffic-light-${entryTrafficLight}" title="Статус: ${entryStatus.status || 'not_checked'}"></span>
+                        <span class="traffic-light traffic-light-${entryTrafficLight}" data-status="${entryStatus.status || 'not_checked'}" data-chars="${entryCharCount}" title="Статус: ${entryStatus.status || 'not_checked'}"></span>
                     </div>
                     <!-- Контейнер для результатов поиска под файлом из архива -->
                     <div class="file-search-results" style="display:none;"></div>
@@ -376,7 +379,7 @@ function renderFileItem(file, archivesMap, file_statuses) {
                     </div>
                 </div>
                 <div class="file-status">
-                    <span class="traffic-light traffic-light-${trafficLight}" title="Статус: ${status}"></span>
+                    <span class="traffic-light traffic-light-${trafficLight}" data-status="${status}" data-chars="${charCount ?? ''}" title="Статус: ${status}"></span>
                     <button class="delete-btn" title="Удалить файл" onclick="deleteFile('${escapeHtml(file.path)}')">
                         <svg class="icon-trash" viewBox="0 0 24 24" aria-hidden="true">
                             <path d="M9 3h6a1 1 0 0 1 1 1v2h4v2h-1v12a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V8H4V6h4V4a1 1 0 0 1 1-1zm1 3h4V5h-4v1zM7 8v12h10V8H7zm3 3h2v7h-2v-7zm4 0h2v7h-2v-7z"></path>
@@ -539,6 +542,95 @@ function deleteFolder(folderKey, folderDisplayName) {
 }
 
 // --- Search ---
+
+// Функция обновления светофоров после поиска
+function updateTrafficLightsAfterSearch() {
+    const searchPerformed = window.TrafficLights.isSearchPerformed();
+    
+    // Обновляем светофоры для всех файлов
+    document.querySelectorAll('.file-item').forEach(fileItem => {
+        const fileWrapper = fileItem.closest('.file-item-wrapper');
+        if (!fileWrapper) return;
+        
+        const filePath = fileWrapper.getAttribute('data-file-path');
+        if (!filePath) return;
+        
+        // Определяем статус файла из различных индикаторов
+        let status = 'not_checked';
+        let charCount = null;
+        
+        // Проверяем, есть ли индикаторы ошибок или неподдержки
+        const hasError = fileItem.querySelector('.file-error');
+        const isDisabled = fileItem.classList.contains('file-disabled');
+        
+        if (hasError || isDisabled) {
+            const errorText = hasError ? hasError.textContent : '';
+            if (errorText.includes('Неподдерживаемый формат')) {
+                status = 'unsupported';
+            } else {
+                status = 'error';
+            }
+            charCount = 0;
+        } else {
+            // Извлекаем char_count из .file-chars
+            const charsEl = fileItem.querySelector('.file-chars');
+            if (charsEl && charsEl.textContent) {
+                const m = charsEl.textContent.match(/(\d+)/);
+                if (m) {
+                    charCount = parseInt(m[1], 10);
+                    if (charCount > 0) {
+                        status = 'indexed'; // Файл проиндексирован
+                    } else {
+                        status = 'error'; // Нулевой объём = ошибка
+                    }
+                }
+            }
+        }
+        
+        // Проверяем результаты поиска
+        const hasSearchResults = window.TrafficLights.hasSearchResultsForFile(filePath);
+        
+        // Определяем новый цвет светофора
+        const newColor = window.TrafficLights.getFileTrafficLightColor(status, charCount, hasSearchResults, searchPerformed);
+        
+        // Обновляем светофор
+        const trafficLight = fileItem.querySelector('.traffic-light');
+        if (trafficLight) {
+            trafficLight.className = `traffic-light traffic-light-${newColor}`;
+            // Обновляем data-атрибуты для последующих пересчётов
+            trafficLight.setAttribute('data-status', status);
+            trafficLight.setAttribute('data-chars', charCount || '0');
+        }
+    });
+    
+    // Обновляем светофоры для папок и архивов
+    document.querySelectorAll('.folder-container').forEach(folderContainer => {
+        const folderHeader = folderContainer.querySelector('.folder-header');
+        if (!folderHeader) return;
+        
+        const folderContent = folderContainer.querySelector('.folder-content');
+        if (!folderContent) return;
+        
+        // Собираем цвета файлов в папке
+        const fileColors = [];
+        folderContent.querySelectorAll('.file-item .traffic-light').forEach(light => {
+            const color = light.classList.contains('traffic-light-red') ? 'red' :
+                         light.classList.contains('traffic-light-green') ? 'green' :
+                         light.classList.contains('traffic-light-yellow') ? 'yellow' : 'gray';
+            fileColors.push(color);
+        });
+        
+        // Определяем цвет папки
+        const folderColor = window.TrafficLights.getFolderTrafficLightColor(fileColors);
+        
+        // Обновляем светофор папки
+        const folderTrafficLight = folderHeader.querySelector('.traffic-light');
+        if (folderTrafficLight) {
+            folderTrafficLight.className = `traffic-light traffic-light-${folderColor}`;
+        }
+    });
+}
+
 async function performSearch(terms) {
     // FR-003: Убираем отдельную секцию результатов - результаты будут под файлами
     // Очищаем все предыдущие результаты под файлами
@@ -619,29 +711,34 @@ async function performSearch(terms) {
                 }
             });
             
+            // Обновляем светофоры после установки результатов
+            updateTrafficLightsAfterSearch();
+            
             // Сортировка: файлы с результатами наверх, проиндексированные в середине, неиндексированные вниз
             document.querySelectorAll('.folder-content').forEach(contentDiv => {
                 const wrappers = Array.from(contentDiv.querySelectorAll(':scope > .file-item-wrapper, :scope > .file-item, :scope > .folder-container.archive-folder'));
-                // Для архивов: нужен порядок внутри archiveContentDiv, ищем дочерние-обёртки
+                
                 const scored = wrappers.map(el => {
-                    const hasResults = el.classList.contains('file-item-wrapper') ? el.getAttribute('data-has-results') === '1' : !!el.querySelector('.file-search-results[style*="display: block"]');
-                    
-                    // Проверяем, проиндексирован ли файл (не disabled)
-                    const isIndexed = !el.classList.contains('file-disabled') && !el.querySelector('.file-item.file-disabled');
-                    
-                    // Определяем цвет светофора для правильной сортировки
+                    // Получаем фактический цвет светофора из DOM
+                    const trafficLight = el.querySelector('.traffic-light');
                     let lightColor = window.TrafficLights.COLORS.GRAY;
-                    if (!isIndexed) {
-                        lightColor = window.TrafficLights.COLORS.RED;
-                    } else if (hasResults) {
-                        lightColor = window.TrafficLights.COLORS.GREEN;
-                    } else if (window.TrafficLights.isSearchPerformed()) {
-                        lightColor = window.TrafficLights.COLORS.YELLOW;
+                    
+                    if (trafficLight) {
+                        if (trafficLight.classList.contains('traffic-light-red')) {
+                            lightColor = window.TrafficLights.COLORS.RED;
+                        } else if (trafficLight.classList.contains('traffic-light-green')) {
+                            lightColor = window.TrafficLights.COLORS.GREEN;
+                        } else if (trafficLight.classList.contains('traffic-light-yellow')) {
+                            lightColor = window.TrafficLights.COLORS.YELLOW;
+                        } else if (trafficLight.classList.contains('traffic-light-gray')) {
+                            lightColor = window.TrafficLights.COLORS.GRAY;
+                        }
                     }
                     
                     const score = window.TrafficLights.getTrafficLightSortPriority(lightColor);
                     return { el, score };
                 });
+                
                 scored.sort((a, b) => b.score - a.score);
                 scored.forEach(({ el }) => contentDiv.appendChild(el));
             });
@@ -651,6 +748,9 @@ async function performSearch(terms) {
 
             highlightSnippets(t);
             applyQueryToViewLinks();
+    } else {
+        // Нет результатов, но нужно обновить светофоры для отображения жёлтого цвета
+        updateTrafficLightsAfterSearch();
     }
 }
 
@@ -906,7 +1006,14 @@ function restoreFolderStates() {
 document.addEventListener('DOMContentLoaded', function() {
     refreshIndexStatus();
     setInterval(refreshIndexStatus, 8000);
-    applyQueryToViewLinks();
+    // Первая инициализация списка файлов через API, чтобы отрисовать светофоры
+    updateFilesList().then(() => {
+        applyQueryToViewLinks();
+        // Если поиск уже выполнялся ранее и результаты присутствуют в DOM, пересчитаем светофоры
+        if (window.TrafficLights && window.TrafficLights.isSearchPerformed()) {
+            updateTrafficLightsAfterSearch();
+        }
+    });
 });
 
 // --- Index status ---

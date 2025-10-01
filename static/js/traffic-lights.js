@@ -31,28 +31,30 @@ const FILE_STATUSES = {
  * @returns {string} цвет светофора
  */
 function getFileTrafficLightColor(status, charCount = null, hasSearchResults = false, searchPerformed = false) {
-    // Красный: не проиндексированные файлы
+    // Если поиск был выполнен — приоритет результатов над качеством индексации
+    if (searchPerformed) {
+        if (hasSearchResults) {
+            return TRAFFIC_LIGHT_COLORS.GREEN; // Зелёный: есть совпадения
+        }
+        // Если результатов нет — различаем проиндексирован/не проиндексирован
+        const indexed = isFileIndexed(status, charCount);
+        return indexed ? TRAFFIC_LIGHT_COLORS.YELLOW : TRAFFIC_LIGHT_COLORS.RED;
+    }
+
+    // До выполнения поиска: ошибки/неподдержка/нулевой объём — красный
     if (status === FILE_STATUSES.ERROR || status === FILE_STATUSES.UNSUPPORTED || charCount === 0) {
         return TRAFFIC_LIGHT_COLORS.RED;
     }
-    
-    // Если поиск был выполнен
-    if (searchPerformed) {
-        if (hasSearchResults) {
-            return TRAFFIC_LIGHT_COLORS.GREEN;  // Зелёный: есть совпадения
-        } else {
-            return TRAFFIC_LIGHT_COLORS.YELLOW; // Жёлтый: нет совпадений, но файл проиндексирован
-        }
-    }
-    
+
     // Серый: проиндексированные, но поиск не производился
-    if (status === FILE_STATUSES.CONTAINS_KEYWORDS || 
-        status === FILE_STATUSES.NO_KEYWORDS || 
-        status === FILE_STATUSES.PROCESSING) {
+    if (status === FILE_STATUSES.CONTAINS_KEYWORDS ||
+        status === FILE_STATUSES.NO_KEYWORDS ||
+        status === FILE_STATUSES.PROCESSING ||
+        status === FILE_STATUSES.NOT_CHECKED) {
         return TRAFFIC_LIGHT_COLORS.GRAY;
     }
-    
-    return TRAFFIC_LIGHT_COLORS.GRAY; // По умолчанию серый для not_checked
+
+    return TRAFFIC_LIGHT_COLORS.GRAY; // По умолчанию серый
 }
 
 /**
@@ -65,15 +67,19 @@ function getFolderTrafficLightColor(fileColors) {
     if (!fileColors || fileColors.length === 0) {
         return TRAFFIC_LIGHT_COLORS.GRAY;
     }
-    
-    const hasRed = fileColors.includes(TRAFFIC_LIGHT_COLORS.RED);
+
     const hasGreen = fileColors.includes(TRAFFIC_LIGHT_COLORS.GREEN);
     const hasYellow = fileColors.includes(TRAFFIC_LIGHT_COLORS.YELLOW);
-    
-    // Приоритет цветов: красный -> зелёный -> жёлтый -> серый
-    if (hasRed) return TRAFFIC_LIGHT_COLORS.RED;
+    const allRed = fileColors.length > 0 && fileColors.every(c => c === TRAFFIC_LIGHT_COLORS.RED);
+
+    // Новая логика:
+    // - если есть зелёный в папке — папка зелёная
     if (hasGreen) return TRAFFIC_LIGHT_COLORS.GREEN;
+    // - если нет зелёного, но есть жёлтый — папка жёлтая
     if (hasYellow) return TRAFFIC_LIGHT_COLORS.YELLOW;
+    // - если все файлы неиндексированы — папка красная
+    if (allRed) return TRAFFIC_LIGHT_COLORS.RED;
+    // - иначе серый
     return TRAFFIC_LIGHT_COLORS.GRAY;
 }
 
@@ -117,7 +123,18 @@ function getTrafficLightSortPriority(color) {
  * @returns {boolean} true если поиск выполнялся
  */
 function isSearchPerformed() {
-    return document.querySelectorAll('.file-search-results[style*="display: block"]').length > 0;
+    // Проверяем наличие контейнера результатов поиска
+    const searchResults = document.getElementById('search-results');
+    const hasSearchResultsDiv = searchResults && searchResults.style.display !== 'none' && 
+                              searchResults.innerHTML.trim() !== '';
+    
+    // Проверяем наличие элементов с результатами поиска
+    const visibleResults = document.querySelectorAll('.file-search-results[style*="display: block"], .file-search-results:not([style*="display: none"])');
+    
+    // Проверяем наличие атрибутов data-has-results
+    const filesWithResults = document.querySelectorAll('[data-has-results="1"]');
+    
+    return hasSearchResultsDiv || visibleResults.length > 0 || filesWithResults.length > 0;
 }
 
 /**
@@ -127,8 +144,23 @@ function isSearchPerformed() {
  * @returns {boolean} true если есть результаты
  */
 function hasSearchResultsForFile(filePath) {
+    // Метод 1: Проверяем атрибут data-has-results
     const fileWrapper = document.querySelector(`[data-file-path="${CSS.escape(filePath)}"]`);
-    return fileWrapper ? fileWrapper.getAttribute('data-has-results') === '1' : false;
+    if (fileWrapper && fileWrapper.getAttribute('data-has-results') === '1') {
+        return true;
+    }
+    
+    // Метод 2: Проверяем наличие видимых результатов поиска
+    const searchResultsInFile = fileWrapper ? fileWrapper.querySelectorAll('.file-search-results[style*="display: block"], .file-search-results:not([style*="display: none"])') : [];
+    if (searchResultsInFile.length > 0) {
+        return true;
+    }
+    
+    // Метод 3: Проверяем по селектору для элементов с результатами
+    const escapedPath = CSS.escape(filePath);
+    const hasResults = document.querySelector(`[data-file-path="${escapedPath}"] .file-search-results[style*="display: block"]`) !== null;
+    
+    return hasResults;
 }
 
 // Экспорт для использования в основном коде
