@@ -489,6 +489,35 @@ section h2 {
     background: #e74c3c;
 }
 
+/* Светофоры для файлов, папок и архивов */
+.traffic-light {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    display: inline-block;
+    margin-left: 8px;
+    flex-shrink: 0;
+}
+
+.traffic-light-green {
+    background: #2ecc71;
+    box-shadow: 0 0 4px rgba(46, 204, 113, 0.6);
+}
+
+.traffic-light-red {
+    background: #e74c3c;
+    box-shadow: 0 0 4px rgba(231, 76, 60, 0.6);
+}
+
+.traffic-light-yellow {
+    background: #f39c12;
+    box-shadow: 0 0 4px rgba(243, 156, 18, 0.6);
+}
+
+.traffic-light-gray {
+    background: #95a5a6;
+}
+
 @keyframes pulse {
     0% { opacity: 1; }
     50% { opacity: 0.5; }
