@@ -17,4 +17,5 @@ app = create_app(config_name)
 
 if __name__ == '__main__':
     # Для разработки можно запускать напрямую
-    app.run(host='0.0.0.0', port=5000)
+    # Для продакшена используйте gunicorn (см. документацию выше)
+    app.run(host='127.0.0.1', port=8081)
