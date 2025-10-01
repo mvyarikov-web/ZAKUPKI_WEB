@@ -177,19 +177,21 @@ class Indexer:
                 except Exception:
                     text = self._read_text_with_encoding(abs_path)
             elif ext == "pdf":
+                # FR-004: Оптимизация - сначала пробуем pdfplumber
                 text = self._extract_pdf(abs_path)
-                if not text.strip():
+                # FR-004: Если получили хоть какой-то текст, пропускаем fallback для скорости
+                if len(text.strip()) < 50:  # Только если текста совсем мало
                     # Fallback: pdfminer.six
                     try:
                         from pdfminer.high_level import extract_text  # type: ignore
                         t2 = extract_text(abs_path) or ""
-                        if t2.strip():
+                        if len(t2.strip()) > len(text.strip()):
                             text = t2
                     except Exception:
                         pass
                 if not text.strip():
-                    # OCR первых страниц (best effort)
-                    ocr_text = self._ocr_pdf_pages(abs_path, max_pages=3)
+                    # FR-004: OCR только 2 первые страницы (было 3) для ускорения
+                    ocr_text = self._ocr_pdf_pages(abs_path, max_pages=2)
                     if ocr_text:
                         text = ocr_text
                         ocr_used = True
@@ -297,12 +299,14 @@ class Indexer:
         ratio = letters / max(1, len(text))
         return int(min(100, max(0, ratio * 100)))
 
-    def _extract_pdf(self, path: str) -> str:
+    def _extract_pdf(self, path: str, max_pages: int = 100) -> str:
+        """FR-004: Извлечение текста из PDF с ограничением по страницам для оптимизации."""
         try:
             import pdfplumber  # type: ignore
             txt = []
             with pdfplumber.open(path) as pdf:
-                for page in pdf.pages:
+                # FR-004: Ограничиваем количество страниц для ускорения
+                for page in pdf.pages[:max_pages]:
                     t = page.extract_text() or ""
                     if t:
                         txt.append(t)
@@ -325,7 +329,9 @@ class Indexer:
                                     pass
                     except Exception:
                         pass
-                    for p in r.pages:
+                    # FR-004: Ограничиваем количество страниц
+                    pages_to_process = r.pages[:max_pages] if len(r.pages) > max_pages else r.pages
+                    for p in pages_to_process:
                         t = p.extract_text() or ""
                         if t:
                             txt.append(t)
@@ -336,7 +342,10 @@ class Indexer:
                     import fitz  # type: ignore
                     doc = fitz.open(path)
                     parts = []
-                    for page in doc:
+                    # FR-004: Ограничиваем количество страниц
+                    for i, page in enumerate(doc):
+                        if i >= max_pages:
+                            break
                         t = page.get_text("text") or ""
                         if t:
                             parts.append(t)
@@ -434,30 +443,42 @@ class Indexer:
         except Exception:
             return ""
 
-    def _extract_xlsx(self, path: str) -> str:
+    def _extract_xlsx(self, path: str, max_rows: int = 1000, max_sheets: int = 10) -> str:
+        """FR-004: Извлечение текста из XLSX с ограничениями для оптимизации."""
         try:
             import openpyxl  # type: ignore
             wb = openpyxl.load_workbook(path, data_only=True)
             out: List[str] = []
-            for ws in wb.worksheets:
+            # FR-004: Ограничиваем количество листов
+            for ws in wb.worksheets[:max_sheets]:
                 out.append(f"Лист: {ws.title}")
+                row_count = 0
                 for row in ws.iter_rows(values_only=True):
+                    # FR-004: Ограничиваем количество строк на листе
+                    if row_count >= max_rows:
+                        break
                     vals = [str(v) for v in row if v is not None]
                     if vals:
                         out.append(" | ".join(vals))
+                        row_count += 1
             return "\n".join(out).strip()
         except Exception:
             return ""
 
-    def _extract_xls(self, path: str) -> str:
+    def _extract_xls(self, path: str, max_rows: int = 1000, max_sheets: int = 10) -> str:
+        """FR-004: Извлечение текста из XLS с ограничениями для оптимизации."""
         try:
             import xlrd  # type: ignore
             book = xlrd.open_workbook(path)
             out: List[str] = []
-            for si in range(book.nsheets):
+            # FR-004: Ограничиваем количество листов
+            sheets_to_process = min(book.nsheets, max_sheets)
+            for si in range(sheets_to_process):
                 sh = book.sheet_by_index(si)
                 out.append(f"Лист: {sh.name}")
-                for r in range(sh.nrows):
+                # FR-004: Ограничиваем количество строк
+                rows_to_process = min(sh.nrows, max_rows)
+                for r in range(rows_to_process):
                     vals = [str(sh.cell_value(r, c)) for c in range(sh.ncols) if sh.cell_value(r, c) not in ("", None)]
                     if vals:
                         out.append(" | ".join(vals))
