@@ -95,29 +95,20 @@ def index():
 
 @pages_bp.get('/view/<path:filepath>')
 def view_file(filepath: str):
-    """Отображение содержимого файла с подсветкой ключевых слов."""
-    from urllib.parse import unquote
-    from webapp.services.files import is_safe_subpath, allowed_file
+    """Отображение содержимого файла с подсветкой ключевых слов.
     
-    # Импорты для извлечения текста
-    import docx
-    import pdfplumber
-    import openpyxl
-    import docx2txt
-    import subprocess
+    FR-003: Читает текст из сводного индекса (_search_index.txt) вместо оригинального файла.
+    """
+    from urllib.parse import unquote
+    from webapp.services.files import is_safe_subpath
     
     try:
         decoded_filepath = unquote(filepath)
-        current_app.logger.info(f"Просмотр файла: {decoded_filepath}")
+        current_app.logger.info(f"Просмотр файла из индекса: {decoded_filepath}")
         
         # Проверка безопасности пути
         if not is_safe_subpath(current_app.config['UPLOAD_FOLDER'], decoded_filepath):
             return jsonify({'error': 'Недопустимый путь к файлу'}), 400
-        
-        file_path = os.path.join(current_app.config['UPLOAD_FOLDER'], decoded_filepath)
-        
-        if not os.path.exists(file_path) or not os.path.isfile(file_path):
-            return jsonify({'error': 'Файл не найден'}), 404
         
         # Проверяем статус файла
         files_state = _get_files_state()
@@ -135,52 +126,15 @@ def view_file(filepath: str):
         if char_count == 0:
             return jsonify({'error': 'Файл пуст или не содержит текста'}), 403
         
-        # Извлекаем текст в зависимости от расширения
-        ext = os.path.splitext(file_path)[1].lower()
-        text = ''
+        # FR-003: Читаем текст из индекса
+        index_path = get_index_path(current_app.config['INDEX_FOLDER'])
+        if not os.path.exists(index_path):
+            return jsonify({'error': 'Индекс не создан. Постройте индекс перед просмотром.'}), 404
         
-        # Быстрые форматы
-        if ext in ('.txt', '.csv', '.tsv', '.xml', '.json', '.html', '.htm'):
-            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                text = f.read()
-        elif ext == '.pdf':
-            try:
-                with pdfplumber.open(file_path) as pdf:
-                    text = '\n'.join(page.extract_text() or '' for page in pdf.pages[:50])
-            except Exception:
-                current_app.logger.exception('Ошибка извлечения текста из PDF')
-        elif ext == '.docx':
-            try:
-                text = docx2txt.process(file_path)
-            except Exception:
-                try:
-                    doc = docx.Document(file_path)
-                    text = '\n'.join(p.text for p in doc.paragraphs)
-                except Exception:
-                    current_app.logger.exception('Ошибка извлечения текста из DOCX')
-        elif ext == '.doc':
-            try:
-                result = subprocess.run(
-                    ['antiword', file_path],
-                    capture_output=True, text=True, timeout=10
-                )
-                if result.returncode == 0:
-                    text = result.stdout
-            except Exception:
-                current_app.logger.exception('Ошибка извлечения текста из DOC')
-        elif ext in ('.xlsx', '.xls'):
-            try:
-                wb = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
-                parts = []
-                for sheet in wb.worksheets[:5]:
-                    for row in sheet.iter_rows(max_row=100, values_only=True):
-                        parts.append(' '.join(str(c) for c in row if c))
-                text = '\n'.join(parts)
-            except Exception:
-                current_app.logger.exception('Ошибка извлечения текста из XLSX/XLS')
+        text = _extract_text_from_index(index_path, decoded_filepath)
         
         if not text:
-            return jsonify({'error': 'Не удалось извлечь текст из файла'}), 403
+            return jsonify({'error': 'Не удалось извлечь текст из индекса'}), 403
         
         # Получаем ключевые слова из query параметра
         query = request.args.get('q', '')
@@ -207,3 +161,57 @@ def view_file(filepath: str):
     except Exception as e:
         current_app.logger.exception('view_file error')
         return jsonify({'error': str(e)}), 500
+
+
+def _extract_text_from_index(index_path: str, target_path: str) -> str:
+    """Извлекает текст из индекса для указанного файла.
+    
+    FR-003: Источник данных для окна просмотра — индекс, без повторного чтения исходных файлов.
+    
+    Args:
+        index_path: Путь к файлу индекса
+        target_path: Относительный путь к целевому файлу
+        
+    Returns:
+        Извлечённый текст или пустая строка
+    """
+    try:
+        with open(index_path, 'r', encoding='utf-8', errors='ignore') as f:
+            in_target = False
+            text_lines = []
+            header_bar = "=" * 31
+            
+            for line in f:
+                stripped = line.rstrip('\n')
+                
+                # Начало записи
+                if stripped == header_bar:
+                    if in_target:
+                        # Конец нашей записи
+                        break
+                    # Возможное начало нашей записи
+                    in_target = False
+                    text_lines = []
+                    continue
+                
+                # Проверяем заголовок
+                if stripped.startswith('ЗАГОЛОВОК:'):
+                    title = stripped.split(':', 1)[1].strip()
+                    # Ищем точное совпадение (с учётом виртуальных путей для архивов)
+                    if title == target_path or title.endswith(f'/{target_path}'):
+                        in_target = True
+                    continue
+                
+                # Пропускаем метаданные
+                if stripped.startswith('Формат:') or stripped.startswith('Источник:'):
+                    continue
+                
+                # Собираем текст
+                if in_target:
+                    text_lines.append(line.rstrip('\n'))
+            
+            return '\n'.join(text_lines)
+    
+    except Exception as e:
+        current_app.logger.exception(f'Ошибка извлечения текста из индекса для {target_path}')
+        return ''

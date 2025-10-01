@@ -220,14 +220,17 @@ function renderFileItem(file, archivesMap, file_statuses) {
     const status = fileStatus.status || 'not_checked';
     const charCount = fileStatus.char_count;
     
-    // Определяем цвет светофора
+    // FR-005: Определяем цвет светофора
+    // Зелёный=найдено, Жёлтый=не найдено, Красный=ошибка, Серый=нейтральный
     let trafficLight = 'gray'; // по умолчанию
     if (status === 'contains_keywords') {
-        trafficLight = 'green';
+        trafficLight = 'green';  // Зелёный: слова найдены
     } else if (status === 'no_keywords') {
-        trafficLight = 'red';
-    } else if (status === 'error' || status === 'unsupported') {
-        trafficLight = 'gray';
+        trafficLight = 'yellow';  // Жёлтый: слова не найдены
+    } else if (status === 'error') {
+        trafficLight = 'red';  // Красный: ошибка чтения/индексации
+    } else if (status === 'unsupported') {
+        trafficLight = 'gray';  // Серый: неподдерживаемый формат
     }
     
     // Проверяем, является ли файл архивом
@@ -359,17 +362,20 @@ function toggleArchive(archivePath) {
     }
 }
 
-// Helper function to get traffic light color based on status
+// FR-005: Helper function to get traffic light color based on status
+// Зелёный=найдено, Жёлтый=не найдено, Красный=ошибка, Серый=нейтральный
 function getTrafficLightColor(status) {
-    if (status === 'contains_keywords') return 'green';
-    if (status === 'no_keywords') return 'red';
-    if (status === 'error' || status === 'unsupported') return 'gray';
+    if (status === 'contains_keywords') return 'green';  // Зелёный: слова найдены
+    if (status === 'no_keywords') return 'yellow';  // Жёлтый: слова не найдены
+    if (status === 'error') return 'red';  // Красный: ошибка чтения/индексации
+    if (status === 'unsupported') return 'gray';  // Серый: неподдерживаемый формат
     return 'gray'; // not_checked or unknown
 }
 
-// Calculate folder status based on files inside
+// FR-006, FR-007: Calculate folder status based on files inside
 function calculateFolderStatus(files, file_statuses, archivesMap) {
     let hasGreen = false;
+    let hasYellow = false;
     let hasRed = false;
     
     for (const file of files) {
@@ -379,10 +385,12 @@ function calculateFolderStatus(files, file_statuses, archivesMap) {
         if (status === 'contains_keywords') {
             hasGreen = true;
         } else if (status === 'no_keywords') {
+            hasYellow = true;
+        } else if (status === 'error') {
             hasRed = true;
         }
         
-        // Если это архив, проверяем его содержимое
+        // FR-006: Если это архив, проверяем его содержимое
         if (file.is_archive && archivesMap.has(file.path)) {
             const archiveContents = archivesMap.get(file.path);
             for (const entry of archiveContents) {
@@ -390,25 +398,33 @@ function calculateFolderStatus(files, file_statuses, archivesMap) {
                 if (entryStatus.status === 'contains_keywords') {
                     hasGreen = true;
                 } else if (entryStatus.status === 'no_keywords') {
+                    hasYellow = true;
+                } else if (entryStatus.status === 'error') {
                     hasRed = true;
                 }
             }
         }
     }
     
-    // Логика: зелёный если есть хотя бы одно совпадение, красный если все проверены и нет совпадений, серый иначе
+    // Логика: зелёный если есть хотя бы одно совпадение, 
+    // красный если есть ошибки, жёлтый если все проверены и нет совпадений, серый иначе
     if (hasGreen) return 'green';
     if (hasRed) return 'red';
+    if (hasYellow) return 'yellow';
     return 'gray';
 }
 
-// Calculate archive status based on its contents
+// FR-006: Calculate archive status based on its contents
 function calculateArchiveStatus(archiveContents, file_statuses) {
     let hasGreen = false;
+    let hasYellow = false;
     let hasRed = false;
     
     for (const entry of archiveContents) {
-        if (entry.status === 'error' || entry.is_virtual_folder) continue;
+        if (entry.status === 'error' || entry.is_virtual_folder) {
+            if (entry.status === 'error') hasRed = true;
+            continue;
+        }
         
         const entryStatus = file_statuses[entry.path] || {};
         const status = entryStatus.status || 'not_checked';
@@ -416,12 +432,15 @@ function calculateArchiveStatus(archiveContents, file_statuses) {
         if (status === 'contains_keywords') {
             hasGreen = true;
         } else if (status === 'no_keywords') {
+            hasYellow = true;
+        } else if (status === 'error') {
             hasRed = true;
         }
     }
     
     if (hasGreen) return 'green';
     if (hasRed) return 'red';
+    if (hasYellow) return 'yellow';
     return 'gray';
 }
 
