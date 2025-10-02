@@ -31,19 +31,18 @@ const FILE_STATUSES = {
  * @returns {string} цвет светофора
  */
 function getFileTrafficLightColor(status, charCount = null, hasSearchResults = false, searchPerformed = false) {
-    // Если поиск был выполнен — приоритет результатов над качеством индексации
+    // Красный: не проиндексированные файлы (всегда красный, независимо от поиска)
+    if (status === FILE_STATUSES.ERROR || status === FILE_STATUSES.UNSUPPORTED || charCount === 0) {
+        return TRAFFIC_LIGHT_COLORS.RED;
+    }
+    
+    // Если поиск был выполнен
     if (searchPerformed) {
         if (hasSearchResults) {
             return TRAFFIC_LIGHT_COLORS.GREEN; // Зелёный: есть совпадения
+        } else {
+            return TRAFFIC_LIGHT_COLORS.YELLOW; // Жёлтый: нет совпадений, но файл проиндексирован
         }
-        // Если результатов нет — различаем проиндексирован/не проиндексирован
-        const indexed = isFileIndexed(status, charCount);
-        return indexed ? TRAFFIC_LIGHT_COLORS.YELLOW : TRAFFIC_LIGHT_COLORS.RED;
-    }
-
-    // До выполнения поиска: ошибки/неподдержка/нулевой объём — красный
-    if (status === FILE_STATUSES.ERROR || status === FILE_STATUSES.UNSUPPORTED || charCount === 0) {
-        return TRAFFIC_LIGHT_COLORS.RED;
     }
 
     // Серый: проиндексированные, но поиск не производился
@@ -68,18 +67,20 @@ function getFolderTrafficLightColor(fileColors) {
         return TRAFFIC_LIGHT_COLORS.GRAY;
     }
 
+    const hasRed = fileColors.includes(TRAFFIC_LIGHT_COLORS.RED);
     const hasGreen = fileColors.includes(TRAFFIC_LIGHT_COLORS.GREEN);
     const hasYellow = fileColors.includes(TRAFFIC_LIGHT_COLORS.YELLOW);
-    const allRed = fileColors.length > 0 && fileColors.every(c => c === TRAFFIC_LIGHT_COLORS.RED);
 
-    // Новая логика:
-    // - если есть зелёный в папке — папка зелёная
-    if (hasGreen) return TRAFFIC_LIGHT_COLORS.GREEN;
-    // - если нет зелёного, но есть жёлтый — папка жёлтая
-    if (hasYellow) return TRAFFIC_LIGHT_COLORS.YELLOW;
-    // - если все файлы неиндексированы — папка красная
-    if (allRed) return TRAFFIC_LIGHT_COLORS.RED;
-    // - иначе серый
+    // Приоритет цветов: красный -> зелёный -> жёлтый -> серый
+    if (hasRed) {
+        return TRAFFIC_LIGHT_COLORS.RED;
+    }
+    if (hasGreen) {
+        return TRAFFIC_LIGHT_COLORS.GREEN;
+    }
+    if (hasYellow) {
+        return TRAFFIC_LIGHT_COLORS.YELLOW;
+    }
     return TRAFFIC_LIGHT_COLORS.GRAY;
 }
 
