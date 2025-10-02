@@ -59,6 +59,12 @@ function getFileTrafficLightColor(status, charCount = null, hasSearchResults = f
 /**
  * Определяет цвет светофора для папки на основе цветов файлов внутри.
  * 
+ * Логика папки (вторична, определяется после светофоров файлов):
+ * 1. Зелёный - есть хотя бы один зелёный файл (с результатами поиска)
+ * 2. Жёлтый - есть проиндексированные файлы, но ни один не подходит (есть жёлтые, нет зелёных)
+ * 3. Красный - ВСЕ файлы не проиндексированы (все красные)
+ * 4. Серый - все файлы серые (поиск не выполнялся)
+ * 
  * @param {string[]} fileColors - массив цветов файлов в папке
  * @returns {string} цвет светофора папки
  */
@@ -70,17 +76,26 @@ function getFolderTrafficLightColor(fileColors) {
     const hasRed = fileColors.includes(TRAFFIC_LIGHT_COLORS.RED);
     const hasGreen = fileColors.includes(TRAFFIC_LIGHT_COLORS.GREEN);
     const hasYellow = fileColors.includes(TRAFFIC_LIGHT_COLORS.YELLOW);
-
-    // Приоритет цветов: красный -> зелёный -> жёлтый -> серый
-    if (hasRed) {
-        return TRAFFIC_LIGHT_COLORS.RED;
-    }
+    const hasGray = fileColors.includes(TRAFFIC_LIGHT_COLORS.GRAY);
+    
+    // Приоритет: зелёный -> жёлтый -> красный -> серый
+    // 1. Если есть хотя бы один зелёный файл - папка зелёная
     if (hasGreen) {
         return TRAFFIC_LIGHT_COLORS.GREEN;
     }
+    
+    // 2. Если есть жёлтые файлы (проиндексированные без совпадений) - папка жёлтая
     if (hasYellow) {
         return TRAFFIC_LIGHT_COLORS.YELLOW;
     }
+    
+    // 3. Если ВСЕ файлы красные (не проиндексированы) - папка красная
+    const allRed = fileColors.every(color => color === TRAFFIC_LIGHT_COLORS.RED);
+    if (allRed) {
+        return TRAFFIC_LIGHT_COLORS.RED;
+    }
+    
+    // 4. Иначе серая (все файлы серые или смесь серых и красных без жёлтых/зелёных)
     return TRAFFIC_LIGHT_COLORS.GRAY;
 }
 
