@@ -124,25 +124,7 @@ describe('Тесты проверки индексации файлов', () => 
 // Тесты для папок
 describe('Тесты светофоров для папок', () => {
     
-    // Тест 1: Папка с красными файлами - красная
-    describe('  🔴 Папка с неиндексированными файлами - красная', () => {
-        assertEqual(getFolderTrafficLightColor([RED, GREEN, YELLOW, GRAY]), RED, 
-            'Папка [red, green, yellow, gray] должна быть красной');
-        assertEqual(getFolderTrafficLightColor([RED, GREEN]), RED, 
-            'Папка [red, green] должна быть красной');
-        assertEqual(getFolderTrafficLightColor([RED, YELLOW]), RED, 
-            'Папка [red, yellow] должна быть красной');
-        assertEqual(getFolderTrafficLightColor([RED, GRAY]), RED, 
-            'Папка [red, gray] должна быть красной');
-        assertEqual(getFolderTrafficLightColor([RED]), RED, 
-            'Папка [red] должна быть красной');
-        assertEqual(getFolderTrafficLightColor([RED, RED, GREEN]), RED, 
-            'Папка [red, red, green] должна быть красной');
-        assertEqual(getFolderTrafficLightColor([RED, RED, RED]), RED, 
-            'Папка [red, red, red] должна быть красной');
-    });
-    
-    // Тест 2: Папка с зелёными файлами - зелёная (при отсутствии красных)
+    // Тест 1: Папка с зелёными файлами - зелёная (наивысший приоритет)
     describe('  🟢 Папка с файлами с совпадениями - зелёная', () => {
         assertEqual(getFolderTrafficLightColor([GREEN, YELLOW, GRAY]), GREEN, 
             'Папка [green, yellow, gray] должна быть зелёной');
@@ -156,9 +138,16 @@ describe('Тесты светофоров для папок', () => {
             'Папка [green, green, yellow] должна быть зелёной');
         assertEqual(getFolderTrafficLightColor([GREEN, GREEN, GREEN]), GREEN, 
             'Папка [green, green, green] должна быть зелёной');
+        // Зелёный имеет приоритет даже при наличии красных файлов
+        assertEqual(getFolderTrafficLightColor([RED, GREEN]), GREEN, 
+            'Папка [red, green] должна быть зелёной (зелёный приоритетнее)');
+        assertEqual(getFolderTrafficLightColor([RED, GREEN, YELLOW, GRAY]), GREEN, 
+            'Папка [red, green, yellow, gray] должна быть зелёной');
+        assertEqual(getFolderTrafficLightColor([RED, RED, GREEN]), GREEN, 
+            'Папка [red, red, green] должна быть зелёной');
     });
     
-    // Тест 3: Папка с жёлтыми файлами - жёлтая (при отсутствии красных и зелёных)
+    // Тест 2: Папка с жёлтыми файлами - жёлтая (при отсутствии зелёных)
     describe('  🟡 Папка с проиндексированными файлами без совпадений - жёлтая', () => {
         assertEqual(getFolderTrafficLightColor([YELLOW, GRAY]), YELLOW, 
             'Папка [yellow, gray] должна быть жёлтой');
@@ -168,6 +157,19 @@ describe('Тесты светофоров для папок', () => {
             'Папка [yellow, yellow, gray] должна быть жёлтой');
         assertEqual(getFolderTrafficLightColor([YELLOW, YELLOW, YELLOW]), YELLOW, 
             'Папка [yellow, yellow, yellow] должна быть жёлтой');
+        // Жёлтый имеет приоритет над красным и серым
+        assertEqual(getFolderTrafficLightColor([RED, YELLOW]), YELLOW, 
+            'Папка [red, yellow] должна быть жёлтой (жёлтый приоритетнее красного)');
+        assertEqual(getFolderTrafficLightColor([RED, YELLOW, GRAY]), YELLOW, 
+            'Папка [red, yellow, gray] должна быть жёлтой');
+    });
+    
+    // Тест 3: Папка с ТОЛЬКО красными файлами - красная
+    describe('  🔴 Папка с ТОЛЬКО неиндексированными файлами - красная', () => {
+        assertEqual(getFolderTrafficLightColor([RED]), RED, 
+            'Папка [red] должна быть красной');
+        assertEqual(getFolderTrafficLightColor([RED, RED, RED]), RED, 
+            'Папка [red, red, red] должна быть красной (все файлы не проиндексированы)');
     });
     
     // Тест 4: Папка только с серыми файлами - серая
@@ -178,6 +180,9 @@ describe('Тесты светофоров для папок', () => {
             'Папка [gray, gray] должна быть серой');
         assertEqual(getFolderTrafficLightColor([GRAY, GRAY, GRAY]), GRAY, 
             'Папка [gray, gray, gray] должна быть серой');
+        // Смесь серых и красных без жёлтых/зелёных - серая
+        assertEqual(getFolderTrafficLightColor([RED, GRAY]), GRAY, 
+            'Папка [red, gray] должна быть серой (смесь без проиндексированных с результатами)');
     });
     
     // Тест 5: Пустая папка - серая
@@ -191,12 +196,12 @@ describe('Тесты светофоров для папок', () => {
 
 // Тесты приоритета цветов для папок
 describe('Тесты приоритета цветов для папок', () => {
-    assertEqual(getFolderTrafficLightColor([RED, GREEN, YELLOW, GRAY]), RED, 
-        'Приоритет 1: Красный > все остальные');
-    assertEqual(getFolderTrafficLightColor([GREEN, YELLOW, GRAY]), GREEN, 
-        'Приоритет 2: Зелёный > жёлтый и серый');
-    assertEqual(getFolderTrafficLightColor([YELLOW, GRAY]), YELLOW, 
-        'Приоритет 3: Жёлтый > серый');
+    assertEqual(getFolderTrafficLightColor([RED, GREEN, YELLOW, GRAY]), GREEN, 
+        'Приоритет 1: Зелёный > все остальные');
+    assertEqual(getFolderTrafficLightColor([RED, YELLOW, GRAY]), YELLOW, 
+        'Приоритет 2: Жёлтый > красный и серый');
+    assertEqual(getFolderTrafficLightColor([RED, RED, RED]), RED, 
+        'Приоритет 3: Красный (только когда ВСЕ файлы красные)');
     assertEqual(getFolderTrafficLightColor([GRAY, GRAY]), GRAY, 
         'Приоритет 4: Серый (только при отсутствии остальных)');
 });
@@ -263,8 +268,10 @@ describe('Тесты специфичных сценариев', () => {
             'Проиндексированный файл в архиве без совпадений - жёлтый');
         
         // Архив как папка
-        assertEqual(getFolderTrafficLightColor([RED, GREEN]), RED, 
-            'Архив с красными файлами - красный');
+        assertEqual(getFolderTrafficLightColor([RED, RED, RED]), RED, 
+            'Архив с ТОЛЬКО красными файлами - красный');
+        assertEqual(getFolderTrafficLightColor([RED, GREEN]), GREEN, 
+            'Архив с зелёными файлами - зелёный (зелёный приоритетнее)');
         assertEqual(getFolderTrafficLightColor([GREEN, YELLOW]), GREEN, 
             'Архив с зелёными файлами - зелёный');
         assertEqual(getFolderTrafficLightColor([YELLOW, GRAY]), YELLOW, 

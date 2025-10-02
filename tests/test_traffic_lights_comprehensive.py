@@ -73,28 +73,21 @@ class TestFileTrafficLights:
 class TestFolderTrafficLights:
     """Тесты светофоров для папок."""
     
-    def test_folder_with_red_files_is_red(self):
+    def test_folder_with_only_red_files_is_red(self):
         """
-        🔴 Папка с хотя бы одним неиндексированным файлом - красная.
-        Красный имеет высший приоритет.
+        🔴 Папка с ТОЛЬКО неиндексированными файлами - красная.
+        Красный только когда ВСЕ файлы красные.
         """
-        # Красный + другие цвета = красный
-        assert TrafficLightLogic.get_folder_traffic_light_color(['red', 'green', 'yellow', 'gray']) == 'red'
-        assert TrafficLightLogic.get_folder_traffic_light_color(['red', 'green']) == 'red'
-        assert TrafficLightLogic.get_folder_traffic_light_color(['red', 'yellow']) == 'red'
-        assert TrafficLightLogic.get_folder_traffic_light_color(['red', 'gray']) == 'red'
+        # Только красные файлы = красная папка
         assert TrafficLightLogic.get_folder_traffic_light_color(['red']) == 'red'
-        
-        # Несколько красных
-        assert TrafficLightLogic.get_folder_traffic_light_color(['red', 'red', 'green']) == 'red'
         assert TrafficLightLogic.get_folder_traffic_light_color(['red', 'red', 'red']) == 'red'
     
     def test_folder_with_green_files_is_green(self):
         """
         🟢 Папка с хотя бы одним файлом с совпадениями - зелёная.
-        (При условии отсутствия красных файлов)
+        Зелёный имеет наивысший приоритет.
         """
-        # Зелёный без красных = зелёный
+        # Зелёный файл = зелёная папка (даже при наличии других цветов)
         assert TrafficLightLogic.get_folder_traffic_light_color(['green', 'yellow', 'gray']) == 'green'
         assert TrafficLightLogic.get_folder_traffic_light_color(['green', 'yellow']) == 'green'
         assert TrafficLightLogic.get_folder_traffic_light_color(['green', 'gray']) == 'green'
@@ -103,27 +96,40 @@ class TestFolderTrafficLights:
         # Несколько зелёных
         assert TrafficLightLogic.get_folder_traffic_light_color(['green', 'green', 'yellow']) == 'green'
         assert TrafficLightLogic.get_folder_traffic_light_color(['green', 'green', 'green']) == 'green'
+        
+        # Зелёный имеет приоритет даже при наличии красных
+        assert TrafficLightLogic.get_folder_traffic_light_color(['red', 'green']) == 'green'
+        assert TrafficLightLogic.get_folder_traffic_light_color(['red', 'green', 'yellow', 'gray']) == 'green'
+        assert TrafficLightLogic.get_folder_traffic_light_color(['red', 'red', 'green']) == 'green'
     
     def test_folder_with_yellow_files_is_yellow(self):
         """
         🟡 Папка с проиндексированными файлами без совпадений - жёлтая.
-        (При условии отсутствия красных и зелёных файлов)
+        (При условии отсутствия зелёных файлов)
         """
-        # Жёлтый без красных и зелёных = жёлтый
+        # Жёлтый без зелёных = жёлтый
         assert TrafficLightLogic.get_folder_traffic_light_color(['yellow', 'gray']) == 'yellow'
         assert TrafficLightLogic.get_folder_traffic_light_color(['yellow']) == 'yellow'
         
         # Несколько жёлтых
         assert TrafficLightLogic.get_folder_traffic_light_color(['yellow', 'yellow', 'gray']) == 'yellow'
         assert TrafficLightLogic.get_folder_traffic_light_color(['yellow', 'yellow', 'yellow']) == 'yellow'
+        
+        # Жёлтый имеет приоритет над красным
+        assert TrafficLightLogic.get_folder_traffic_light_color(['red', 'yellow']) == 'yellow'
+        assert TrafficLightLogic.get_folder_traffic_light_color(['red', 'yellow', 'gray']) == 'yellow'
     
     def test_folder_with_only_gray_files_is_gray(self):
         """
         ⚪ Папка только с серыми файлами (до поиска) - серая.
+        Также смесь серых и красных без жёлтых/зелёных - серая.
         """
         assert TrafficLightLogic.get_folder_traffic_light_color(['gray']) == 'gray'
         assert TrafficLightLogic.get_folder_traffic_light_color(['gray', 'gray']) == 'gray'
         assert TrafficLightLogic.get_folder_traffic_light_color(['gray', 'gray', 'gray']) == 'gray'
+        
+        # Смесь серых и красных без жёлтых/зелёных = серая
+        assert TrafficLightLogic.get_folder_traffic_light_color(['red', 'gray']) == 'gray'
     
     def test_empty_folder_is_gray(self):
         """
@@ -134,18 +140,18 @@ class TestFolderTrafficLights:
     
     def test_folder_priority_order(self):
         """
-        Тест приоритета цветов для папок: красный > зелёный > жёлтый > серый.
+        Тест приоритета цветов для папок: зелёный > жёлтый > красный (только все) > серый.
         """
-        # Приоритет 1: Красный > все остальные
-        assert TrafficLightLogic.get_folder_traffic_light_color(['red', 'green', 'yellow', 'gray']) == 'red'
+        # Приоритет 1: Зелёный > все остальные
+        assert TrafficLightLogic.get_folder_traffic_light_color(['red', 'green', 'yellow', 'gray']) == 'green'
         
-        # Приоритет 2: Зелёный > жёлтый и серый (при отсутствии красного)
-        assert TrafficLightLogic.get_folder_traffic_light_color(['green', 'yellow', 'gray']) == 'green'
+        # Приоритет 2: Жёлтый > красный и серый (при отсутствии зелёного)
+        assert TrafficLightLogic.get_folder_traffic_light_color(['red', 'yellow', 'gray']) == 'yellow'
         
-        # Приоритет 3: Жёлтый > серый (при отсутствии красного и зелёного)
-        assert TrafficLightLogic.get_folder_traffic_light_color(['yellow', 'gray']) == 'yellow'
+        # Приоритет 3: Красный (только если ВСЕ файлы красные)
+        assert TrafficLightLogic.get_folder_traffic_light_color(['red', 'red', 'red']) == 'red'
         
-        # Приоритет 4: Серый (только при отсутствии всех остальных)
+        # Приоритет 4: Серый (при отсутствии жёлтых/зелёных или только серые)
         assert TrafficLightLogic.get_folder_traffic_light_color(['gray', 'gray']) == 'gray'
 
 
@@ -252,14 +258,16 @@ class TestArchiveScenarios:
         """
         Архив (как папка) наследует цвета файлов внутри по тем же правилам приоритета.
         """
-        # Архив с красными файлами - красный
-        assert TrafficLightLogic.get_folder_traffic_light_color(['red', 'green']) == 'red'
+        # Архив с ТОЛЬКО красными файлами - красный
+        assert TrafficLightLogic.get_folder_traffic_light_color(['red', 'red', 'red']) == 'red'
         
-        # Архив с зелёными файлами (без красных) - зелёный
+        # Архив с зелёными файлами - зелёный (даже при наличии красных)
+        assert TrafficLightLogic.get_folder_traffic_light_color(['red', 'green']) == 'green'
         assert TrafficLightLogic.get_folder_traffic_light_color(['green', 'yellow']) == 'green'
         
-        # Архив с жёлтыми файлами (без красных и зелёных) - жёлтый
+        # Архив с жёлтыми файлами (без зелёных) - жёлтый
         assert TrafficLightLogic.get_folder_traffic_light_color(['yellow', 'gray']) == 'yellow'
+        assert TrafficLightLogic.get_folder_traffic_light_color(['red', 'yellow']) == 'yellow'
         
         # Архив с серыми файлами - серый
         assert TrafficLightLogic.get_folder_traffic_light_color(['gray', 'gray']) == 'gray'
