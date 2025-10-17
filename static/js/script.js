@@ -1067,3 +1067,171 @@ function applyQueryToViewLinks() {
         } catch (_) {}
     });
 }
+
+// --- Analysis Module (increment-012) ---
+const analyzeBtn = document.getElementById('analyzeBtn');
+if (analyzeBtn) {
+    analyzeBtn.addEventListener('click', async () => {
+        try {
+            // Проверяем наличие индекса
+            const statusResp = await fetch('/analysis/status');
+            const status = await statusResp.json();
+            
+            if (!status.index_exists) {
+                showMessage('Сначала создайте индекс с помощью кнопки "Построить индекс"');
+                return;
+            }
+            
+            // Показываем прогресс
+            analyzeBtn.disabled = true;
+            analyzeBtn.innerHTML = '<i class="icon">⏳</i> Анализ выполняется...';
+            
+            // Запускаем анализ
+            const resp = await fetch('/analysis/run', { method: 'POST' });
+            const data = await resp.json();
+            
+            if (data.success) {
+                // Открываем модальное окно для редактирования результатов
+                showAnalysisEditor(data.data);
+            } else {
+                showMessage('Ошибка анализа: ' + data.message);
+            }
+        } catch (error) {
+            console.error('Ошибка анализа:', error);
+            showMessage('Ошибка при выполнении анализа');
+        } finally {
+            analyzeBtn.disabled = false;
+            analyzeBtn.innerHTML = '<i class="icon">📊</i> Анализ документов';
+        }
+    });
+}
+
+function showAnalysisEditor(analysisData) {
+    // Создаём модальное окно для редактирования результатов
+    const modal = document.createElement('div');
+    modal.className = 'analysis-modal';
+    modal.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0,0,0,0.5);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 1000;
+    `;
+    
+    const modalContent = document.createElement('div');
+    modalContent.style.cssText = `
+        background: white;
+        padding: 30px;
+        border-radius: 8px;
+        max-width: 800px;
+        max-height: 80vh;
+        overflow-y: auto;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    `;
+    
+    const procurement = analysisData.procurement || {};
+    
+    modalContent.innerHTML = `
+        <h2 style="margin-top: 0; color: #2c3e50;">Результаты анализа</h2>
+        <p style="color: #7f8c8d;">Проверьте и при необходимости отредактируйте извлечённые данные</p>
+        
+        <div style="margin: 20px 0;">
+            <h3 style="color: #34495e;">Основная информация</h3>
+            <div style="margin: 10px 0;">
+                <label style="display: block; font-weight: bold; margin-bottom: 5px;">Наименование:</label>
+                <input type="text" id="edit_title" value="${escapeHtml(procurement.title || '')}" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+            </div>
+            <div style="margin: 10px 0;">
+                <label style="display: block; font-weight: bold; margin-bottom: 5px;">Номер закупки:</label>
+                <input type="text" id="edit_number" value="${escapeHtml(procurement.number || '')}" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+            </div>
+            <div style="margin: 10px 0;">
+                <label style="display: block; font-weight: bold; margin-bottom: 5px;">ИКЗ:</label>
+                <input type="text" id="edit_ikz" value="${escapeHtml(procurement.ikz || '')}" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+            </div>
+        </div>
+        
+        <div style="margin: 20px 0;">
+            <h3 style="color: #34495e;">Цены</h3>
+            <div style="margin: 10px 0;">
+                <label style="display: block; font-weight: bold; margin-bottom: 5px;">Начальная цена:</label>
+                <input type="text" id="edit_initial_price" value="${escapeHtml(procurement.initial_price || '')}" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+            </div>
+        </div>
+        
+        <div style="margin: 20px 0;">
+            <h3 style="color: #34495e;">Заказчик</h3>
+            <div style="margin: 10px 0;">
+                <label style="display: block; font-weight: bold; margin-bottom: 5px;">Наименование:</label>
+                <input type="text" id="edit_customer_name" value="${escapeHtml(procurement.customer?.name || '')}" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+            </div>
+            <div style="margin: 10px 0;">
+                <label style="display: block; font-weight: bold; margin-bottom: 5px;">ИНН:</label>
+                <input type="text" id="edit_customer_inn" value="${escapeHtml(procurement.customer?.inn || '')}" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+            </div>
+        </div>
+        
+        <div style="margin-top: 30px; display: flex; gap: 10px; justify-content: flex-end;">
+            <button id="cancelAnalysisBtn" class="btn btn-secondary" style="padding: 10px 20px;">Отмена</button>
+            <button id="saveAnalysisBtn" class="btn btn-primary" style="padding: 10px 20px;">Сохранить и открыть отчёт</button>
+        </div>
+    `;
+    
+    modal.appendChild(modalContent);
+    document.body.appendChild(modal);
+    
+    // Обработчик закрытия
+    document.getElementById('cancelAnalysisBtn').addEventListener('click', () => {
+        document.body.removeChild(modal);
+    });
+    
+    // Обработчик сохранения
+    document.getElementById('saveAnalysisBtn').addEventListener('click', async () => {
+        // Собираем отредактированные данные
+        const editedData = JSON.parse(JSON.stringify(analysisData));
+        editedData.procurement.title = document.getElementById('edit_title').value;
+        editedData.procurement.number = document.getElementById('edit_number').value;
+        editedData.procurement.ikz = document.getElementById('edit_ikz').value;
+        editedData.procurement.initial_price = document.getElementById('edit_initial_price').value;
+        
+        if (!editedData.procurement.customer) {
+            editedData.procurement.customer = {};
+        }
+        editedData.procurement.customer.name = document.getElementById('edit_customer_name').value;
+        editedData.procurement.customer.inn = document.getElementById('edit_customer_inn').value;
+        
+        try {
+            // Отправляем на сохранение
+            const saveBtn = document.getElementById('saveAnalysisBtn');
+            saveBtn.disabled = true;
+            saveBtn.textContent = 'Сохранение...';
+            
+            const resp = await fetch('/analysis/save', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ data: editedData })
+            });
+            
+            const result = await resp.json();
+            
+            if (result.success) {
+                // Открываем отчёт в новой вкладке
+                window.open(result.report_url, '_blank');
+                document.body.removeChild(modal);
+                showMessage('Анализ сохранён, отчёт открыт в новой вкладке');
+            } else {
+                showMessage('Ошибка сохранения: ' + result.message);
+                saveBtn.disabled = false;
+                saveBtn.textContent = 'Сохранить и открыть отчёт';
+            }
+        } catch (error) {
+            console.error('Ошибка сохранения:', error);
+            showMessage('Ошибка при сохранении результатов');
+        }
+    });
+}
