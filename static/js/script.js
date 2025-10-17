@@ -163,9 +163,9 @@ function updateFilesList() {
                 folderDiv.id = folderId;
                 
         // Вычисляем агрегированный статус для папки
-        const searchPerformed = document.querySelectorAll('.file-search-results[style*="display: block"]').length > 0;
-    // Папка до первого поиска должна быть серой, поэтому если поиск не выполнялся — принудительно используем gray
-    const folderStatus = searchPerformed ? calculateFolderStatus(files, file_statuses, archivesMap, searchPerformed) : 'gray';
+        const searchPerformed = (window.searchWasPerformed === true);
+        // Папка до первого поиска должна быть серой, поэтому если поиск не выполнялся — принудительно используем gray
+        const folderStatus = searchPerformed ? calculateFolderStatus(files, file_statuses, archivesMap, searchPerformed) : 'gray';
         const headerDiv = document.createElement('div');
                 headerDiv.className = 'folder-header';
                 headerDiv.onclick = () => toggleFolder(folderName);
@@ -546,6 +546,7 @@ function deleteFolder(folderKey, folderDisplayName) {
 // Функция обновления светофоров после поиска
 function updateTrafficLightsAfterSearch() {
     const searchPerformed = window.TrafficLights.isSearchPerformed();
+    console.log('🔍 updateTrafficLightsAfterSearch: searchPerformed =', searchPerformed);
     
     // Обновляем светофоры для всех файлов
     document.querySelectorAll('.file-item').forEach(fileItem => {
@@ -555,33 +556,38 @@ function updateTrafficLightsAfterSearch() {
         const filePath = fileWrapper.getAttribute('data-file-path');
         if (!filePath) return;
         
-        // Определяем статус файла из различных индикаторов
-        let status = 'not_checked';
-        let charCount = null;
+        const trafficLight = fileItem.querySelector('.traffic-light');
+        if (!trafficLight) return;
         
-        // Проверяем, есть ли индикаторы ошибок или неподдержки
-        const hasError = fileItem.querySelector('.file-error');
-        const isDisabled = fileItem.classList.contains('file-disabled');
+        // Читаем статус из data-атрибутов светофора (они устанавливаются при рендере)
+        let status = trafficLight.getAttribute('data-status') || 'not_checked';
+        let charCount = parseInt(trafficLight.getAttribute('data-chars') || '0', 10);
         
-        if (hasError || isDisabled) {
-            const errorText = hasError ? hasError.textContent : '';
-            if (errorText.includes('Неподдерживаемый формат')) {
-                status = 'unsupported';
+        // Если data-атрибуты пустые, пытаемся определить из DOM
+        if (!status || status === 'not_checked') {
+            const hasError = fileItem.querySelector('.file-error');
+            const isDisabled = fileItem.classList.contains('file-disabled');
+            
+            if (hasError || isDisabled) {
+                const errorText = hasError ? hasError.textContent : '';
+                if (errorText.includes('Неподдерживаемый формат')) {
+                    status = 'unsupported';
+                } else {
+                    status = 'error';
+                }
+                charCount = 0;
             } else {
-                status = 'error';
-            }
-            charCount = 0;
-        } else {
-            // Извлекаем char_count из .file-chars
-            const charsEl = fileItem.querySelector('.file-chars');
-            if (charsEl && charsEl.textContent) {
-                const m = charsEl.textContent.match(/(\d+)/);
-                if (m) {
-                    charCount = parseInt(m[1], 10);
-                    if (charCount > 0) {
-                        status = 'indexed'; // Файл проиндексирован
-                    } else {
-                        status = 'error'; // Нулевой объём = ошибка
+                // Извлекаем char_count из .file-chars
+                const charsEl = fileItem.querySelector('.file-chars');
+                if (charsEl && charsEl.textContent) {
+                    const m = charsEl.textContent.match(/(\d+)/);
+                    if (m) {
+                        charCount = parseInt(m[1], 10);
+                        if (charCount > 0) {
+                            status = 'contains_keywords'; // Файл проиндексирован
+                        } else {
+                            status = 'error'; // Нулевой объём = ошибка
+                        }
                     }
                 }
             }
@@ -593,14 +599,14 @@ function updateTrafficLightsAfterSearch() {
         // Определяем новый цвет светофора
         const newColor = window.TrafficLights.getFileTrafficLightColor(status, charCount, hasSearchResults, searchPerformed);
         
+        // Отладочная информация
+        console.log(`🚦 Файл: ${filePath}, статус: ${status}, символов: ${charCount}, есть результаты: ${hasSearchResults}, цвет: ${newColor}`);
+        
         // Обновляем светофор
-        const trafficLight = fileItem.querySelector('.traffic-light');
-        if (trafficLight) {
-            trafficLight.className = `traffic-light traffic-light-${newColor}`;
-            // Обновляем data-атрибуты для последующих пересчётов
-            trafficLight.setAttribute('data-status', status);
-            trafficLight.setAttribute('data-chars', charCount || '0');
-        }
+        trafficLight.className = `traffic-light traffic-light-${newColor}`;
+        // Обновляем data-атрибуты для последующих пересчётов
+        trafficLight.setAttribute('data-status', status);
+        trafficLight.setAttribute('data-chars', charCount.toString());
     });
     
     // Обновляем светофоры для папок и архивов
@@ -640,6 +646,9 @@ async function performSearch(terms) {
     });
     document.querySelectorAll('.file-item-wrapper[data-has-results]')
         .forEach(w => w.removeAttribute('data-has-results'));
+    
+    // Устанавливаем глобальный флаг, что поиск был выполнен
+    window.searchWasPerformed = true;
     
     const excludeMode = excludeModeToggle && excludeModeToggle.checked;
     
@@ -1004,6 +1013,9 @@ function restoreFolderStates() {
 
 // --- Initial ---
 document.addEventListener('DOMContentLoaded', function() {
+    // Инициализируем флаг поиска как false при загрузке страницы
+    window.searchWasPerformed = false;
+    
     refreshIndexStatus();
     setInterval(refreshIndexStatus, 8000);
     // Первая инициализация списка файлов через API, чтобы отрисовать светофоры

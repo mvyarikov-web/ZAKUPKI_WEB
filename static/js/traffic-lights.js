@@ -58,6 +58,11 @@ function getFileTrafficLightColor(status, charCount = null, hasSearchResults = f
 
 /**
  * Определяет цвет светофора для папки на основе цветов файлов внутри.
+ * Логика согласно спецификации инкремента 11:
+ * 1. Зеленый: есть хотя бы один файл с зеленым статусом (успешный поиск)
+ * 2. Желтый: есть проиндексированные файлы без результатов поиска (желтые), нет зеленых
+ * 3. Красный: все файлы не проиндексированы и был поиск
+ * 4. Серый: до первого поиска или при сбросе поиска
  * 
  * @param {string[]} fileColors - массив цветов файлов в папке
  * @returns {string} цвет светофора папки
@@ -67,20 +72,28 @@ function getFolderTrafficLightColor(fileColors) {
         return TRAFFIC_LIGHT_COLORS.GRAY;
     }
 
-    const hasRed = fileColors.includes(TRAFFIC_LIGHT_COLORS.RED);
     const hasGreen = fileColors.includes(TRAFFIC_LIGHT_COLORS.GREEN);
     const hasYellow = fileColors.includes(TRAFFIC_LIGHT_COLORS.YELLOW);
+    const hasRed = fileColors.includes(TRAFFIC_LIGHT_COLORS.RED);
+    const hasGray = fileColors.includes(TRAFFIC_LIGHT_COLORS.GRAY);
 
-    // Приоритет цветов: красный -> зелёный -> жёлтый -> серый
-    if (hasRed) {
-        return TRAFFIC_LIGHT_COLORS.RED;
-    }
+    // Логика папки согласно спецификации инкремента 11
+    // 1. Зеленый: если есть хотя бы один файл с успешным результатом поиска
     if (hasGreen) {
         return TRAFFIC_LIGHT_COLORS.GREEN;
     }
+    
+    // 2. Желтый: если есть проиндексированные файлы без результатов поиска, но нет зеленых
     if (hasYellow) {
         return TRAFFIC_LIGHT_COLORS.YELLOW;
     }
+    
+    // 3. Красный: если все файлы не проиндексированы и был поиск
+    if (hasRed && !hasGray && !hasYellow && !hasGreen) {
+        return TRAFFIC_LIGHT_COLORS.RED;
+    }
+    
+    // 4. Серый: по умолчанию (до первого поиска или смешанные состояния)
     return TRAFFIC_LIGHT_COLORS.GRAY;
 }
 
@@ -119,23 +132,30 @@ function getTrafficLightSortPriority(color) {
 }
 
 /**
- * Проверяет, выполнялся ли поиск (есть ли видимые результаты поиска).
+ * Проверяет, выполнялся ли поиск.
+ * Использует глобальный флаг window.searchWasPerformed, который устанавливается при выполнении поиска.
  * 
  * @returns {boolean} true если поиск выполнялся
  */
 function isSearchPerformed() {
-    // Проверяем наличие контейнера результатов поиска
-    const searchResults = document.getElementById('search-results');
-    const hasSearchResultsDiv = searchResults && searchResults.style.display !== 'none' && 
-                              searchResults.innerHTML.trim() !== '';
+    // Проверяем глобальный флаг (устанавливается при выполнении поиска)
+    if (window.searchWasPerformed === true) {
+        return true;
+    }
     
-    // Проверяем наличие элементов с результатами поиска
-    const visibleResults = document.querySelectorAll('.file-search-results[style*="display: block"], .file-search-results:not([style*="display: none"])');
+    // Fallback: проверяем наличие видимых результатов поиска
+    const visibleResults = document.querySelectorAll('.file-search-results[style*="display: block"]');
+    if (visibleResults.length > 0) {
+        return true;
+    }
     
     // Проверяем наличие атрибутов data-has-results
     const filesWithResults = document.querySelectorAll('[data-has-results="1"]');
+    if (filesWithResults.length > 0) {
+        return true;
+    }
     
-    return hasSearchResultsDiv || visibleResults.length > 0 || filesWithResults.length > 0;
+    return false;
 }
 
 /**
@@ -145,23 +165,23 @@ function isSearchPerformed() {
  * @returns {boolean} true если есть результаты
  */
 function hasSearchResultsForFile(filePath) {
-    // Метод 1: Проверяем атрибут data-has-results
+    // Метод 1: Проверяем атрибут data-has-results (самый надежный)
     const fileWrapper = document.querySelector(`[data-file-path="${CSS.escape(filePath)}"]`);
     if (fileWrapper && fileWrapper.getAttribute('data-has-results') === '1') {
         return true;
     }
     
-    // Метод 2: Проверяем наличие видимых результатов поиска
-    const searchResultsInFile = fileWrapper ? fileWrapper.querySelectorAll('.file-search-results[style*="display: block"], .file-search-results:not([style*="display: none"])') : [];
-    if (searchResultsInFile.length > 0) {
-        return true;
+    // Метод 2: Проверяем наличие видимых результатов поиска с содержимым
+    if (fileWrapper) {
+        const searchResults = fileWrapper.querySelector('.file-search-results[style*="display: block"]');
+        if (searchResults && searchResults.innerHTML.trim() !== '') {
+            // Проверяем, что есть реальные сниппеты или блоки результатов
+            const hasSnippets = searchResults.querySelector('.per-term-block, .context-snippet, .found-terms');
+            return hasSnippets !== null;
+        }
     }
     
-    // Метод 3: Проверяем по селектору для элементов с результатами
-    const escapedPath = CSS.escape(filePath);
-    const hasResults = document.querySelector(`[data-file-path="${escapedPath}"] .file-search-results[style*="display: block"]`) !== null;
-    
-    return hasResults;
+    return false;
 }
 
 // Экспорт для использования в основном коде

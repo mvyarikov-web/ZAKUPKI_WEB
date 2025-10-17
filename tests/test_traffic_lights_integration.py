@@ -58,6 +58,7 @@ def test_files(app):
     }
 
 
+@pytest.mark.timeout(30)
 def test_bug_unindexed_files_turned_green_after_search(client, app, test_files):
     """
     Тест бага: "после первого поиска непроиндексированные файлы стали зелеными".
@@ -155,6 +156,7 @@ def test_bug_unindexed_files_turned_green_after_search(client, app, test_files):
         print("\n✅ Тест пройден! Неиндексированные файлы остаются красными после поиска.")
 
 
+@pytest.mark.timeout(30)
 def test_unindexed_file_never_turns_green_even_with_fake_results(client, app, test_files):
     """
     Тест проверяет, что даже если мы искусственно установим has_search_results=True

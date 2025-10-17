@@ -136,6 +136,14 @@ def _search_in_files(search_terms, exclude_mode=False):
         if isinstance(rel_path, str) and rel_path in counts:
             new_entry['char_count'] = counts[rel_path]
         
+        # В режиме обратного поиска: пропускаем непроиндексированные файлы
+        # (файлы с char_count == 0 или с ошибками)
+        if is_exclude:
+            char_count = new_entry.get('char_count', 0)
+            if char_count == 0:
+                current_app.logger.debug(f"Пропуск непроиндексированного файла в режиме exclude: {rel_path}")
+                continue
+        
         # Обновляем статус для всех найденных файлов (включая виртуальные из архивов)
         new_statuses[rel_path] = new_entry
         found_files.add(rel_path)
