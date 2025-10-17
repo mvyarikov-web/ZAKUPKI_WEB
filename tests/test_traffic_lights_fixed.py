@@ -65,7 +65,11 @@ def test_folder_status_logic_fixed():
     """
     
     def calculate_folder_status_fixed(file_colors):
-        """Исправленная версия для папок."""
+        """
+        Исправленная версия для папок.
+        
+        Приоритет: зелёный -> жёлтый -> красный (только если все красные) -> серый
+        """
         if not file_colors:
             return 'gray'
             
@@ -73,30 +77,36 @@ def test_folder_status_logic_fixed():
         has_green = 'green' in file_colors  
         has_yellow = 'yellow' in file_colors
         
-        # Приоритет цветов: красный -> зелёный -> жёлтый -> серый
-        if has_red:
-            return 'red'
+        # Приоритет: зелёный -> жёлтый -> красный (только все) -> серый
         if has_green:
-            return 'green' 
+            return 'green'
         if has_yellow:
             return 'yellow'
+        # Красный только если ВСЕ файлы красные
+        all_red = all(color == 'red' for color in file_colors)
+        if all_red:
+            return 'red'
         return 'gray'
     
-    # Тест 1: Есть неиндексированные файлы - красный (высший приоритет)
-    assert calculate_folder_status_fixed(['red', 'green', 'yellow', 'gray']) == 'red'
-    assert calculate_folder_status_fixed(['red', 'gray']) == 'red'
-    
-    # Тест 2: Есть совпадения - зеленый
+    # Тест 1: Есть совпадения - зеленый (высший приоритет)
+    assert calculate_folder_status_fixed(['red', 'green', 'yellow', 'gray']) == 'green'
     assert calculate_folder_status_fixed(['green', 'yellow', 'gray']) == 'green'
     assert calculate_folder_status_fixed(['green', 'gray']) == 'green'
+    assert calculate_folder_status_fixed(['red', 'green']) == 'green'
     
-    # Тест 3: Нет совпадений при поиске - желтый
+    # Тест 2: Есть жёлтые - жёлтый (при отсутствии зелёных)
     assert calculate_folder_status_fixed(['yellow', 'gray']) == 'yellow'
     assert calculate_folder_status_fixed(['yellow']) == 'yellow'
+    assert calculate_folder_status_fixed(['red', 'yellow']) == 'yellow'
     
-    # Тест 4: Только серые (поиск не проводился) - серый
+    # Тест 3: ВСЕ файлы не проиндексированы - красный
+    assert calculate_folder_status_fixed(['red', 'red', 'red']) == 'red'
+    assert calculate_folder_status_fixed(['red']) == 'red'
+    
+    # Тест 4: Только серые (поиск не проводился) или смесь - серый
     assert calculate_folder_status_fixed(['gray']) == 'gray'
     assert calculate_folder_status_fixed(['gray', 'gray']) == 'gray'
+    assert calculate_folder_status_fixed(['red', 'gray']) == 'gray'
 
 
 def test_sorting_priority_fixed():
