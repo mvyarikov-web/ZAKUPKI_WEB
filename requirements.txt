@@ -12,3 +12,7 @@ pdf2image==1.17.0
 rarfile==4.2
 pdfminer.six==20250506
 pytest-timeout==2.1.0
+
+# Опциональные зависимости для модуля анализа текста
+# spacy>=3.0.0
+# ru_core_news_sm (устанавливается через: python -m spacy download ru_core_news_sm)
