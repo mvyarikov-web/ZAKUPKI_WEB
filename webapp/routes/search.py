@@ -245,34 +245,49 @@ def search():
 
 @search_bp.route('/build_index', methods=['POST'])
 def build_index_route():
-    """Явная сборка индекса по папке uploads."""
+    """Двухэтапная сборка индекса: текстовые файлы → OCR."""
     uploads = current_app.config['UPLOAD_FOLDER']
     if not os.path.exists(uploads):
         return jsonify({'success': False, 'message': 'Папка uploads не найдена'}), 400
     
     try:
-        dp = DocumentProcessor()
-        current_app.logger.info("Запуск явной сборки индекса для uploads")
+        from document_processor.search.two_stage_indexer import TwoStageIndexer
         
-        # Создаём индекс в uploads, затем переносим в index/
-        tmp_index_path = dp.create_search_index(uploads)
+        current_app.logger.info("Запуск двухэтапной индексации для uploads")
+        
+        # Создаём двухэтапный индексатор
+        indexer = TwoStageIndexer(max_depth=10, archive_depth=0)
+        
+        # Выполняем двухэтапную индексацию
+        stage1_result, stage2_result = indexer.create_index_two_stage(uploads)
+        
+        # Путь к созданному индексу
+        tmp_index_path = os.path.join(uploads, "_search_index.txt")
         os.makedirs(current_app.config['INDEX_FOLDER'], exist_ok=True)
         index_path = get_index_path(current_app.config['INDEX_FOLDER'])
         
+        # Переносим индекс в index/
         try:
             if os.path.exists(tmp_index_path) and tmp_index_path != index_path:
                 shutil.move(tmp_index_path, index_path)
             else:
-                # На всякий случай, если реализация уже пишет в index_folder
                 if os.path.exists(index_path):
                     pass
         except Exception:
             current_app.logger.exception('Не удалось переместить индекс в папку index')
         
         size = os.path.getsize(index_path) if os.path.exists(index_path) else 0
-        current_app.logger.info(f"Индекс собран: {index_path}, размер: {size} байт")
         
-        # Обновим количество распознанных символов по каждому файлу (включая виртуальные из архивов) и статусы ошибок/неподдержки
+        current_app.logger.info(
+            f"Двухэтапная индексация завершена. "
+            f"Этап 1: {stage1_result.processed_files}/{stage1_result.total_files} "
+            f"за {stage1_result.duration_seconds:.1f}с. "
+            f"Этап 2: {stage2_result.processed_files if stage2_result else 0}/"
+            f"{stage2_result.total_files if stage2_result else 0} "
+            f"за {stage2_result.duration_seconds if stage2_result else 0:.1f}с."
+        )
+        
+        # Обновим количество распознанных символов по каждому файлу
         try:
             counts = parse_index_char_counts(index_path)
             
@@ -340,7 +355,28 @@ def build_index_route():
         except Exception:
             current_app.logger.exception('Не удалось обновить char_count по индексу')
         
-        return jsonify({'success': True, 'index_path': index_path, 'size': size})
+        # Формируем ответ с детальной информацией о двух этапах
+        response_data = {
+            'success': True, 
+            'index_path': index_path, 
+            'size': size,
+            'stage1_result': {
+                'total': stage1_result.total_files,
+                'processed': stage1_result.processed_files,
+                'skipped': stage1_result.skipped_files,
+                'duration': round(stage1_result.duration_seconds, 1)
+            }
+        }
+        
+        if stage2_result:
+            response_data['stage2_result'] = {
+                'total': stage2_result.total_files,
+                'processed': stage2_result.processed_files,
+                'skipped': stage2_result.skipped_files,
+                'duration': round(stage2_result.duration_seconds, 1)
+            }
+        
+        return jsonify(response_data)
     
     except Exception as e:
         current_app.logger.exception("Ошибка при сборке индекса")

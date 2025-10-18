@@ -40,12 +40,20 @@
                     </div>
                     <span id="progressText">0%</span>
                 </div>
-                <!-- Прогресс построения индекса -->
+                <!-- Прогресс построения индекса (двухэтапный) -->
                 <div id="indexBuildProgress" class="progress-container" style="display: none; margin-top:10px;">
-                    <div class="progress-bar">
-                        <div id="indexBuildFill" class="progress-fill" style="width: 25%;"></div>
+                    <div class="stage-indicator" style="margin-bottom: 8px; font-size: 13px;">
+                        <div id="stage1Status" style="color: #555; margin-bottom: 4px;">
+                            Этап 1: Текстовые файлы <span id="stage1Count" style="font-weight: bold;">0/0</span>
+                        </div>
+                        <div id="stage2Status" style="color: #555;">
+                            Этап 2: OCR сканов <span id="stage2Count" style="font-weight: bold;">0/0</span>
+                        </div>
                     </div>
-                    <span id="indexBuildText">Построение индекса…</span>
+                    <div class="progress-bar">
+                        <div id="indexBuildFill" class="progress-fill"></div>
+                    </div>
+                    <span id="indexBuildText">Подготовка...</span>
                 </div>
             </section>
 

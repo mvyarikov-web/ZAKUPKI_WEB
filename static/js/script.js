@@ -897,14 +897,19 @@ if (deleteFilesBtn) {
 
 // (Кнопка очистки результатов удалена — очистка выполняется при пустом поисковом запросе)
 
-// --- Build Index auto ---
+// --- Build Index auto (двухэтапный с прогрессом) ---
 function rebuildIndexWithProgress() {
     const bar = document.getElementById('indexBuildProgress');
     const fill = document.getElementById('indexBuildFill');
     const text = document.getElementById('indexBuildText');
+    const stage1Count = document.getElementById('stage1Count');
+    const stage2Count = document.getElementById('stage2Count');
+    
     if (bar) bar.style.display = 'flex';
-    if (fill) fill.style.width = '10%';
-    if (text) text.textContent = 'Построение индекса… (это может занять некоторое время)';
+    if (fill) fill.style.width = '0%';
+    if (text) text.textContent = 'Подготовка...';
+    if (stage1Count) stage1Count.textContent = '0/0';
+    if (stage2Count) stage2Count.textContent = '0/0';
     
     const startTime = Date.now();
     
@@ -914,8 +919,27 @@ function rebuildIndexWithProgress() {
             if (!data.success) throw new Error(data.message || 'Ошибка построения индекса');
             
             const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+            
+            // Обновляем счётчики по этапам
+            if (data.stage1_result) {
+                const s1 = data.stage1_result;
+                if (stage1Count) {
+                    stage1Count.textContent = `${s1.processed}/${s1.total}`;
+                }
+            }
+            
+            if (data.stage2_result) {
+                const s2 = data.stage2_result;
+                if (stage2Count) {
+                    stage2Count.textContent = `${s2.processed}/${s2.total}`;
+                }
+            }
+            
             if (fill) fill.style.width = '100%';
-            if (text) text.textContent = `Готово за ${elapsed}с`;
+            if (text) {
+                const totalFiles = (data.stage1_result?.processed || 0) + (data.stage2_result?.processed || 0);
+                text.textContent = `Готово: ${totalFiles} файлов за ${elapsed}с`;
+            }
             
             refreshIndexStatus();
             updateFilesList();
@@ -937,7 +961,7 @@ function rebuildIndexWithProgress() {
                     fill.style.width = '0%';
                     fill.style.backgroundColor = ''; // сброс цвета
                 }
-            }, 2000);
+            }, 3000); // Увеличено время отображения результата
         });
 }
 
