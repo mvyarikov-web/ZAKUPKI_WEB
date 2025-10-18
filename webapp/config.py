@@ -31,6 +31,14 @@ class Config:
     ALLOWED_EXTENSIONS = {'pdf', 'doc', 'docx', 'xls', 'xlsx', 'txt', 'html', 'htm', 'csv', 'tsv', 'xml', 'json', 'zip', 'rar'}
     PREVIEW_INLINE_EXTENSIONS = {'pdf', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'}
     WEB_VIEWABLE_EXTENSIONS = {'html', 'htm', 'txt', 'csv', 'tsv', 'xml', 'json', 'pdf', 'doc', 'docx', 'xls', 'xlsx'}
+    
+    # PDF Processing
+    PDF_TEXT_TIMEOUT_S = 5  # тайм-бюджет для извлечения текста из векторных PDF
+    PDF_OCR_ENABLED = True  # включить OCR для сканов
+    PDF_OCR_MAX_PAGES = 2   # максимум страниц для OCR (оптимизация)
+    PDF_OCR_LANG = 'rus+eng'  # языки для Tesseract
+    PDF_TEXT_MIN_LEN = 50   # порог минимальной длины текста (ниже — считать сканом)
+    PDF_MAX_PAGES_TEXT = 100  # лимит страниц для векторного извлечения
 
 
 class DevConfig(Config):

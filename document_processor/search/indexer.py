@@ -183,24 +183,21 @@ class Indexer:
                 except Exception:
                     text = self._read_text_with_encoding(abs_path)
             elif ext == "pdf":
-                # FR-004: Оптимизация - сначала пробуем pdfplumber
-                text = self._extract_pdf(abs_path)
-                # FR-004: Если получили хоть какой-то текст, пропускаем fallback для скорости
-                if len(text.strip()) < 50:  # Только если текста совсем мало
-                    # Fallback: pdfminer.six
-                    try:
-                        from pdfminer.high_level import extract_text  # type: ignore
-                        t2 = extract_text(abs_path) or ""
-                        if len(t2.strip()) > len(text.strip()):
-                            text = t2
-                    except Exception:
-                        pass
-                if not text.strip():
-                    # FR-004: OCR только 2 первые страницы (было 3) для ускорения
-                    ocr_text = self._ocr_pdf_pages(abs_path, max_pages=2)
-                    if ocr_text:
-                        text = ocr_text
-                        ocr_used = True
+                # Используем новый модуль pdf_reader вместо дублирования кода
+                from ..pdf_reader import PdfReader
+                
+                reader = PdfReader()
+                result = reader.read_pdf(
+                    path=abs_path,
+                    ocr='auto',
+                    lang='rus+eng',
+                    budget_seconds=5,
+                    max_pages_text=100,
+                    max_pages_ocr=2
+                )
+                
+                text = result['text']
+                ocr_used = result['ocr_used']
             elif ext == "docx":
                 text = self._extract_docx(abs_path)
                 # OCR images inside DOCX (best effort)
@@ -306,60 +303,6 @@ class Indexer:
         letters = len(re.findall(r"[A-Za-zА-Яа-яЁё]", text))
         ratio = letters / max(1, len(text))
         return int(min(100, max(0, ratio * 100)))
-
-    def _extract_pdf(self, path: str, max_pages: int = 100) -> str:
-        """FR-004: Извлечение текста из PDF с ограничением по страницам для оптимизации."""
-        try:
-            import pdfplumber  # type: ignore
-            txt = []
-            with pdfplumber.open(path) as pdf:
-                # FR-004: Ограничиваем количество страниц для ускорения
-                for page in pdf.pages[:max_pages]:
-                    t = page.extract_text() or ""
-                    if t:
-                        txt.append(t)
-            return "\n".join(txt).strip()
-        except Exception:
-            try:
-                import pypdf  # type: ignore
-                txt = []
-                with open(path, "rb") as f:
-                    r = pypdf.PdfReader(f)
-                    # Попробуем расшифровать без пароля (часто помогает для "безопасных" PDF)
-                    try:
-                        if getattr(r, "is_encrypted", False):
-                            try:
-                                r.decrypt("")
-                            except Exception:
-                                try:
-                                    r.decrypt(None)  # type: ignore[arg-type]
-                                except Exception:
-                                    pass
-                    except Exception:
-                        pass
-                    # FR-004: Ограничиваем количество страниц
-                    pages_to_process = r.pages[:max_pages] if len(r.pages) > max_pages else r.pages
-                    for p in pages_to_process:
-                        t = p.extract_text() or ""
-                        if t:
-                            txt.append(t)
-                return "\n".join(txt).strip()
-            except Exception:
-                # PyMuPDF (fitz) как дополнительный fallback
-                try:
-                    import fitz  # type: ignore
-                    doc = fitz.open(path)
-                    parts = []
-                    # FR-004: Ограничиваем количество страниц
-                    for i, page in enumerate(doc):
-                        if i >= max_pages:
-                            break
-                        t = page.get_text("text") or ""
-                        if t:
-                            parts.append(t)
-                    return "\n".join(parts).strip()
-                except Exception:
-                    return ""
 
     def _ocr_pdf_pages(self, path: str, max_pages: int = 3) -> str:
         """Best-effort OCR: конвертирует первые N страниц в изображения и распознаёт текст.
