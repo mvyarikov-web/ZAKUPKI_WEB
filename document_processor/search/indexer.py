@@ -186,14 +186,39 @@ class Indexer:
                 # Используем новый модуль pdf_reader вместо дублирования кода
                 from ..pdf_reader import PdfReader
                 
-                reader = PdfReader()
+                # Используем оптимизированные настройки OCR (Инкремент 13)
+                # Значения по умолчанию берутся из конфигурации если доступны
+                try:
+                    from flask import current_app
+                    use_osd = current_app.config.get('OCR_USE_OSD', True)
+                    cache_orientation = current_app.config.get('OCR_CACHE_ORIENTATION', True)
+                    preprocess = current_app.config.get('OCR_PREPROCESS_IMAGES', True)
+                    target_dpi = current_app.config.get('OCR_TARGET_DPI', 300)
+                    psm_mode = current_app.config.get('OCR_PSM_MODE', 6)
+                    max_pages_ocr = current_app.config.get('PDF_OCR_MAX_PAGES', 10)
+                except (RuntimeError, ImportError):
+                    # Вне контекста Flask - используем значения по умолчанию
+                    use_osd = True
+                    cache_orientation = True
+                    preprocess = True
+                    target_dpi = 300
+                    psm_mode = 6
+                    max_pages_ocr = 10
+                
+                reader = PdfReader(
+                    use_osd=use_osd,
+                    cache_orientation=cache_orientation,
+                    preprocess_images=preprocess,
+                    target_dpi=target_dpi,
+                    psm_mode=psm_mode
+                )
                 result = reader.read_pdf(
                     path=abs_path,
                     ocr='auto',
                     lang='rus+eng',
                     budget_seconds=5,
                     max_pages_text=100,
-                    max_pages_ocr=2
+                    max_pages_ocr=max_pages_ocr
                 )
                 
                 text = result['text']
