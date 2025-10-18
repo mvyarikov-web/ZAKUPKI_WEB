@@ -348,7 +348,9 @@ class PdfReader:
                 texts: List[str] = []
                 for i, img in enumerate(images[:max_pages]):
                     try:
-                        t = pytesseract.image_to_string(img, lang=lang)
+                        # Автокоррекция ориентации изображения
+                        img_corrected = self._auto_orient_image(img, lang)
+                        t = pytesseract.image_to_string(img_corrected, lang=lang)
                         if t and t.strip():
                             texts.append(t)
                     except Exception as e:
@@ -369,6 +371,101 @@ class PdfReader:
         })
         
         return text, attempts
+    
+    def _auto_orient_image(self, img: Any, lang: str) -> Any:
+        """Автоматическая коррекция ориентации изображения для OCR.
+        
+        Пробует распознать текст в разных ориентациях (0°, 90°, 180°, 270°)
+        и выбирает ту, которая даёт максимум распознанного текста с наименьшим
+        количеством "мусорных" символов.
+        
+        Args:
+            img: PIL Image объект
+            lang: Языки для OCR
+            
+        Returns:
+            PIL Image с оптимальной ориентацией
+        """
+        if not OCR_AVAILABLE or pytesseract is None:
+            return img
+        
+        try:
+            # Пробуем распознать текст в разных ориентациях
+            rotations = [0, 90, 180, 270]
+            best_rotation = 0
+            best_score = -1
+            
+            for angle in rotations:
+                try:
+                    # Поворачиваем изображение
+                    if angle == 0:
+                        rotated = img
+                    else:
+                        rotated = img.rotate(angle, expand=True)
+                    
+                    # Пробуем распознать текст (с сокращённой областью для скорости)
+                    width, height = rotated.size
+                    # Берём центральную область (50% от размера) для быстрого теста
+                    box = (width // 4, height // 4, 3 * width // 4, 3 * height // 4)
+                    cropped = rotated.crop(box)
+                    
+                    # Распознаём текст
+                    text = pytesseract.image_to_string(cropped, lang=lang, config='--psm 6')
+                    text_clean = text.strip()
+                    
+                    # Вычисляем оценку качества:
+                    # - Длина текста (больше = лучше)
+                    # - Доля кириллических/латинских символов (игнорируя "мусор")
+                    # - Наличие пробелов (признак разделённых слов)
+                    total_chars = len(text_clean)
+                    if total_chars == 0:
+                        score = 0
+                    else:
+                        # Считаем кириллические и латинские символы
+                        cyrillic_latin = sum(1 for c in text_clean if ('\u0400' <= c <= '\u04FF' or 
+                                                                         'a' <= c.lower() <= 'z'))
+                        # Считаем цифры
+                        digits = sum(1 for c in text_clean if c.isdigit())
+                        # Считаем пробелы
+                        spaces = sum(1 for c in text_clean if c == ' ')
+                        
+                        # Доля полезных символов (кириллица/латиница + цифры + пробелы)
+                        useful = cyrillic_latin + digits + spaces
+                        useful_ratio = useful / total_chars if total_chars > 0 else 0
+                        
+                        # Доля именно букв (не пробелов/цифр)
+                        letter_ratio = cyrillic_latin / total_chars if total_chars > 0 else 0
+                        
+                        # Итоговая оценка: длина * доля_полезных * доля_букв
+                        # (штрафуем за мусор и за отсутствие букв)
+                        score = total_chars * useful_ratio * letter_ratio
+                    
+                    self._log.debug(
+                        "Ориентация %d°: символов=%d, полезных=%.2f, букв=%.2f, оценка=%.1f",
+                        angle, total_chars, useful_ratio if total_chars > 0 else 0, 
+                        letter_ratio if total_chars > 0 else 0, score
+                    )
+                    
+                    # Выбираем ориентацию с лучшей оценкой
+                    if score > best_score:
+                        best_score = score
+                        best_rotation = angle
+                        
+                except Exception as e:
+                    self._log.debug("Ошибка при проверке ориентации %d°: %s", angle, e)
+                    continue
+            
+            # Возвращаем изображение с лучшей ориентацией
+            if best_rotation == 0:
+                self._log.debug("Автокоррекция ориентации: поворот не требуется")
+                return img
+            else:
+                self._log.info("Изображение повёрнуто на %d° для улучшения OCR (оценка: %.1f)", best_rotation, best_score)
+                return img.rotate(best_rotation, expand=True)
+                
+        except Exception as e:
+            self._log.debug("Автокоррекция ориентации не удалась: %s, используем оригинал", e)
+            return img
     
     def _normalize_text(self, text: str) -> str:
         """Нормализация извлечённого текста.
