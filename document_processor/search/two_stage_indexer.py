@@ -65,6 +65,7 @@ class TwoStageIndexer(Indexer):
             root_folder: Корневая папка для индексации
             progress_callback: Функция для отчёта о прогрессе
                                Сигнатура: callback(stage, processed, total, file_name)
+                               Где total - общее количество файлов для обоих этапов
         
         Returns:
             Кортеж (stage1_result, stage2_result)
@@ -75,17 +76,30 @@ class TwoStageIndexer(Indexer):
         self._log.info("Классификация файлов для двухэтапной индексации...")
         text_files, ocr_files = self._classify_files(root_folder)
         
+        total_files = len(text_files) + len(ocr_files)
+        
         self._log.info(
             f"Классификация завершена: текстовых={len(text_files)}, "
-            f"для OCR={len(ocr_files)}"
+            f"для OCR={len(ocr_files)}, всего={total_files}"
         )
+        
+        # Обёрнутый колбэк для передачи общего количества файлов
+        def wrapped_callback(stage, processed, stage_total, filename):
+            if progress_callback:
+                # Вычисляем абсолютное количество обработанных файлов
+                if stage == 1:
+                    absolute_processed = processed
+                else:  # stage == 2
+                    absolute_processed = len(text_files) + processed
+                
+                progress_callback(stage, absolute_processed, total_files, filename)
         
         # Этап 1: Текстовые файлы
         stage1 = self._run_stage1(
             root_folder, 
             index_path, 
             text_files, 
-            progress_callback
+            wrapped_callback
         )
         self._stage1_result = stage1
         
@@ -96,7 +110,7 @@ class TwoStageIndexer(Indexer):
                 root_folder,
                 index_path,
                 ocr_files,
-                progress_callback
+                wrapped_callback
             )
             self._stage2_result = stage2
         else:
@@ -170,7 +184,7 @@ class TwoStageIndexer(Indexer):
         text_files: List[Tuple[str, str, str]],
         progress_callback: Optional[callable] = None
     ) -> IndexingStageResult:
-        """Этап 1: Быстрая индексация текстовых файлов."""
+        """Этап 1: Быстрая индексация текстовых файлов с инкрементальной записью."""
         start_time = datetime.now()
         result = IndexingStageResult(
             stage=1,
@@ -187,15 +201,22 @@ class TwoStageIndexer(Indexer):
             with io.open(index_path, "w", encoding="utf-8") as out:
                 for idx, (rel_path, abs_path, source) in enumerate(text_files, 1):
                     try:
-                        # Уведомляем о прогрессе
+                        # Уведомляем о прогрессе ПЕРЕД обработкой
                         if progress_callback:
-                            progress_callback(1, idx, len(text_files), source)
+                            progress_callback(1, idx - 1, len(text_files), source)
                         
                         # Извлекаем текст
                         text, meta = self._extract_text(abs_path, rel_path, source)
                         self._write_entry(out, rel_path=source, text=text, meta=meta)
                         
+                        # Принудительная запись на диск для немедленной доступности
+                        out.flush()
+                        
                         result.processed_files += 1
+                        
+                        # Уведомляем о завершении файла
+                        if progress_callback:
+                            progress_callback(1, idx, len(text_files), source)
                         
                         # Логируем прогресс
                         if idx % 10 == 0 or idx == len(text_files):
@@ -234,7 +255,7 @@ class TwoStageIndexer(Indexer):
         ocr_files: List[Tuple[str, str, str]],
         progress_callback: Optional[callable] = None
     ) -> IndexingStageResult:
-        """Этап 2: OCR сканированных PDF с дозаписью в индекс."""
+        """Этап 2: OCR сканированных PDF с инкрементальной дозаписью в индекс."""
         start_time = datetime.now()
         result = IndexingStageResult(
             stage=2,
@@ -252,15 +273,22 @@ class TwoStageIndexer(Indexer):
             with io.open(index_path, "a", encoding="utf-8") as out:
                 for idx, (rel_path, abs_path, source) in enumerate(ocr_files, 1):
                     try:
-                        # Уведомляем о прогрессе
+                        # Уведомляем о прогрессе ПЕРЕД обработкой
                         if progress_callback:
-                            progress_callback(2, idx, len(ocr_files), source)
+                            progress_callback(2, idx - 1, len(ocr_files), source)
                         
                         # Извлекаем текст с OCR
                         text, meta = self._extract_text(abs_path, rel_path, source)
                         self._write_entry(out, rel_path=source, text=text, meta=meta)
                         
+                        # Принудительная запись на диск для немедленной доступности
+                        out.flush()
+                        
                         result.processed_files += 1
+                        
+                        # Уведомляем о завершении файла
+                        if progress_callback:
+                            progress_callback(2, idx, len(ocr_files), source)
                         
                         # Логируем прогресс
                         if idx % 5 == 0 or idx == len(ocr_files):

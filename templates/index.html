@@ -40,14 +40,14 @@
                     </div>
                     <span id="progressText">0%</span>
                 </div>
-                <!-- Прогресс построения индекса (двухэтапный) -->
+                <!-- Прогресс построения индекса (единая шкала с текущим файлом) -->
                 <div id="indexBuildProgress" class="progress-container" style="display: none; margin-top:10px;">
-                    <div class="stage-indicator" style="margin-bottom: 8px; font-size: 13px;">
-                        <div id="stage1Status" style="color: #555; margin-bottom: 4px;">
-                            Этап 1: Текстовые файлы <span id="stage1Count" style="font-weight: bold;">0/0</span>
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; font-size: 13px;">
+                        <div style="color: #555; font-weight: bold;">
+                            Обработано: <span id="indexProcessedCount">0</span>/<span id="indexTotalCount">0</span>
                         </div>
-                        <div id="stage2Status" style="color: #555;">
-                            Этап 2: OCR сканов <span id="stage2Count" style="font-weight: bold;">0/0</span>
+                        <div id="currentFileInfo" style="color: #666; font-size: 12px; max-width: 400px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                            <!-- Текущий файл -->
                         </div>
                     </div>
                     <div class="progress-bar">

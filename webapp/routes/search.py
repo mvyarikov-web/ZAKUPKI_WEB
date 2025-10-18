@@ -1,6 +1,9 @@
 """Blueprint для поиска и индексации."""
 import os
 import shutil
+import json
+import time
+import threading
 from datetime import datetime
 from flask import Blueprint, request, jsonify, current_app, Response
 from document_processor import DocumentProcessor
@@ -13,6 +16,7 @@ from webapp.services.indexing import (
     get_index_path,
     parse_index_char_counts
 )
+from webapp.services.indexing_progress import get_progress_manager
 
 search_bp = Blueprint('search', __name__)
 
@@ -285,7 +289,7 @@ def build_index_route():
             f"Этап 2: {stage2_result.processed_files if stage2_result else 0}/"
             f"{stage2_result.total_files if stage2_result else 0} "
             f"за {stage2_result.duration_seconds if stage2_result else 0:.1f}с."
-        )
+            )
         
         # Обновим количество распознанных символов по каждому файлу
         try:

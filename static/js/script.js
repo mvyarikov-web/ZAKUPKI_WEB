@@ -897,19 +897,24 @@ if (deleteFilesBtn) {
 
 // (Кнопка очистки результатов удалена — очистка выполняется при пустом поисковом запросе)
 
-// --- Build Index auto (двухэтапный с прогрессом) ---
+// --- Build Index auto (с единой шкалой прогресса) ---
 function rebuildIndexWithProgress() {
     const bar = document.getElementById('indexBuildProgress');
     const fill = document.getElementById('indexBuildFill');
     const text = document.getElementById('indexBuildText');
-    const stage1Count = document.getElementById('stage1Count');
-    const stage2Count = document.getElementById('stage2Count');
+    const processedCount = document.getElementById('indexProcessedCount');
+    const totalCount = document.getElementById('indexTotalCount');
+    const currentFileInfo = document.getElementById('currentFileInfo');
     
     if (bar) bar.style.display = 'flex';
-    if (fill) fill.style.width = '0%';
+    if (fill) {
+        fill.style.width = '0%';
+        fill.style.backgroundColor = '';  // Сброс цвета ошибки
+    }
     if (text) text.textContent = 'Подготовка...';
-    if (stage1Count) stage1Count.textContent = '0/0';
-    if (stage2Count) stage2Count.textContent = '0/0';
+    if (processedCount) processedCount.textContent = '0';
+    if (totalCount) totalCount.textContent = '0';
+    if (currentFileInfo) currentFileInfo.textContent = '';
     
     const startTime = Date.now();
     
@@ -920,34 +925,35 @@ function rebuildIndexWithProgress() {
             
             const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
             
-            // Обновляем счётчики по этапам
-            if (data.stage1_result) {
-                const s1 = data.stage1_result;
-                if (stage1Count) {
-                    stage1Count.textContent = `${s1.processed}/${s1.total}`;
-                }
-            }
+            // Подсчёт общего количества обработанных файлов
+            const stage1Processed = data.stage1_result?.processed || 0;
+            const stage2Processed = data.stage2_result?.processed || 0;
+            const totalProcessed = stage1Processed + stage2Processed;
             
-            if (data.stage2_result) {
-                const s2 = data.stage2_result;
-                if (stage2Count) {
-                    stage2Count.textContent = `${s2.processed}/${s2.total}`;
-                }
-            }
+            const stage1Total = data.stage1_result?.total || 0;
+            const stage2Total = data.stage2_result?.total || 0;
+            const totalFiles = stage1Total + stage2Total;
+            
+            // Обновляем счётчики
+            if (processedCount) processedCount.textContent = totalProcessed;
+            if (totalCount) totalCount.textContent = totalFiles;
             
             if (fill) fill.style.width = '100%';
             if (text) {
-                const totalFiles = (data.stage1_result?.processed || 0) + (data.stage2_result?.processed || 0);
-                text.textContent = `Готово: ${totalFiles} файлов за ${elapsed}с`;
+                text.textContent = `Готово: ${totalProcessed} файлов за ${elapsed}с`;
             }
+            if (currentFileInfo) currentFileInfo.textContent = '';
             
             refreshIndexStatus();
             updateFilesList();
         })
         .catch(err => {
-            if (fill) fill.style.width = '100%';
-            if (fill) fill.style.backgroundColor = '#dc3545';
+            if (fill) {
+                fill.style.width = '100%';
+                fill.style.backgroundColor = '#dc3545';
+            }
             if (text) text.textContent = 'Ошибка: ' + (err.message || 'Неизвестная ошибка');
+            if (currentFileInfo) currentFileInfo.textContent = '';
             
             // Показываем модальное окно с ошибкой
             showMessage('Ошибка построения индекса: ' + (err.message || 'Неизвестная ошибка'));
