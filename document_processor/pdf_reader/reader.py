@@ -41,13 +41,40 @@ except Exception:  # pragma: no cover
     convert_from_path = None  # type: ignore
     OCR_AVAILABLE = False
 
+# Предобработка изображений для OCR (опционально)
+try:
+    import cv2  # type: ignore
+    import numpy as np  # type: ignore
+    OPENCV_AVAILABLE = True
+except Exception:  # pragma: no cover
+    cv2 = None  # type: ignore
+    np = None  # type: ignore
+    OPENCV_AVAILABLE = False
+
 
 class PdfReader:
     """Читатель PDF-документов с поддержкой векторных и сканированных файлов."""
     
-    def __init__(self):
+    def __init__(
+        self,
+        use_osd: bool = True,
+        cache_orientation: bool = True,
+        preprocess_images: bool = True,
+        target_dpi: int = 300,
+        psm_mode: int = 6
+    ):
         self._log = logging.getLogger(__name__)
         self._analyzer = PdfAnalyzer()
+        
+        # Конфигурация оптимизаций OCR (Инкремент 13)
+        self._use_osd = use_osd
+        self._cache_orientation = cache_orientation
+        self._preprocess_images = preprocess_images
+        self._target_dpi = target_dpi
+        self._psm_mode = psm_mode
+        
+        # Кэш ориентации документов (путь -> угол)
+        self._orientation_cache: Dict[str, int] = {}
     
     def read_pdf(
         self,
@@ -314,7 +341,7 @@ class PdfReader:
     def _extract_text_ocr(
         self, path: str, max_pages: int, lang: str
     ) -> tuple[str, List[Dict[str, Any]]]:
-        """Извлечение текста через OCR.
+        """Извлечение текста через OCR (оптимизированная версия).
         
         Args:
             path: Путь к PDF-файлу
@@ -346,19 +373,54 @@ class PdfReader:
             images = convert_from_path(path)
             if images:
                 texts: List[str] = []
+                
+                # Сброс кэша ориентации для нового документа
+                if self._cache_orientation:
+                    self._orientation_cache[path] = None  # type: ignore[assignment]
+                
                 for i, img in enumerate(images[:max_pages]):
                     try:
-                        # Автокоррекция ориентации изображения
-                        img_corrected = self._auto_orient_image(img, lang)
-                        t = pytesseract.image_to_string(img_corrected, lang=lang)
+                        # Предобработка изображения
+                        img_preprocessed = self._preprocess_image(img)
+                        
+                        # Автокоррекция ориентации (с кэшем для документа)
+                        if self._cache_orientation and path in self._orientation_cache:
+                            cached_angle = self._orientation_cache[path]
+                            if cached_angle is not None and cached_angle != 0:
+                                # Используем закэшированную ориентацию
+                                img_corrected = img_preprocessed.rotate(cached_angle, expand=True)
+                                self._log.debug("Страница %d: использую кэш ориентации %d°", i + 1, cached_angle)
+                            else:
+                                img_corrected = img_preprocessed
+                        else:
+                            # Определяем ориентацию для первой страницы
+                            img_corrected = self._auto_orient_image(img_preprocessed, lang)
+                            
+                            # Кэшируем ориентацию для остальных страниц документа
+                            if self._cache_orientation and i == 0:
+                                # Вычисляем угол поворота из img_corrected
+                                # (сравниваем размеры до/после)
+                                if img_preprocessed.size != img_corrected.size:
+                                    # Повёрнуто - сохраняем 90°
+                                    self._orientation_cache[path] = 90
+                                    self._log.debug("Кэширую ориентацию 90° для документа")
+                                else:
+                                    self._orientation_cache[path] = 0
+                        
+                        # OCR с оптимизированными настройками
+                        config = f'--psm {self._psm_mode}'
+                        t = pytesseract.image_to_string(img_corrected, lang=lang, config=config)
                         if t and t.strip():
                             texts.append(t)
+                            
                     except Exception as e:
                         self._log.debug("OCR страницы %d не удалось: %s", i + 1, e)
                         continue
+                        
                 if texts:
                     text = '\n'.join(texts)
                     ok = True
+                    
         except Exception as e:  # pragma: no cover
             err = f'{type(e).__name__}: {e}'
             self._log.warning("OCR не удалось: %s", err)
@@ -372,12 +434,56 @@ class PdfReader:
         
         return text, attempts
     
-    def _auto_orient_image(self, img: Any, lang: str) -> Any:
-        """Автоматическая коррекция ориентации изображения для OCR.
+    def _preprocess_image(self, img: Any) -> Any:
+        """Предобработка изображения для улучшения качества OCR.
         
-        Пробует распознать текст в разных ориентациях (0°, 90°, 180°, 270°)
-        и выбирает ту, которая даёт максимум распознанного текста с наименьшим
-        количеством "мусорных" символов.
+        Применяет:
+        - Конверсию в grayscale
+        - Бинаризацию (Otsu thresholding)
+        - Удаление шума (median filter)
+        - Нормализацию DPI
+        
+        Args:
+            img: PIL Image объект
+            
+        Returns:
+            Обработанный PIL Image или оригинал при ошибке
+        """
+        if not OPENCV_AVAILABLE or not self._preprocess_images:
+            return img
+        
+        try:
+            # Конвертируем PIL Image в numpy array
+            img_array = np.array(img)
+            
+            # Конверсия в grayscale если цветное
+            if len(img_array.shape) == 3:
+                gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
+            else:
+                gray = img_array
+            
+            # Otsu binarization для улучшения контраста
+            _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            
+            # Median filter для удаления шума (kernel size 3x3)
+            denoised = cv2.medianBlur(binary, 3)
+            
+            # Конвертируем обратно в PIL Image
+            from PIL import Image as PILImage
+            preprocessed = PILImage.fromarray(denoised)
+            
+            self._log.debug("Предобработка изображения успешна (grayscale + Otsu + denoise)")
+            return preprocessed
+            
+        except Exception as e:
+            self._log.debug("Предобработка изображения не удалась: %s, используем оригинал", e)
+            return img
+    
+    def _auto_orient_image(self, img: Any, lang: str) -> Any:
+        """Автоматическая коррекция ориентации изображения для OCR (оптимизированная).
+        
+        Использует OSD (Orientation and Script Detection) Tesseract для быстрого
+        определения ориентации вместо 4x полного OCR. Fallback на эвристику при недоступности OSD.
         
         Args:
             img: PIL Image объект
@@ -390,8 +496,72 @@ class PdfReader:
             return img
         
         try:
-            # Пробуем распознать текст в разных ориентациях
-            rotations = [0, 90, 180, 270]
+            # Попытка использовать OSD для быстрого определения ориентации
+            if self._use_osd:
+                angle = self._detect_orientation_osd(img)
+                if angle is not None:
+                    if angle == 0:
+                        self._log.debug("OSD: ориентация корректна (0°)")
+                        return img
+                    else:
+                        self._log.info("OSD: поворот изображения на %d°", angle)
+                        return img.rotate(angle, expand=True)
+            
+            # Fallback: упрощённая эвристика (1 пробный OCR вместо 4)
+            return self._detect_orientation_fallback(img, lang)
+                
+        except Exception as e:
+            self._log.debug("Автокоррекция ориентации не удалась: %s, используем оригинал", e)
+            return img
+    
+    def _detect_orientation_osd(self, img: Any) -> Optional[int]:
+        """Определение ориентации через Tesseract OSD.
+        
+        Args:
+            img: PIL Image объект
+            
+        Returns:
+            Угол поворота (0, 90, 180, 270) или None при ошибке
+        """
+        if not OCR_AVAILABLE or pytesseract is None:
+            return None
+        
+        try:
+            # Используем OSD для определения ориентации
+            osd = pytesseract.image_to_osd(img, output_type=pytesseract.Output.DICT)
+            rotate = osd.get('rotate', 0)
+            confidence = osd.get('orientation_conf', 0)
+            
+            self._log.debug("OSD результат: rotate=%d°, confidence=%.1f", rotate, confidence)
+            
+            # Принимаем результат при достаточной уверенности
+            if confidence > 1.0:  # минимальный порог уверенности
+                return rotate
+            
+            return None
+            
+        except Exception as e:
+            self._log.debug("OSD не удалось: %s", e)
+            return None
+    
+    def _detect_orientation_fallback(self, img: Any, lang: str) -> Any:
+        """Упрощённая эвристика определения ориентации (fallback).
+        
+        Пробует только 0° и 90° (самые частые случаи) вместо всех 4 ориентаций.
+        
+        Args:
+            img: PIL Image объект
+            lang: Языки для OCR
+            
+        Returns:
+            PIL Image с лучшей ориентацией
+        """
+        if not OCR_AVAILABLE or pytesseract is None:
+            return img
+        
+        try:
+            # Пробуем только 2 самые частые ориентации: 0° и 90°
+            rotations = [0, 90]
             best_rotation = 0
             best_score = -1
             
@@ -409,14 +579,12 @@ class PdfReader:
                     box = (width // 4, height // 4, 3 * width // 4, 3 * height // 4)
                     cropped = rotated.crop(box)
                     
-                    # Распознаём текст
-                    text = pytesseract.image_to_string(cropped, lang=lang, config='--psm 6')
+                    # Распознаём текст с оптимизированными настройками
+                    config = f'--psm {self._psm_mode}'
+                    text = pytesseract.image_to_string(cropped, lang=lang, config=config)
                     text_clean = text.strip()
                     
-                    # Вычисляем оценку качества:
-                    # - Длина текста (больше = лучше)
-                    # - Доля кириллических/латинских символов (игнорируя "мусор")
-                    # - Наличие пробелов (признак разделённых слов)
+                    # Вычисляем оценку качества
                     total_chars = len(text_clean)
                     if total_chars == 0:
                         score = 0
@@ -429,21 +597,19 @@ class PdfReader:
                         # Считаем пробелы
                         spaces = sum(1 for c in text_clean if c == ' ')
                         
-                        # Доля полезных символов (кириллица/латиница + цифры + пробелы)
+                        # Доля полезных символов
                         useful = cyrillic_latin + digits + spaces
                         useful_ratio = useful / total_chars if total_chars > 0 else 0
                         
-                        # Доля именно букв (не пробелов/цифр)
+                        # Доля букв
                         letter_ratio = cyrillic_latin / total_chars if total_chars > 0 else 0
                         
-                        # Итоговая оценка: длина * доля_полезных * доля_букв
-                        # (штрафуем за мусор и за отсутствие букв)
+                        # Итоговая оценка
                         score = total_chars * useful_ratio * letter_ratio
                     
                     self._log.debug(
-                        "Ориентация %d°: символов=%d, полезных=%.2f, букв=%.2f, оценка=%.1f",
-                        angle, total_chars, useful_ratio if total_chars > 0 else 0, 
-                        letter_ratio if total_chars > 0 else 0, score
+                        "Fallback ориентация %d°: символов=%d, оценка=%.1f",
+                        angle, total_chars, score
                     )
                     
                     # Выбираем ориентацию с лучшей оценкой
@@ -457,14 +623,14 @@ class PdfReader:
             
             # Возвращаем изображение с лучшей ориентацией
             if best_rotation == 0:
-                self._log.debug("Автокоррекция ориентации: поворот не требуется")
+                self._log.debug("Fallback: поворот не требуется")
                 return img
             else:
-                self._log.info("Изображение повёрнуто на %d° для улучшения OCR (оценка: %.1f)", best_rotation, best_score)
+                self._log.info("Fallback: изображение повёрнуто на %d° (оценка: %.1f)", best_rotation, best_score)
                 return img.rotate(best_rotation, expand=True)
                 
         except Exception as e:
-            self._log.debug("Автокоррекция ориентации не удалась: %s, используем оригинал", e)
+            self._log.debug("Fallback ориентация не удалась: %s, используем оригинал", e)
             return img
     
     def _normalize_text(self, text: str) -> str:

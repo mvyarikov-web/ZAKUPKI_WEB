@@ -35,10 +35,22 @@ class Config:
     # PDF Processing
     PDF_TEXT_TIMEOUT_S = 5  # тайм-бюджет для извлечения текста из векторных PDF
     PDF_OCR_ENABLED = True  # включить OCR для сканов
-    PDF_OCR_MAX_PAGES = 2   # максимум страниц для OCR (оптимизация)
+    PDF_OCR_MAX_PAGES = 10   # максимум страниц для OCR (увеличено с 2 для лучшего покрытия)
     PDF_OCR_LANG = 'rus+eng'  # языки для Tesseract
     PDF_TEXT_MIN_LEN = 50   # порог минимальной длины текста (ниже — считать сканом)
     PDF_MAX_PAGES_TEXT = 100  # лимит страниц для векторного извлечения
+    
+    # OCR Optimization (Инкремент 13)
+    OCR_USE_OSD = True  # использовать OSD для определения ориентации (быстрее 4x OCR)
+    OCR_CACHE_ORIENTATION = True  # кэшировать ориентацию для всех страниц документа
+    OCR_PREPROCESS_IMAGES = True  # предобработка изображений (бинаризация, шумоподавление)
+    OCR_TARGET_DPI = 300  # целевой DPI для OCR (оптимальный баланс)
+    OCR_PSM_MODE = 6  # Page Segmentation Mode для документов (uniform text block)
+    
+    # Two-stage indexing (будущее развитие)
+    INDEX_TWO_STAGE = False  # двухэтапная индексация (текст -> OCR)
+    INDEX_STAGE1_TIMEOUT = 60  # таймаут для этапа 1 (текстовые файлы)
+    INDEX_STAGE2_TIMEOUT = 300  # таймаут для этапа 2 (OCR)
 
 
 class DevConfig(Config):
