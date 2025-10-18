@@ -247,144 +247,189 @@ def search():
     return jsonify({'results': results})
 
 
+@search_bp.route('/build_index_progress')
+def build_index_progress():
+    """SSE endpoint для real-time прогресса индексации."""
+    def generate():
+        """Генератор событий прогресса."""
+        progress_mgr = get_progress_manager()
+        
+        while True:
+            progress = progress_mgr.get_progress()
+            data = progress.to_dict()
+            
+            yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+            
+            # Завершаем поток, если индексация окончена
+            if progress.status in ('completed', 'error', 'idle'):
+                break
+            
+            time.sleep(0.3)  # Обновления каждые 300мс
+    
+    return Response(generate(), mimetype='text/event-stream')
+
+
 @search_bp.route('/build_index', methods=['POST'])
 def build_index_route():
-    """Двухэтапная сборка индекса: текстовые файлы → OCR."""
+    """Запуск индексации в фоновом потоке с прогрессом через SSE."""
     uploads = current_app.config['UPLOAD_FOLDER']
     if not os.path.exists(uploads):
         return jsonify({'success': False, 'message': 'Папка uploads не найдена'}), 400
     
-    try:
-        from document_processor.search.two_stage_indexer import TwoStageIndexer
-        
-        current_app.logger.info("Запуск двухэтапной индексации для uploads")
-        
-        # Создаём двухэтапный индексатор
-        indexer = TwoStageIndexer(max_depth=10, archive_depth=0)
-        
-        # Выполняем двухэтапную индексацию
-        stage1_result, stage2_result = indexer.create_index_two_stage(uploads)
-        
-        # Путь к созданному индексу
-        tmp_index_path = os.path.join(uploads, "_search_index.txt")
-        os.makedirs(current_app.config['INDEX_FOLDER'], exist_ok=True)
-        index_path = get_index_path(current_app.config['INDEX_FOLDER'])
-        
-        # Переносим индекс в index/
-        try:
-            if os.path.exists(tmp_index_path) and tmp_index_path != index_path:
-                shutil.move(tmp_index_path, index_path)
-            else:
-                if os.path.exists(index_path):
-                    pass
-        except Exception:
-            current_app.logger.exception('Не удалось переместить индекс в папку index')
-        
-        size = os.path.getsize(index_path) if os.path.exists(index_path) else 0
-        
-        current_app.logger.info(
-            f"Двухэтапная индексация завершена. "
-            f"Этап 1: {stage1_result.processed_files}/{stage1_result.total_files} "
-            f"за {stage1_result.duration_seconds:.1f}с. "
-            f"Этап 2: {stage2_result.processed_files if stage2_result else 0}/"
-            f"{stage2_result.total_files if stage2_result else 0} "
-            f"за {stage2_result.duration_seconds if stage2_result else 0:.1f}с."
-            )
-        
-        # Обновим количество распознанных символов по каждому файлу
-        try:
-            counts = parse_index_char_counts(index_path)
-            
-            # Список всех реальных файлов в uploads
-            all_files: list[str] = []
-            for root, dirs, files in os.walk(uploads):
-                for fname in files:
-                    if fname == '_search_index.txt' or fname.startswith('~$') or fname.startswith('$'):
-                        continue
-                    rel_path = os.path.relpath(os.path.join(root, fname), uploads)
-                    all_files.append(rel_path)
-            
-            files_state = _get_files_state()
-            new_statuses = {}
-            
-            # Обрабатываем реальные файлы
-            for rel_path in all_files:
-                ext_ok = allowed_file(rel_path, current_app.config['ALLOWED_EXTENSIONS'])
-                entry = files_state.get_file_status(rel_path).copy()
-                
-                if not ext_ok:
-                    # Неподдерживаемый формат
-                    entry.update({
-                        'status': 'unsupported',
-                        'error': 'Неподдерживаемый формат',
-                        'char_count': 0,
-                        'processed_at': datetime.now().isoformat()
-                    })
-                else:
-                    cc = counts.get(rel_path)
-                    if cc is None:
-                        # Поддерживаемый, но нет записи в индексе — ошибка чтения/индексации
-                        entry.update({
-                            'status': entry.get('status', 'error' if entry.get('status') in (None, 'not_checked') else entry.get('status')),
-                            'error': entry.get('error') or 'Ошибка чтения или не проиндексирован',
-                            'char_count': 0,
-                            'processed_at': datetime.now().isoformat()
-                        })
-                    else:
-                        # Есть счётчик символов — не трогаем статус поиска, только дополняем метрикой
-                        entry.update({
-                            'char_count': cc,
-                            'processed_at': datetime.now().isoformat()
-                        })
-                        # если 0 символов, оставим это как индикатор качества (UI подсветит)
-                
-                new_statuses[rel_path] = entry
-            
-            # Обрабатываем виртуальные файлы из архивов (те, что есть в индексе, но не в all_files)
-            for indexed_path, char_count in counts.items():
-                if indexed_path not in all_files and '://' in indexed_path:
-                    # Это виртуальный файл из архива
-                    entry = files_state.get_file_status(indexed_path).copy()
-                    entry.update({
-                        'char_count': char_count,
-                        'processed_at': datetime.now().isoformat()
-                    })
-                    # Если статус не установлен, устанавливаем в not_checked
-                    if not entry.get('status'):
-                        entry['status'] = 'not_checked'
-                    new_statuses[indexed_path] = entry
-            
-            # Атомарно сохраняем все статусы
-            files_state.update_file_statuses(new_statuses)
-        except Exception:
-            current_app.logger.exception('Не удалось обновить char_count по индексу')
-        
-        # Формируем ответ с детальной информацией о двух этапах
-        response_data = {
-            'success': True, 
-            'index_path': index_path, 
-            'size': size,
-            'stage1_result': {
-                'total': stage1_result.total_files,
-                'processed': stage1_result.processed_files,
-                'skipped': stage1_result.skipped_files,
-                'duration': round(stage1_result.duration_seconds, 1)
-            }
-        }
-        
-        if stage2_result:
-            response_data['stage2_result'] = {
-                'total': stage2_result.total_files,
-                'processed': stage2_result.processed_files,
-                'skipped': stage2_result.skipped_files,
-                'duration': round(stage2_result.duration_seconds, 1)
-            }
-        
-        return jsonify(response_data)
+    progress_mgr = get_progress_manager()
     
-    except Exception as e:
-        current_app.logger.exception("Ошибка при сборке индекса")
-        return jsonify({'success': False, 'message': str(e)}), 500
+    # Проверяем, не идёт ли уже индексация
+    current_progress = progress_mgr.get_progress()
+    if current_progress.status == 'running':
+        return jsonify({'success': False, 'message': 'Индексация уже выполняется'}), 409
+    
+    def run_indexing_in_background():
+        """Функция для выполнения индексации в фоновом потоке."""
+        with current_app.app_context():
+            try:
+                from document_processor.search.two_stage_indexer import TwoStageIndexer
+                
+                current_app.logger.info("Запуск двухэтапной индексации для uploads")
+                
+                # Создаём двухэтапный индексатор
+                indexer = TwoStageIndexer(max_depth=10, archive_depth=0)
+                
+                # Флаг для обновления total_files при первом вызове
+                total_initialized = [False]
+                
+                # Колбэк для обновления прогресса
+                def progress_callback(stage, processed, total, filename):
+                    # При первом вызове обновляем total_files
+                    if not total_initialized[0]:
+                        progress_mgr.start(total_files=total)
+                        total_initialized[0] = True
+                    
+                    progress_mgr.update(
+                        processed=processed,
+                        current_file=os.path.basename(filename),
+                        file_progress=0
+                    )
+                
+                # Выполняем двухэтапную индексацию
+                stage1_result, stage2_result = indexer.create_index_two_stage(
+                    uploads,
+                    progress_callback=progress_callback
+                )
+                
+                # Путь к созданному индексу
+                tmp_index_path = os.path.join(uploads, "_search_index.txt")
+                os.makedirs(current_app.config['INDEX_FOLDER'], exist_ok=True)
+                index_path = get_index_path(current_app.config['INDEX_FOLDER'])
+                
+                # Переносим индекс в index/
+                try:
+                    if os.path.exists(tmp_index_path) and tmp_index_path != index_path:
+                        shutil.move(tmp_index_path, index_path)
+                    else:
+                        if os.path.exists(index_path):
+                            pass
+                except Exception:
+                    current_app.logger.exception('Не удалось переместить индекс в папку index')
+                
+                size = os.path.getsize(index_path) if os.path.exists(index_path) else 0
+                
+                current_app.logger.info(
+                    f"Двухэтапная индексация завершена. "
+                    f"Этап 1: {stage1_result.processed_files}/{stage1_result.total_files} "
+                    f"за {stage1_result.duration_seconds:.1f}с. "
+                    f"Этап 2: {stage2_result.processed_files if stage2_result else 0}/"
+                    f"{stage2_result.total_files if stage2_result else 0} "
+                    f"за {stage2_result.duration_seconds if stage2_result else 0:.1f}с."
+                )
+                
+                # Обновим количество распознанных символов по каждому файлу
+                try:
+                    counts = parse_index_char_counts(index_path)
+                    
+                    # Список всех реальных файлов в uploads
+                    all_files: list[str] = []
+                    for root, dirs, files in os.walk(uploads):
+                        for fname in files:
+                            if fname == '_search_index.txt' or fname.startswith('~$') or fname.startswith('$'):
+                                continue
+                            rel_path = os.path.relpath(os.path.join(root, fname), uploads)
+                            all_files.append(rel_path)
+                    
+                    files_state = _get_files_state()
+                    new_statuses = {}
+                    
+                    # Обрабатываем реальные файлы
+                    for rel_path in all_files:
+                        ext_ok = allowed_file(rel_path, current_app.config['ALLOWED_EXTENSIONS'])
+                        entry = files_state.get_file_status(rel_path).copy()
+                        
+                        if not ext_ok:
+                            # Неподдерживаемый формат
+                            entry.update({
+                                'status': 'unsupported',
+                                'error': 'Неподдерживаемый формат',
+                                'char_count': 0,
+                                'processed_at': datetime.now().isoformat()
+                            })
+                        else:
+                            cc = counts.get(rel_path)
+                            if cc is None:
+                                # Поддерживаемый, но нет записи в индексе — ошибка чтения/индексации
+                                entry.update({
+                                    'status': entry.get('status', 'error' if entry.get('status') in (None, 'not_checked') else entry.get('status')),
+                                    'error': entry.get('error') or 'Ошибка чтения или не проиндексирован',
+                                    'char_count': 0,
+                                    'processed_at': datetime.now().isoformat()
+                                })
+                            else:
+                                # Есть счётчик символов — не трогаем статус поиска, только дополняем метрикой
+                                entry.update({
+                                    'char_count': cc,
+                                    'processed_at': datetime.now().isoformat()
+                                })
+                                # если 0 символов, оставим это как индикатор качества (UI подсветит)
+                        
+                        new_statuses[rel_path] = entry
+                    
+                    # Обрабатываем виртуальные файлы из архивов (те, что есть в индексе, но не в all_files)
+                    for indexed_path, char_count in counts.items():
+                        if indexed_path not in all_files and '://' in indexed_path:
+                            # Это виртуальный файл из архива
+                            entry = files_state.get_file_status(indexed_path).copy()
+                            entry.update({
+                                'char_count': char_count,
+                                'processed_at': datetime.now().isoformat()
+                            })
+                            # Если статус не установлен, устанавливаем в not_checked
+                            if not entry.get('status'):
+                                entry['status'] = 'not_checked'
+                            new_statuses[indexed_path] = entry
+                    
+                    # Атомарно сохраняем все статусы
+                    files_state.update_file_statuses(new_statuses)
+                except Exception:
+                    current_app.logger.exception('Не удалось обновить char_count по индексу')
+                
+                # Отмечаем завершение
+                progress_mgr.complete()
+                
+                current_app.logger.info(f"Индексация завершена успешно, индекс: {index_path}, размер: {size}")
+                
+            except Exception as e:
+                current_app.logger.exception("Ошибка при сборке индекса в фоновом потоке")
+                progress_mgr.error(str(e))
+    
+    # Запускаем индексацию в фоновом потоке
+    import threading
+    thread = threading.Thread(target=run_indexing_in_background, daemon=True)
+    thread.start()
+    
+    # Немедленно возвращаем успешный ответ, указывая на SSE endpoint для отслеживания прогресса
+    return jsonify({
+        'success': True, 
+        'message': 'Индексация запущена',
+        'progress_endpoint': '/build_index_progress'
+    })
 
 
 @search_bp.get('/index_status')

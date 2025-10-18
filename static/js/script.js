@@ -897,7 +897,7 @@ if (deleteFilesBtn) {
 
 // (Кнопка очистки результатов удалена — очистка выполняется при пустом поисковом запросе)
 
-// --- Build Index auto (с единой шкалой прогресса) ---
+// --- Build Index auto (с единой шкалой прогресса и SSE) ---
 function rebuildIndexWithProgress() {
     const bar = document.getElementById('indexBuildProgress');
     const fill = document.getElementById('indexBuildFill');
@@ -918,57 +918,133 @@ function rebuildIndexWithProgress() {
     
     const startTime = Date.now();
     
-    return fetch('/build_index', { method: 'POST' })
-        .then(safeFetchJson)
-        .then(data => {
-            if (!data.success) throw new Error(data.message || 'Ошибка построения индекса');
-            
-            const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-            
-            // Подсчёт общего количества обработанных файлов
-            const stage1Processed = data.stage1_result?.processed || 0;
-            const stage2Processed = data.stage2_result?.processed || 0;
-            const totalProcessed = stage1Processed + stage2Processed;
-            
-            const stage1Total = data.stage1_result?.total || 0;
-            const stage2Total = data.stage2_result?.total || 0;
-            const totalFiles = stage1Total + stage2Total;
-            
-            // Обновляем счётчики
-            if (processedCount) processedCount.textContent = totalProcessed;
-            if (totalCount) totalCount.textContent = totalFiles;
-            
-            if (fill) fill.style.width = '100%';
-            if (text) {
-                text.textContent = `Готово: ${totalProcessed} файлов за ${elapsed}с`;
-            }
-            if (currentFileInfo) currentFileInfo.textContent = '';
-            
-            refreshIndexStatus();
-            updateFilesList();
-        })
-        .catch(err => {
-            if (fill) {
-                fill.style.width = '100%';
-                fill.style.backgroundColor = '#dc3545';
-            }
-            if (text) text.textContent = 'Ошибка: ' + (err.message || 'Неизвестная ошибка');
-            if (currentFileInfo) currentFileInfo.textContent = '';
-            
-            // Показываем модальное окно с ошибкой
-            showMessage('Ошибка построения индекса: ' + (err.message || 'Неизвестная ошибка'));
-            
-            throw err;
-        })
-        .finally(() => {
-            setTimeout(() => { 
-                if (bar) bar.style.display = 'none'; 
-                if (fill) {
-                    fill.style.width = '0%';
-                    fill.style.backgroundColor = ''; // сброс цвета
+    return new Promise((resolve, reject) => {
+        // Запускаем индексацию
+        fetch('/build_index', { method: 'POST' })
+            .then(safeFetchJson)
+            .then(data => {
+                if (!data.success) {
+                    throw new Error(data.message || 'Ошибка запуска индексации');
                 }
-            }, 3000); // Увеличено время отображения результата
-        });
+                
+                // Подключаемся к SSE endpoint для получения прогресса
+                const eventSource = new EventSource('/build_index_progress');
+                
+                eventSource.onmessage = function(event) {
+                    try {
+                        const progress = JSON.parse(event.data);
+                        
+                        // Обновляем UI
+                        if (progress.status === 'running') {
+                            const percent = progress.total_files > 0 
+                                ? Math.round((progress.processed_files / progress.total_files) * 100) 
+                                : 0;
+                            
+                            if (fill) fill.style.width = percent + '%';
+                            if (processedCount) processedCount.textContent = progress.processed_files;
+                            if (totalCount) totalCount.textContent = progress.total_files;
+                            if (text) text.textContent = `Обработка: ${progress.processed_files}/${progress.total_files}`;
+                            if (currentFileInfo) currentFileInfo.textContent = progress.current_file || '';
+                        } 
+                        else if (progress.status === 'completed') {
+                            // Завершено успешно
+                            eventSource.close();
+                            
+                            const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+                            
+                            if (fill) fill.style.width = '100%';
+                            if (processedCount) processedCount.textContent = progress.processed_files;
+                            if (totalCount) totalCount.textContent = progress.total_files;
+                            if (text) text.textContent = `Готово: ${progress.processed_files} файлов за ${elapsed}с`;
+                            if (currentFileInfo) currentFileInfo.textContent = '';
+                            
+                            refreshIndexStatus();
+                            updateFilesList();
+                            
+                            setTimeout(() => { 
+                                if (bar) bar.style.display = 'none'; 
+                                if (fill) {
+                                    fill.style.width = '0%';
+                                    fill.style.backgroundColor = '';
+                                }
+                            }, 3000);
+                            
+                            resolve();
+                        } 
+                        else if (progress.status === 'error') {
+                            // Ошибка
+                            eventSource.close();
+                            
+                            if (fill) {
+                                fill.style.width = '100%';
+                                fill.style.backgroundColor = '#dc3545';
+                            }
+                            if (text) text.textContent = 'Ошибка: ' + (progress.error || 'Неизвестная ошибка');
+                            if (currentFileInfo) currentFileInfo.textContent = '';
+                            
+                            showMessage('Ошибка построения индекса: ' + (progress.error || 'Неизвестная ошибка'));
+                            
+                            setTimeout(() => { 
+                                if (bar) bar.style.display = 'none'; 
+                                if (fill) {
+                                    fill.style.width = '0%';
+                                    fill.style.backgroundColor = '';
+                                }
+                            }, 3000);
+                            
+                            reject(new Error(progress.error || 'Ошибка индексации'));
+                        }
+                    } catch (err) {
+                        console.error('Ошибка парсинга прогресса:', err);
+                    }
+                };
+                
+                eventSource.onerror = function(err) {
+                    console.error('SSE ошибка:', err);
+                    eventSource.close();
+                    
+                    // Если ошибка SSE, но индексация могла завершиться — проверим статус
+                    refreshIndexStatus();
+                    updateFilesList();
+                    
+                    if (fill) {
+                        fill.style.width = '100%';
+                        fill.style.backgroundColor = '#ffc107'; // Предупреждение
+                    }
+                    if (text) text.textContent = 'Соединение прервано, проверьте результат';
+                    
+                    setTimeout(() => { 
+                        if (bar) bar.style.display = 'none'; 
+                        if (fill) {
+                            fill.style.width = '0%';
+                            fill.style.backgroundColor = '';
+                        }
+                    }, 3000);
+                    
+                    resolve(); // Не блокируем, т.к. индексация могла завершиться
+                };
+            })
+            .catch(err => {
+                if (fill) {
+                    fill.style.width = '100%';
+                    fill.style.backgroundColor = '#dc3545';
+                }
+                if (text) text.textContent = 'Ошибка: ' + (err.message || 'Неизвестная ошибка');
+                if (currentFileInfo) currentFileInfo.textContent = '';
+                
+                showMessage('Ошибка построения индекса: ' + (err.message || 'Неизвестная ошибка'));
+                
+                setTimeout(() => { 
+                    if (bar) bar.style.display = 'none'; 
+                    if (fill) {
+                        fill.style.width = '0%';
+                        fill.style.backgroundColor = '';
+                    }
+                }, 3000);
+                
+                reject(err);
+            });
+    });
 }
 
 function termsFromInput() {
