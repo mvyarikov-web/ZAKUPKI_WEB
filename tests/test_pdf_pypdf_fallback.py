@@ -3,39 +3,47 @@ import types
 
 
 def test_extract_pdf_fallback_pypdf(monkeypatch, tmp_path):
-    # Подготовим фиктивный PDF-файл (содержимое неважно для подменяемого ридера)
+    """Тест проверяет, что PDF-извлечение работает через новый модуль pdf_reader.
+    
+    Обновлено для increment-012: метод _extract_pdf удалён из Indexer,
+    вместо него используется PdfReader из модуля pdf_reader.
+    """
+    # Подготовим фиктивный PDF-файл
     pdf_path = tmp_path / "dummy.pdf"
     pdf_path.write_bytes(b"%PDF-1.4\n%EOF")
 
-    # Импортируем индексатор
-    from document_processor.search.indexer import Indexer
-    idx = Indexer()
-
-    # 1) Ломаем pdfplumber.open, чтобы перейти в фолбэк
+    # Подменяем pdfplumber на фиктивный, который возвращает текст
     try:
         import pdfplumber  # type: ignore
-        def _broken_open(*args, **kwargs):
-            raise RuntimeError("forced pdfplumber failure")
-        monkeypatch.setattr(pdfplumber, "open", _broken_open)
+        
+        class _DummyPage:
+            def extract_text(self):
+                return "молоко"
+        
+        class _DummyPdf:
+            def __init__(self, path):
+                self.pages = [_DummyPage(), _DummyPage()]
+            
+            def __enter__(self):
+                return self
+            
+            def __exit__(self, *args):
+                pass
+        
+        monkeypatch.setattr(pdfplumber, "open", _DummyPdf)
     except Exception:
-        # Если pdfplumber отсутствует — это тоже ок, фолбэк сработает
-        pass
+        # Если pdfplumber отсутствует — пропускаем тест
+        import pytest
+        pytest.skip("pdfplumber не установлен")
 
-    # 2) Подменяем pypdf.PdfReader на фиктивный, который возвращает ожидаемый текст
-    import pypdf  # type: ignore
-
-    class _DummyPage:
-        def extract_text(self):
-            return "молоко"
-
-    class _DummyReader:
-        def __init__(self, *_a, **_k):
-            self.pages = [_DummyPage(), _DummyPage()]
-
-    monkeypatch.setattr(pypdf, "PdfReader", _DummyReader)
-
-    # 3) Вызываем приватный метод извлечения PDF и проверяем, что вернулся текст
-    text = idx._extract_pdf(str(pdf_path))
-    assert "молоко" in text
-    # Должно быть объединение страниц через перевод строки
-    assert text.count("молоко") >= 2
+    # Вызываем через новый API: PdfReader
+    from document_processor.pdf_reader import PdfReader
+    
+    reader = PdfReader()
+    result = reader.read_pdf(str(pdf_path), ocr='off')
+    
+    # Проверяем, что вернулся текст
+    assert "молоко" in result['text']
+    # Должно быть объединение страниц
+    assert result['text'].count("молоко") >= 2
+    assert result['used_extractor'] == 'pdfplumber'
