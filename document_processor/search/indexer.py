@@ -26,12 +26,37 @@ class Indexer:
     def create_index(self, root_folder: str) -> str:
         index_path = os.path.join(root_folder, "_search_index.txt")
         self._log.info("Индексация начата: root=%s -> %s", root_folder, index_path)
+        
+        # Подсчитываем общее количество файлов для прогресса
+        total_files = 0
+        processed_files = 0
+        
         try:
+            # Первый проход - подсчёт файлов
+            self._log.info("Подсчёт файлов для индексации...")
+            for _ in self._iter_sources(root_folder):
+                total_files += 1
+            
+            self._log.info(f"Найдено файлов для индексации: {total_files}")
+            
+            # Второй проход - индексация с прогрессом
             with io.open(index_path, "w", encoding="utf-8") as out:
                 for rel_path, abs_path, source in self._iter_sources(root_folder):
+                    processed_files += 1
+                    progress_pct = int((processed_files / total_files * 100)) if total_files > 0 else 0
+                    
+                    # Логируем прогресс каждые 10 файлов или на важных этапах
+                    if processed_files % 10 == 0 or processed_files == total_files:
+                        self._log.info(f"Прогресс индексации: {processed_files}/{total_files} ({progress_pct}%)")
+                    
+                    # Логируем текущий обрабатываемый файл (кратко)
+                    file_display = source if len(source) <= 60 else '...' + source[-57:]
+                    self._log.debug(f"Индексация [{processed_files}/{total_files}]: {file_display}")
+                    
                     text, meta = self._extract_text(abs_path, rel_path, source)
                     self._write_entry(out, rel_path=source, text=text, meta=meta)
-            self._log.info("Индексация завершена: %s", index_path)
+            
+            self._log.info(f"Индексация завершена: {index_path} ({processed_files} файлов)")
             return index_path
         finally:
             self._cleanup_temp_paths()

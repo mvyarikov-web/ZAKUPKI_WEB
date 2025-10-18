@@ -57,11 +57,21 @@ class TimeoutMiddleware:
             start_response(status, headers)
             return chunks
         except FuturesTimeout:
-            # Таймаут — формируем 504
+            # Таймаут — формируем 504 с JSON ответом
             future.cancel()
-            start_response('504 Gateway Timeout', [('Content-Type', 'text/plain; charset=utf-8')])
-            return [f"Запрос превышает лимит времени {self.timeout} сек. Попробуйте позже.".encode('utf-8')]
+            import json
+            error_json = json.dumps({
+                'success': False,
+                'error': f'Запрос превышает лимит времени {self.timeout} сек. Попробуйте позже.'
+            }, ensure_ascii=False)
+            start_response('504 Gateway Timeout', [('Content-Type', 'application/json; charset=utf-8')])
+            return [error_json.encode('utf-8')]
         except Exception:
-            # Непредвиденная ошибка — 500
-            start_response('500 Internal Server Error', [('Content-Type', 'text/plain; charset=utf-8')])
-            return [b"Internal Server Error"]
+            # Непредвиденная ошибка — 500 с JSON
+            import json
+            error_json = json.dumps({
+                'success': False,
+                'error': 'Internal Server Error'
+            }, ensure_ascii=False)
+            start_response('500 Internal Server Error', [('Content-Type', 'application/json; charset=utf-8')])
+            return [error_json.encode('utf-8')]

@@ -59,7 +59,7 @@ if __name__ == '__main__':
     print('🚀 Сервер запускается...')
     print(f'📍 Адрес: http://{host}:{port}')
     print(f'🔧 Debug mode: {debug}')
-    print('⏱️ Таймаут запросов (WSGI): 30 секунд')
+    print(f'⏱️ Таймаут запросов: {app.config.get("REQUEST_TIMEOUT", 30)} секунд')
     print(f'{"="*60}\n')
 
     try:

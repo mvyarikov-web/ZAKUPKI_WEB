@@ -1,5 +1,19 @@
 // --- Drag & Drop ---
 // Отключаем выбор одиночных файлов — только папки
+
+// Вспомогательная функция для безопасного парсинга JSON из fetch
+function safeFetchJson(response) {
+    if (!response.ok) {
+        // Пытаемся распарсить JSON даже при ошибке
+        return response.json().catch(() => {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }).then(data => {
+            throw new Error(data.error || data.message || `Ошибка ${response.status}`);
+        });
+    }
+    return response.json();
+}
+
 const selectFolderBtn = document.getElementById('selectFolderBtn');
 const selectedFolderPathEl = document.getElementById('selectedFolderPath');
 const uploadProgress = document.getElementById('uploadProgress');
@@ -103,12 +117,7 @@ function handleFiles(e) {
         method: 'POST',
         body: formData
     })
-    .then(res => {
-        if (res.status === 413) {
-            return res.json().then(j => { throw new Error(j.error || 'Файл слишком большой'); });
-        }
-        return res.json();
-    })
+    .then(safeFetchJson)
     .then(data => {
         if (data.success) {
             // Тихо перестраиваем индекс без модальных сообщений
@@ -128,7 +137,7 @@ function handleFiles(e) {
 function updateFilesList() {
     // FR-001, FR-009: Обновлённая версия с поддержкой архивов как виртуальных папок
     return fetch('/files_json')
-        .then(res => res.json())
+        .then(safeFetchJson)
         .then(data => {
             const { folders = {}, archives = [], file_statuses = {} } = data;
             
@@ -489,7 +498,7 @@ function deleteFile(filename) {
     fetch('/delete/' + encodedFilename, {
         method: 'DELETE'
     })
-    .then(res => res.json())
+    .then(safeFetchJson)
     .then(data => {
         if (data.success) {
             showMessage('Файл удалён. Перестраиваем индекс…');
@@ -523,7 +532,7 @@ function deleteFolder(folderKey, folderDisplayName) {
     fetch('/delete_folder/' + encodedFolderPath, {
         method: 'DELETE'
     })
-    .then(res => res.json())
+    .then(safeFetchJson)
     .then(data => {
         if (data.success) {
             // Без дополнительных сообщений: молча перестраиваем индекс и обновляем список файлов
@@ -854,7 +863,7 @@ if (deleteFilesBtn) {
             method: 'POST', 
             headers: { 'Content-Type': 'application/json' } 
         })
-        .then(res => res.json())
+        .then(safeFetchJson)
         .then(data => {
             if (data.success) {
                 // Очищаем результаты поиска на UI
@@ -895,18 +904,40 @@ function rebuildIndexWithProgress() {
     const text = document.getElementById('indexBuildText');
     if (bar) bar.style.display = 'flex';
     if (fill) fill.style.width = '10%';
-    if (text) text.textContent = 'Построение индекса…';
+    if (text) text.textContent = 'Построение индекса… (это может занять некоторое время)';
+    
+    const startTime = Date.now();
+    
     return fetch('/build_index', { method: 'POST' })
-        .then(res => res.json())
+        .then(safeFetchJson)
         .then(data => {
             if (!data.success) throw new Error(data.message || 'Ошибка построения индекса');
+            
+            const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
             if (fill) fill.style.width = '100%';
-            if (text) text.textContent = 'Готово';
+            if (text) text.textContent = `Готово за ${elapsed}с`;
+            
             refreshIndexStatus();
             updateFilesList();
         })
+        .catch(err => {
+            if (fill) fill.style.width = '100%';
+            if (fill) fill.style.backgroundColor = '#dc3545';
+            if (text) text.textContent = 'Ошибка: ' + (err.message || 'Неизвестная ошибка');
+            
+            // Показываем модальное окно с ошибкой
+            showMessage('Ошибка построения индекса: ' + (err.message || 'Неизвестная ошибка'));
+            
+            throw err;
+        })
         .finally(() => {
-            setTimeout(() => { if (bar) bar.style.display = 'none'; if (fill) fill.style.width = '0%'; }, 600);
+            setTimeout(() => { 
+                if (bar) bar.style.display = 'none'; 
+                if (fill) {
+                    fill.style.width = '0%';
+                    fill.style.backgroundColor = ''; // сброс цвета
+                }
+            }, 2000);
         });
 }
 
@@ -1032,7 +1063,7 @@ document.addEventListener('DOMContentLoaded', function() {
 function refreshIndexStatus() {
     if (!indexStatus) return;
     fetch('/index_status')
-        .then(res => res.json())
+        .then(safeFetchJson)
         .then(data => {
             if (!data.exists) {
                 indexStatus.textContent = 'Сводный файл: не сформирован';
