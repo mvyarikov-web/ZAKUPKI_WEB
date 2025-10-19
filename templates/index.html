@@ -3,14 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Автоматический поиск по содержимому</title>
+    <title>Пакетный анализ документов</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
 </head>
 <body>
     <div class="container">
         <header>
-            <h1>Анализ Документов Закупки</h1>
-            <p>Поддерживаемые форматы: PDF, DOC, DOCX, XLS, XLSX, TXT, HTML, CSV, XML, JSON, ZIP, RAR</p>
+            <h1>Пакетный анализ документов</h1>
+            <p>Поддерживаемые форматы: PDF, DOC, DOCX, XLS, XLSX, TXT, HTML, CSV, TSV, XML, JSON</p>
         </header>
 
         <main>
@@ -21,39 +21,17 @@
                     <button id="selectFolderBtn" class="btn btn-secondary">
                         <i class="icon">📂</i> Выбрать папку
                     </button>
+                    <button id="selectFilesBtn" class="btn btn-secondary">
+                        <i class="icon">📄</i> Выбрать файлы
+                    </button>
                     <button id="deleteFilesBtn" class="btn btn-danger">
-                        <i class="icon">🗑️</i> Удалить файлы
+                        <i class="icon">🗑️</i> Удалить все
                     </button>
                     <a id="viewIndexBtn" class="btn btn-secondary" href="/view_index" target="_blank">
                         <i class="icon">📜</i> Просмотр индекса
                     </a>
-                    <button id="analyzeBtn" class="btn btn-primary">
-                        <i class="icon">📊</i> Анализ документов
-                    </button>
                 </div>
                 <div id="indexStatus" style="font-size:14px; color:#555; margin-bottom:10px;">Сводный файл: проверяется…</div>
-                
-                <!-- Индикатор групп индексации (increment-014) -->
-                <div id="groupsIndicator" style="display:none; margin:10px 0; padding:10px; background:#f5f5f5; border-radius:6px; font-size:13px;">
-                    <div style="font-weight:600; margin-bottom:8px; color:#333;">📊 Прогресс индексации:</div>
-                    <div style="display:flex; gap:12px; flex-wrap:wrap;">
-                        <div class="group-status" data-group="fast">
-                            <span class="group-icon">⏳</span>
-                            <span class="group-label">Быстрые (TXT, CSV) (~5–10 сек)</span>
-                        </div>
-                        <div class="group-status" data-group="medium">
-                            <span class="group-icon">⏳</span>
-                            <span class="group-label">Средние (DOCX, XLSX) (~10–15 сек)</span>
-                        </div>
-                        <div class="group-status" data-group="slow">
-                            <span class="group-icon">⏳</span>
-                            <span class="group-label">Медленные (OCR, RAR) (~15–30 сек)</span>
-                        </div>
-                    </div>
-                    <div style="margin-top:8px; font-size:12px; color:#666;">
-                        <span id="groupsHint">💡 Поиск доступен по мере обработки групп</span>
-                    </div>
-                </div>
                 
                 <span id="selectedFolderPath" class="folder-path" style="color:#555;"></span>
                 <!-- Прогресс загрузки -->
@@ -66,7 +44,7 @@
                 <!-- Прогресс построения индекса -->
                 <div id="indexBuildProgress" class="progress-container" style="display: none; margin-top:10px;">
                     <div class="progress-bar">
-                        <div id="indexBuildFill" class="progress-fill" style="width: 25%;"></div>
+                        <div id="indexBuildFill" class="progress-fill"></div>
                     </div>
                     <span id="indexBuildText">Построение индекса…</span>
                 </div>
@@ -77,13 +55,6 @@
                 <h2>Поиск по содержимому</h2>
                 <div class="search-container">
                     <input type="text" id="searchInput" placeholder="Введите ключевые слова через запятую..." value="{{ last_search_terms or '' }}">
-                    <div class="search-mode-toggle">
-                        <label class="toggle-switch">
-                            <input type="checkbox" id="excludeModeToggle">
-                            <span class="toggle-slider"></span>
-                        </label>
-                        <span class="toggle-label" id="toggleLabel">Содержит</span>
-                    </div>
                     <button id="searchBtn" class="btn btn-primary">
                         <i class="icon">🔍</i> Найти
                     </button>
@@ -100,11 +71,6 @@
                             <span class="folder-icon">📁</span>
                             <span class="folder-name">{{ folder.display_name }}</span>
                             <span class="file-count-badge">{{ folder.files|length }}</span>
-                            <button class="delete-folder-btn" title="Удалить папку" onclick="event.stopPropagation(); deleteFolder('{{ folder_key }}', '{{ folder.display_name }}')">
-                                <svg class="icon-trash" viewBox="0 0 24 24" aria-hidden="true">
-                                    <path d="M9 3h6a1 1 0 0 1 1 1v2h4v2h-1v12a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V8H4V6h4V4a1 1 0 0 1 1-1zm1 3h4V5h-4v1zM7 8v12h10V8H7zm3 3h2v7h-2v-7zm4 0h2v7h-2v-7z"></path>
-                                </svg>
-                            </button>
                             <span class="toggle-icon">▼</span>
                         </div>
                         <div class="folder-content">
@@ -134,14 +100,6 @@
                                             {% endif %}
                                         </div>
                                     </div>
-                                    <div class="file-status">
-                                        <span class="status-indicator status-{{ status }}" title="{{ status }}"></span>
-                                        <button class="delete-btn" title="Удалить файл" onclick="deleteFile('{{ file.path }}')">
-                                            <svg class="icon-trash" viewBox="0 0 24 24" aria-hidden="true">
-                                                <path d="M9 3h6a1 1 0 0 1 1 1v2h4v2h-1v12a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V8H4V6h4V4a1 1 0 0 1 1-1zm1 3h4V5h-4v1zM7 8v12h10V8H7zm3 3h2v7h-2v-7zm4 0h2v7h-2v-7z"></path>
-                                            </svg>
-                                        </button>
-                                    </div>
                                 </div>
                                 <!-- FR-003, FR-004, FR-005: Контейнер для результатов поиска под файлом -->
                                 <div class="file-search-results" style="display:none;"></div>
@@ -163,7 +121,6 @@
         </div>
     </div>
 
-    <script src="{{ url_for('static', filename='js/traffic-lights.js') }}"></script>
     <script src="{{ url_for('static', filename='js/script.js') }}"></script>
 </body>
 </html>

@@ -15,7 +15,7 @@ HEADER_BAR = "==============================="
 # Маркеры начала и конца документа
 DOC_START_MARKER = "<<< НАЧАЛО ДОКУМЕНТА >>>"
 DOC_END_MARKER = "<<< КОНЕЦ ДОКУМЕНТА >>>"
-SUPPORTED_EXT = {"pdf", "doc", "docx", "xls", "xlsx", "txt", "zip", "rar", "html", "htm", "csv", "tsv", "xml", "json"}
+SUPPORTED_EXT = {"pdf", "doc", "docx", "xls", "xlsx", "txt", "html", "htm", "csv", "tsv", "xml", "json"}
 DOC_EXTS = {"doc", "docx"}
 
 class Indexer:
