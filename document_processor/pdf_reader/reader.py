@@ -49,6 +49,22 @@ class PdfReader:
         self._log = logging.getLogger(__name__)
         self._analyzer = PdfAnalyzer()
     
+    def _get_config_value(self, key: str, default: Any = None) -> Any:
+        """Получить значение из конфигурации приложения (если доступна).
+        
+        Args:
+            key: Ключ конфигурации
+            default: Значение по умолчанию
+            
+        Returns:
+            Значение из конфигурации или default
+        """
+        try:
+            from webapp.config import Config
+            return getattr(Config, key, default)
+        except Exception:
+            return default
+    
     def read_pdf(
         self,
         path: str,
@@ -98,8 +114,9 @@ class PdfReader:
         
         if ocr == 'force' or (ocr == 'auto' and not has_text):
             # OCR для сканов или принудительный OCR
+            timeout = self._get_config_value('OCR_TIMEOUT_PER_PAGE', 30)
             text, ocr_attempts = self._extract_text_ocr(
-                path, max_pages=max_pages_ocr, lang=lang
+                path, max_pages=max_pages_ocr, lang=lang, timeout_per_page=timeout
             )
             if text:
                 ocr_used = True
@@ -312,7 +329,7 @@ class PdfReader:
         return text, used, attempts
     
     def _extract_text_ocr(
-        self, path: str, max_pages: int, lang: str
+        self, path: str, max_pages: int, lang: str, timeout_per_page: int = 30
     ) -> tuple[str, List[Dict[str, Any]]]:
         """Извлечение текста через OCR.
         
@@ -320,6 +337,7 @@ class PdfReader:
             path: Путь к PDF-файлу
             max_pages: Максимум страниц для OCR
             lang: Языки для распознавания
+            timeout_per_page: Тайм-аут на страницу в секундах (по умолчанию 30)
             
         Returns:
             Кортеж: (text, attempts)
@@ -338,6 +356,9 @@ class PdfReader:
             })
             return '', attempts
         
+        # Получение конфигурации из webapp/config.py (если доступна)
+        preprocess_enabled = self._get_config_value('OCR_PREPROCESS_ENABLED', False)
+        
         t0 = time.time()
         ok, err = False, None
         text = ''
@@ -347,13 +368,52 @@ class PdfReader:
             if images:
                 texts: List[str] = []
                 for i, img in enumerate(images[:max_pages]):
+                    page_start = time.time()
                     try:
-                        t = pytesseract.image_to_string(img, lang=lang)
+                        # Опциональная предобработка изображения
+                        processed_img = img
+                        if preprocess_enabled:
+                            try:
+                                from .image_utils import preprocess_image_for_ocr
+                                processed_img = preprocess_image_for_ocr(img)
+                                self._log.debug("Предобработка страницы %d выполнена", i + 1)
+                            except Exception as e:
+                                self._log.debug("Предобработка страницы %d не удалась: %s, используем исходное", i + 1, e)
+                                processed_img = img
+                        
+                        # OCR с тайм-аутом
+                        t = pytesseract.image_to_string(
+                            processed_img, 
+                            lang=lang,
+                            timeout=timeout_per_page
+                        )
+                        
+                        page_elapsed = time.time() - page_start
                         if t and t.strip():
                             texts.append(t)
-                    except Exception as e:
-                        self._log.debug("OCR страницы %d не удалось: %s", i + 1, e)
+                            self._log.debug(
+                                "OCR страницы %d/%d завершён: %.1f сек, %d символов",
+                                i + 1, len(images[:max_pages]), page_elapsed, len(t)
+                            )
+                        else:
+                            self._log.debug("OCR страницы %d: пустой результат", i + 1)
+                            
+                    except RuntimeError as e:
+                        # Тайм-аут или другая ошибка pytesseract
+                        page_elapsed = time.time() - page_start
+                        self._log.warning(
+                            "OCR страницы %d не удалось (%.1f сек): %s",
+                            i + 1, page_elapsed, e
+                        )
                         continue
+                    except Exception as e:
+                        page_elapsed = time.time() - page_start
+                        self._log.debug(
+                            "OCR страницы %d не удалось (%.1f сек): %s",
+                            i + 1, page_elapsed, e
+                        )
+                        continue
+                        
                 if texts:
                     text = '\n'.join(texts)
                     ok = True
@@ -361,12 +421,18 @@ class PdfReader:
             err = f'{type(e).__name__}: {e}'
             self._log.warning("OCR не удалось: %s", err)
         
+        elapsed_ms = int((time.time() - t0) * 1000)
         attempts.append({
             'name': 'ocr',
             'ok': ok,
-            'elapsed_ms': int((time.time() - t0) * 1000),
+            'elapsed_ms': elapsed_ms,
             'error': err
         })
+        
+        self._log.info(
+            "OCR завершён: %d/%d страниц распознано, %d символов, %d мс",
+            len(text.split('\n')) if text else 0, max_pages, len(text), elapsed_ms
+        )
         
         return text, attempts
     
