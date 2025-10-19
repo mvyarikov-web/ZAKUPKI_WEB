@@ -4,6 +4,7 @@ import io
 import zipfile
 import tempfile
 import datetime
+import json
 from datetime import datetime
 from typing import Iterable, Tuple, List, Optional, Any
 import logging
@@ -26,13 +27,51 @@ class Indexer:
     def create_index(self, root_folder: str) -> str:
         index_path = os.path.join(root_folder, "_search_index.txt")
         temp_path = os.path.join(root_folder, "._search_index.tmp")
+        status_path = os.path.join(os.path.dirname(root_folder), "index", "status.json")
+        
         self._log.info("Индексация начата: root=%s -> %s", root_folder, index_path)
+        
+        # Подсчитываем общее количество файлов для прогресса
+        all_files = list(self._collect_all_files(root_folder))
+        total_files = len(all_files)
+        processed_files = 0
+        
+        # Создаём директорию для статуса, если не существует
+        os.makedirs(os.path.dirname(status_path), exist_ok=True)
+        
         try:
+            # Инициализация статуса
+            self._update_status(status_path, {
+                'status': 'running',
+                'total': total_files,
+                'processed': 0,
+                'current_file': None,
+                'current_format': None,
+                'ocr_active': False,
+                'started_at': datetime.now().isoformat(),
+                'updated_at': datetime.now().isoformat()
+            })
+            
             # Write to temporary file first for atomic replacement
             with io.open(temp_path, "w", encoding="utf-8") as out:
                 for rel_path, abs_path, source in self._iter_sources(root_folder):
+                    # Обновляем статус для текущего файла
+                    ext = rel_path.rsplit(".", 1)[-1].upper() if "." in rel_path else "UNKNOWN"
+                    is_pdf = ext == "PDF"
+                    
+                    self._update_status(status_path, {
+                        'status': 'running',
+                        'total': total_files,
+                        'processed': processed_files,
+                        'current_file': os.path.basename(rel_path),
+                        'current_format': ext,
+                        'ocr_active': is_pdf,  # PDF может запустить OCR
+                        'updated_at': datetime.now().isoformat()
+                    })
+                    
                     text, meta = self._extract_text(abs_path, rel_path, source)
                     self._write_entry(out, rel_path=source, text=text, meta=meta)
+                    processed_files += 1
             
             # Atomically replace old index with new one
             if os.path.exists(temp_path):
@@ -42,6 +81,18 @@ class Indexer:
                 self._log.error("Временный файл индекса не создан: %s", temp_path)
                 raise RuntimeError(f"Failed to create temporary index file: {temp_path}")
             
+            # Финальное обновление статуса
+            self._update_status(status_path, {
+                'status': 'completed',
+                'total': total_files,
+                'processed': total_files,
+                'current_file': None,
+                'current_format': None,
+                'ocr_active': False,
+                'completed_at': datetime.now().isoformat(),
+                'updated_at': datetime.now().isoformat()
+            })
+            
             return index_path
         except Exception as e:
             # Clean up temporary file on error
@@ -50,6 +101,14 @@ class Indexer:
                     os.remove(temp_path)
             except Exception:
                 pass
+            
+            # Обновляем статус об ошибке
+            self._update_status(status_path, {
+                'status': 'error',
+                'error': str(e),
+                'updated_at': datetime.now().isoformat()
+            })
+            
             self._log.exception("Ошибка при создании индекса: %s", e)
             raise
         finally:
@@ -133,6 +192,62 @@ class Indexer:
             size_cat = 0  # default to small if can't get size
         
         return (priority, size_cat, name.lower())
+    
+    def _collect_all_files(self, root_folder: str) -> List[Tuple[str, str, str, str]]:
+        """Collect all files for counting (for progress tracking).
+        
+        Returns list of (ext, name, abs_path, rel_path) tuples.
+        """
+        all_files = []
+        
+        for dirpath, dirnames, filenames in os.walk(root_folder):
+            rel_dir = os.path.relpath(dirpath, root_folder)
+            depth = 0 if rel_dir == "." else rel_dir.count(os.sep) + 1
+            if depth > self.max_depth:
+                continue
+            
+            for name in filenames:
+                if name.startswith("~$") or name.startswith("$"):
+                    continue
+                if name == "_search_index.txt":
+                    continue
+                    
+                ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+                if ext in SUPPORTED_EXT:
+                    abs_path = os.path.join(dirpath, name)
+                    rel_path = os.path.normpath(os.path.join(rel_dir, name)) if rel_dir != "." else name
+                    all_files.append((ext, name, abs_path, rel_path))
+        
+        return all_files
+    
+    def _update_status(self, status_path: str, status_data: dict) -> None:
+        """Update indexing status JSON file.
+        
+        Args:
+            status_path: Path to status.json
+            status_data: Status data to merge with existing status
+        """
+        try:
+            # Read existing status if present
+            existing = {}
+            if os.path.exists(status_path):
+                try:
+                    with open(status_path, 'r', encoding='utf-8') as f:
+                        existing = json.load(f)
+                except Exception:
+                    pass  # ignore errors reading old status
+            
+            # Merge with new data
+            existing.update(status_data)
+            
+            # Write atomically
+            temp_status = status_path + '.tmp'
+            with open(temp_status, 'w', encoding='utf-8') as f:
+                json.dump(existing, f, ensure_ascii=False, indent=2)
+            
+            os.replace(temp_status, status_path)
+        except Exception as e:
+            self._log.debug("Не удалось обновить статус индексации: %s", e)
 
     def _iter_archive(self, archive_path: str, rel_path: str, kind: str, current_depth: int = 0) -> Iterable[Tuple[str, str, str]]:
         # Extract supported files from archive into temp files and yield paths
