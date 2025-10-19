@@ -1,6 +1,7 @@
 from __future__ import annotations
 import os
 import io
+import re
 import zipfile
 import tempfile
 import datetime
@@ -24,7 +25,188 @@ class Indexer:
         self._temp_paths: List[str] = []
         self._log = logging.getLogger(__name__)
 
-    def create_index(self, root_folder: str) -> str:
+    def _classify_files(self, files: List[Tuple[str, str, str, str]]) -> dict:
+        """Группирует файлы по скорости обработки.
+        
+        Args:
+            files: список кортежей (ext, name, abs_path, rel_path)
+        
+        Returns:
+            {
+                'fast': [(rel_path, abs_path), ...],    # TXT, CSV, HTML
+                'medium': [...],                         # DOCX, XLSX, PDF (попытка без OCR)
+                'slow': [...]                            # PDF с OCR, архивы
+            }
+        """
+        fast_exts = {'.txt', '.csv', '.html', '.htm', '.md', '.json', '.xml', '.tsv'}
+        medium_exts = {'.docx', '.xlsx', '.xls', '.doc'}
+        
+        groups = {'fast': [], 'medium': [], 'slow': []}
+        
+        for ext, name, abs_path, rel_path in files:
+            ext_lower = f'.{ext}'
+            
+            if ext_lower in fast_exts:
+                groups['fast'].append((rel_path, abs_path))
+            elif ext_lower in medium_exts:
+                groups['medium'].append((rel_path, abs_path))
+            elif ext == 'pdf':
+                # Эвристика: пробуем определить, текстовый ли PDF
+                if self._is_text_pdf(abs_path):
+                    groups['medium'].append((rel_path, abs_path))
+                else:
+                    groups['slow'].append((rel_path, abs_path))
+            else:  # ZIP, RAR и прочие
+                groups['slow'].append((rel_path, abs_path))
+        
+        return groups
+    
+    def _is_text_pdf(self, path: str, threshold: int = 100) -> bool:
+        """Быстрая проверка: содержит ли PDF извлекаемый текст.
+        
+        Args:
+            path: Путь к PDF
+            threshold: Минимум символов для классификации как "текстовый"
+        
+        Returns:
+            True если PDF содержит текст ≥ threshold символов
+        """
+        try:
+            # Пробуем извлечь первую страницу через pdfplumber (быстро)
+            import pdfplumber
+            with pdfplumber.open(path) as pdf:
+                if pdf.pages:
+                    text = pdf.pages[0].extract_text() or ''
+                    return len(text.strip()) >= threshold
+        except Exception:
+            pass
+        
+        return False  # По умолчанию считаем, что нужен OCR
+
+    def create_index(self, root_folder: str, use_groups: bool = False) -> str:
+        """Создаёт индекс для файлов в указанной папке.
+        
+        Args:
+            root_folder: корневая папка для индексации
+            use_groups: если True, использует групповую индексацию (increment-014)
+        
+        Returns:
+            путь к созданному индексу
+        """
+        if use_groups:
+            return self._create_index_grouped(root_folder)
+        else:
+            return self._create_index_classic(root_folder)
+    
+    def _create_index_grouped(self, root_folder: str) -> str:
+        """Создаёт индекс в 3 этапа с промежуточной доступностью (increment-014)."""
+        index_path = os.path.join(root_folder, "_search_index.txt")
+        status_path = os.path.join(os.path.dirname(root_folder), "index", "status.json")
+        
+        self._log.info("Групповая индексация начата: root=%s -> %s", root_folder, index_path)
+        
+        # 1. Собираем и классифицируем файлы
+        all_files = self._collect_all_files(root_folder)
+        groups = self._classify_files(all_files)
+        total_files = len(all_files)
+        
+        # Создаём директорию для статуса, если не существует
+        os.makedirs(os.path.dirname(status_path), exist_ok=True)
+        
+        try:
+            # Инициализация статуса
+            self._update_status(status_path, {
+                'status': 'running',
+                'total': total_files,
+                'processed': 0,
+                'current_group': None,
+                'group_status': {
+                    'fast': 'pending',
+                    'medium': 'pending',
+                    'slow': 'pending'
+                },
+                'started_at': datetime.now().isoformat(),
+                'updated_at': datetime.now().isoformat()
+            })
+            
+            # 2. Создаём индекс с заголовками
+            self._create_index_skeleton(index_path, groups)
+            
+            # 3. Обрабатываем группы последовательно
+            processed_files = 0
+            for group_name in ['fast', 'medium', 'slow']:
+                group_files = groups[group_name]
+                if not group_files:
+                    continue
+                
+                self._log.info(f"Обработка группы {group_name}: {len(group_files)} файлов")
+                
+                # Обновляем статус группы
+                self._update_status(status_path, {
+                    'status': 'running',
+                    'total': total_files,
+                    'processed': processed_files,
+                    'current_group': group_name,
+                    'group_status': {
+                        'fast': 'completed' if group_name != 'fast' else 'running',
+                        'medium': 'completed' if group_name == 'slow' else ('running' if group_name == 'medium' else 'pending'),
+                        'slow': 'running' if group_name == 'slow' else 'pending'
+                    },
+                    'updated_at': datetime.now().isoformat()
+                })
+                
+                # Обрабатываем группу во временный файл
+                temp_file = os.path.join(os.path.dirname(status_path), f'_search_index_{group_name}.tmp')
+                self._process_group(group_files, temp_file, group_name)
+                
+                # Вставляем в главный индекс атомарно
+                self._insert_group_into_index(index_path, group_name, temp_file)
+                
+                # Удаляем временный файл
+                if os.path.exists(temp_file):
+                    os.remove(temp_file)
+                
+                processed_files += len(group_files)
+                
+                # Обновляем статус после завершения группы
+                self._update_status(status_path, {
+                    'processed': processed_files,
+                    'group_status': {
+                        'fast': 'completed',
+                        'medium': 'completed' if group_name != 'fast' else 'pending',
+                        'slow': 'completed' if group_name == 'slow' else 'pending'
+                    },
+                    'updated_at': datetime.now().isoformat()
+                })
+            
+            # 4. Финализация
+            self._update_status(status_path, {
+                'status': 'completed',
+                'total': total_files,
+                'processed': total_files,
+                'current_group': None,
+                'completed_at': datetime.now().isoformat(),
+                'updated_at': datetime.now().isoformat()
+            })
+            
+            self._log.info("Групповая индексация завершена: %s", index_path)
+            return index_path
+        
+        except Exception as e:
+            # Обновляем статус об ошибке
+            self._update_status(status_path, {
+                'status': 'error',
+                'error': str(e),
+                'updated_at': datetime.now().isoformat()
+            })
+            
+            self._log.exception("Ошибка при групповой индексации: %s", e)
+            raise
+        finally:
+            self._cleanup_temp_paths()
+    
+    def _create_index_classic(self, root_folder: str) -> str:
+        """Классическая индексация (одним проходом) — для обратной совместимости."""
         index_path = os.path.join(root_folder, "_search_index.txt")
         temp_path = os.path.join(root_folder, "._search_index.tmp")
         status_path = os.path.join(os.path.dirname(root_folder), "index", "status.json")
@@ -220,6 +402,94 @@ class Indexer:
         
         return all_files
     
+    def _create_index_skeleton(self, index_path: str, groups: dict) -> None:
+        """Создаёт индекс с заголовками групп (резервация мест).
+        
+        Args:
+            index_path: Путь к индексному файлу
+            groups: Словарь групп {'fast': [...], 'medium': [...], 'slow': [...]}
+        """
+        group_labels = {
+            'fast': 'TXT, CSV, HTML',
+            'medium': 'DOCX, XLSX, векторные PDF',
+            'slow': 'PDF-сканы с OCR'
+        }
+        
+        temp_path = index_path + '.tmp'
+        
+        with io.open(temp_path, 'w', encoding='utf-8') as f:
+            for group_name in ['fast', 'medium', 'slow']:
+                f.write('\n')
+                f.write('═' * 80 + '\n')
+                f.write(f'[ГРУППА: {group_name.upper()}] {group_labels[group_name]}\n')
+                f.write(f'Файлов: {len(groups[group_name])} | Статус: ожидание\n')
+                f.write('═' * 80 + '\n')
+                f.write(f'<!-- BEGIN_{group_name.upper()} -->\n')
+                f.write(f'<!-- END_{group_name.upper()} -->\n')
+                f.write('\n')
+        
+        os.replace(temp_path, index_path)
+    
+    def _process_group(self, files: List[Tuple[str, str]], temp_file: str, group_name: str) -> None:
+        """Обрабатывает группу файлов и записывает во временный файл.
+        
+        Args:
+            files: список кортежей (rel_path, abs_path)
+            temp_file: путь к временному файлу для записи
+            group_name: имя группы (fast/medium/slow)
+        """
+        os.makedirs(os.path.dirname(temp_file), exist_ok=True)
+        
+        with io.open(temp_file, 'w', encoding='utf-8') as out:
+            for rel_path, abs_path in files:
+                text, meta = self._extract_text(abs_path, rel_path, rel_path)
+                self._write_entry(out, rel_path=rel_path, text=text, meta=meta)
+    
+    def _insert_group_into_index(self, index_path: str, group_name: str, temp_file: str) -> None:
+        """Атомарно вставляет содержимое группы в главный индекс.
+        
+        Args:
+            index_path: путь к главному индексу
+            group_name: имя группы (fast/medium/slow)
+            temp_file: путь к временному файлу с содержимым группы
+        """
+        # Читаем обработанные записи группы
+        with io.open(temp_file, 'r', encoding='utf-8') as f:
+            group_content = f.read()
+        
+        # Читаем главный индекс
+        with io.open(index_path, 'r', encoding='utf-8') as f:
+            index_content = f.read()
+        
+        # Заменяем секцию группы
+        begin_marker = f'<!-- BEGIN_{group_name.upper()} -->'
+        end_marker = f'<!-- END_{group_name.upper()} -->'
+        
+        pattern = re.compile(
+            re.escape(begin_marker) + r'.*?' + re.escape(end_marker),
+            re.DOTALL
+        )
+        
+        new_content = pattern.sub(
+            f'{begin_marker}\n{group_content}\n{end_marker}',
+            index_content
+        )
+        
+        # Обновляем статус группы в заголовке
+        new_content = re.sub(
+            rf'(\[ГРУППА: {group_name.upper()}\].*?Статус: )ожидание',
+            r'\1✅ завершено',
+            new_content,
+            flags=re.DOTALL
+        )
+        
+        # Атомарная запись
+        temp_index = index_path + '.tmp'
+        with io.open(temp_index, 'w', encoding='utf-8') as f:
+            f.write(new_content)
+        
+        os.replace(temp_index, index_path)
+
     def _update_status(self, status_path: str, status_data: dict) -> None:
         """Update indexing status JSON file.
         
