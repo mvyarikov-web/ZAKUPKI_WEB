@@ -349,8 +349,24 @@ def build_index_route():
 
 @search_bp.get('/index_status')
 def index_status():
-    """Статус индексного файла index/_search_index.txt: наличие, размер, mtime, записи."""
+    """Статус индексного файла index/_search_index.txt: наличие, размер, mtime, записи.
+    
+    Также возвращает информацию о прогрессе индексации если доступна (из status.json).
+    """
     try:
+        # Проверяем наличие progress status файла (increment-013)
+        index_folder = current_app.config.get('INDEX_FOLDER')
+        status_json_path = os.path.join(index_folder, 'status.json') if index_folder else None
+        progress_data = None
+        
+        if status_json_path and os.path.exists(status_json_path):
+            try:
+                import json
+                with open(status_json_path, 'r', encoding='utf-8') as f:
+                    progress_data = json.load(f)
+            except Exception as e:
+                current_app.logger.debug("Не удалось прочитать status.json: %s", e)
+        
         # Если в текущей папке uploads нет поддерживаемых файлов, считаем индекс отсутствующим
         uploads = current_app.config.get('UPLOAD_FOLDER', 'uploads')
         has_files = False
@@ -366,13 +382,19 @@ def index_status():
                     break
         
         if not has_files:
-            return jsonify({'exists': False})
+            response = {'exists': False}
+            if progress_data:
+                response['progress'] = progress_data
+            return jsonify(response)
 
         idx = get_index_path(current_app.config['INDEX_FOLDER'])
         exists = os.path.exists(idx)
         
         if not exists:
-            return jsonify({'exists': False})
+            response = {'exists': False}
+            if progress_data:
+                response['progress'] = progress_data
+            return jsonify(response)
         
         size = os.path.getsize(idx)
         mtime = datetime.fromtimestamp(os.path.getmtime(idx)).isoformat()
@@ -384,12 +406,18 @@ def index_status():
         except Exception:
             entries = None
         
-        return jsonify({
+        response = {
             'exists': True,
             'size': size,
             'mtime': mtime,
             'entries': entries
-        })
+        }
+        
+        # Добавляем информацию о прогрессе если доступна
+        if progress_data:
+            response['progress'] = progress_data
+        
+        return jsonify(response)
     
     except Exception as e:
         current_app.logger.exception('Ошибка получения статуса индекса')

@@ -39,6 +39,13 @@ class Config:
     PDF_OCR_LANG = 'rus+eng'  # языки для Tesseract
     PDF_TEXT_MIN_LEN = 50   # порог минимальной длины текста (ниже — считать сканом)
     PDF_MAX_PAGES_TEXT = 100  # лимит страниц для векторного извлечения
+    
+    # OCR Configuration (increment-013)
+    OCR_TIMEOUT_PER_PAGE = 30  # таймаут на страницу OCR (секунды)
+    OCR_PREPROCESS_ENABLED = False  # предобработка изображений перед OCR
+    OCR_USE_OSD = False  # определение ориентации страниц (OSD)
+    OCR_PARALLEL_PAGES = False  # параллельная обработка страниц
+    OCR_MAX_WORKERS = 4  # максимум потоков для параллельного OCR
 
 
 class DevConfig(Config):

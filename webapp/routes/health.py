@@ -1,5 +1,7 @@
 """Blueprint для health check эндпоинта."""
-from flask import Blueprint, jsonify
+import os
+import json
+from flask import Blueprint, jsonify, current_app
 
 health_bp = Blueprint('health', __name__)
 
