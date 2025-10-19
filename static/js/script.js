@@ -295,56 +295,57 @@ async function performSearch(terms) {
     await updateFilesList();
     
     if (data.results && data.results.length > 0) {
-            const t = termsFromInput();
-            
-            // FR-004, FR-005: Группируем результаты по файлам и отображаем под каждым файлом
-            const resultsByFile = {};
-            data.results.forEach(result => {
-                const filePath = result.source || result.path;
-                if (!resultsByFile[filePath]) {
-                    resultsByFile[filePath] = {
-                        filename: result.filename,
-                        perTerm: []
-                    };
-                }
-                if (result.per_term) {
-                    resultsByFile[filePath].perTerm.push(...result.per_term);
-                }
-            });
-            
-            // Отображаем результаты под соответствующими файлами
-            Object.keys(resultsByFile).forEach(filePath => {
-                const fileWrapper = document.querySelector(`.file-item-wrapper[data-file-path="${CSS.escape(filePath)}"]`);
-                if (fileWrapper) {
-                    const resultsContainer = fileWrapper.querySelector('.file-search-results');
-                    if (resultsContainer) {
-                        // До 2 сниппетов на термин
-                        const maxSnippets = 2;
+        const t = termsFromInput();
+        
+        // Группируем результаты по файлам и отображаем под каждым файлом
+        const resultsByFile = {};
+        data.results.forEach(result => {
+            const filePath = result.source || result.path;
+            if (!resultsByFile[filePath]) {
+                resultsByFile[filePath] = {
+                    filename: result.filename,
+                    perTerm: []
+                };
+            }
+            if (result.per_term) {
+                resultsByFile[filePath].perTerm.push(...result.per_term);
+            }
+        });
+        
+        // Отображаем результаты под соответствующими файлами
+        Object.keys(resultsByFile).forEach(filePath => {
+            const fileWrapper = document.querySelector(`.file-item-wrapper[data-file-path="${CSS.escape(filePath)}"]`);
+            if (fileWrapper) {
+                const resultsContainer = fileWrapper.querySelector('.file-search-results');
+                if (resultsContainer) {
+                    // До 2 сниппетов на термин
+                    const maxSnippets = 2;
+                    
+                    const perTermHtml = resultsByFile[filePath].perTerm.map(entry => {
+                        const snips = (entry.snippets || []).slice(0, maxSnippets).map(s => 
+                            `<div class="context-snippet">${escapeHtml(s)}</div>`
+                        ).join('');
                         
-                        const perTermHtml = resultsByFile[filePath].perTerm.map(entry => {
-                            const snips = (entry.snippets || []).slice(0, maxSnippets).map(s => 
-                                `<div class="context-snippet">${escapeHtml(s)}</div>`
-                            ).join('');
-                            
-                            const termHtml = `${escapeHtml(entry.term)} (${entry.count})`;
-                            
-                            return `<div class="per-term-block">
-                                <div class="found-terms"><span class="found-term">${termHtml}</span></div>
-                                <div class="context-snippets">${snips || '<div class="context-empty">Нет сниппетов</div>'}</div>
-                            </div>`;
-                        }).join('');
+                        const termHtml = `${escapeHtml(entry.term)} (${entry.count})`;
                         
-                        resultsContainer.innerHTML = perTermHtml;
-                        resultsContainer.style.display = 'block';
-                        fileWrapper.setAttribute('data-has-results', '1');
+                        return `<div class="per-term-block">
+                            <div class="found-terms"><span class="found-term">${termHtml}</span></div>
+                            <div class="context-snippets">${snips || '<div class="context-empty">Нет сниппетов</div>'}</div>
+                        </div>`;
+                    }).join('');
+                    
+                    resultsContainer.innerHTML = perTermHtml;
+                    resultsContainer.style.display = 'block';
+                    fileWrapper.setAttribute('data-has-results', '1');
                 }
-            });
-            
-            // Раскрываем папки с результатами, если они не были вручную свернуты
-            expandFoldersWithResults();
+            }
+        });
+        
+        // Раскрываем папки с результатами, если они не были вручную свернуты
+        expandFoldersWithResults();
 
-            highlightSnippets(t);
-            applyQueryToViewLinks();
+        highlightSnippets(t);
+        applyQueryToViewLinks();
     } else {
         // Нет результатов
     }
