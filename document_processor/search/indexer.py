@@ -25,18 +25,47 @@ class Indexer:
 
     def create_index(self, root_folder: str) -> str:
         index_path = os.path.join(root_folder, "_search_index.txt")
+        temp_path = os.path.join(root_folder, "._search_index.tmp")
         self._log.info("Индексация начата: root=%s -> %s", root_folder, index_path)
         try:
-            with io.open(index_path, "w", encoding="utf-8") as out:
+            # Write to temporary file first for atomic replacement
+            with io.open(temp_path, "w", encoding="utf-8") as out:
                 for rel_path, abs_path, source in self._iter_sources(root_folder):
                     text, meta = self._extract_text(abs_path, rel_path, source)
                     self._write_entry(out, rel_path=source, text=text, meta=meta)
-            self._log.info("Индексация завершена: %s", index_path)
+            
+            # Atomically replace old index with new one
+            if os.path.exists(temp_path):
+                os.replace(temp_path, index_path)
+                self._log.info("Индексация завершена: %s", index_path)
+            else:
+                self._log.error("Временный файл индекса не создан: %s", temp_path)
+                raise RuntimeError(f"Failed to create temporary index file: {temp_path}")
+            
             return index_path
+        except Exception as e:
+            # Clean up temporary file on error
+            try:
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
+            except Exception:
+                pass
+            self._log.exception("Ошибка при создании индекса: %s", e)
+            raise
         finally:
             self._cleanup_temp_paths()
 
     def _iter_sources(self, root_folder: str) -> Iterable[Tuple[str, str, str]]:
+        """Iterate over sources, sorted by processing complexity (fast → slow).
+        
+        Processing order:
+        1. TXT, CSV, HTML (instant)
+        2. DOCX, XLSX, vector PDFs (fast)
+        3. PDF scans with OCR, ZIP, RAR (slow)
+        """
+        # Collect all files first for sorting
+        all_files = []
+        
         # Walk directories recursively
         for dirpath, dirnames, filenames in os.walk(root_folder):
             # Optionally limit depth
@@ -44,7 +73,7 @@ class Indexer:
             depth = 0 if rel_dir == "." else rel_dir.count(os.sep) + 1
             if depth > self.max_depth:
                 continue
-            for name in sorted(filenames):
+            for name in filenames:
                 # Пропускаем временные файлы Office (обычно начинаются с ~$ или $)
                 if name.startswith("~$") or name.startswith("$"):
                     continue
@@ -55,11 +84,55 @@ class Indexer:
                 if ext in SUPPORTED_EXT:
                     abs_path = os.path.join(dirpath, name)
                     rel_path = os.path.normpath(os.path.join(rel_dir, name)) if rel_dir != "." else name
-                    if ext in {"zip", "rar"}:
-                        for v_rel, v_abs, v_source in self._iter_archive(abs_path, rel_path, ext, current_depth=0):
-                            yield v_rel, v_abs, v_source
-                    else:
-                        yield rel_path, abs_path, rel_path
+                    all_files.append((ext, name, abs_path, rel_path))
+        
+        # Sort files by processing priority
+        all_files.sort(key=self._file_sort_key)
+        
+        # Yield files in sorted order
+        for ext, name, abs_path, rel_path in all_files:
+            if ext in {"zip", "rar"}:
+                for v_rel, v_abs, v_source in self._iter_archive(abs_path, rel_path, ext, current_depth=0):
+                    yield v_rel, v_abs, v_source
+            else:
+                yield rel_path, abs_path, rel_path
+    
+    def _file_sort_key(self, file_info: Tuple[str, str, str, str]) -> Tuple[int, int, str]:
+        """Compute sort key for file: (priority, size_category, name).
+        
+        Priority groups:
+        - 0: instant (txt, csv, html, xml, json)
+        - 1: fast (docx, xlsx)
+        - 2: medium (pdf - may be vector or scan)
+        - 3: slow (archives: zip, rar)
+        
+        Size categories: 0=small (<1MB), 1=medium (1-10MB), 2=large (>10MB)
+        """
+        ext, name, abs_path, rel_path = file_info
+        
+        # Priority by extension
+        if ext in {"txt", "csv", "tsv", "html", "htm", "xml", "json"}:
+            priority = 0  # instant
+        elif ext in {"docx", "xlsx", "doc", "xls"}:
+            priority = 1  # fast
+        elif ext == "pdf":
+            priority = 2  # medium (could be vector or OCR)
+        else:  # zip, rar
+            priority = 3  # slow
+        
+        # Size category (to process small files first within same priority)
+        try:
+            size = os.path.getsize(abs_path)
+            if size < 1_000_000:  # <1MB
+                size_cat = 0
+            elif size < 10_000_000:  # 1-10MB
+                size_cat = 1
+            else:  # >10MB
+                size_cat = 2
+        except Exception:
+            size_cat = 0  # default to small if can't get size
+        
+        return (priority, size_cat, name.lower())
 
     def _iter_archive(self, archive_path: str, rel_path: str, kind: str, current_depth: int = 0) -> Iterable[Tuple[str, str, str]]:
         # Extract supported files from archive into temp files and yield paths
