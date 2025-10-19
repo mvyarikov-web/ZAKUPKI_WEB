@@ -71,25 +71,36 @@ class Searcher:
                         continue
                     
                     # Собираем все найденные позиции для дедупликации
-                    found_positions = set()
+                    found_matches = []  # Список (позиция, matched_text)
                     
-                    # 1) Прямое подстрочное совпадение
+                    # 1) Прямое подстрочное совпадение (точное)
                     for m in re.finditer(re.escape(kw), body, flags=re.IGNORECASE):
-                        found_positions.add(m.start())
+                        found_matches.append((m.start(), m.group()))
                     
-                    # 2) Толерантное совпадение: допускаем разделители между буквами (актуально для PDF)
-                    # Применяем только для коротких терминов (2..8), чтобы не раздувать шум
-                    if 2 <= len(kw) <= 8:
-                        # Построим шаблон вида: з[gap]а[gap]х[gap]...
+                    # 2) Толерантное совпадение: допускаем ТОЛЬКО один пробел или дефис между буквами
+                    # Применяем только для терминов длиной 3-8 символов (не для коротких 2-буквенных!)
+                    # Ограничиваем максимальную длину совпадения, чтобы не находить слишком далёкие фрагменты
+                    if 3 <= len(kw) <= 8:
+                        # Построим шаблон: каждая буква + максимум 1 пробел/дефис
+                        # Ограничиваем общую длину совпадения: не более len(kw) * 2
                         parts = [re.escape(ch) for ch in kw]
-                        pattern = re.compile("".join([parts[0]] + [gap_class + p for p in parts[1:]]), re.IGNORECASE)
+                        # gap_class теперь ограничен: максимум 1 символ из пробела, дефиса или NBSP
+                        limited_gap = r'[\s\-\u00A0]?'
+                        pattern_str = "".join([parts[0]] + [limited_gap + p for p in parts[1:]])
+                        pattern = re.compile(pattern_str, re.IGNORECASE)
+                        
                         for m in pattern.finditer(body):
-                            found_positions.add(m.start())
+                            matched_text = m.group()
+                            # Дополнительная проверка: длина совпадения не должна превышать len(kw) * 2
+                            if len(matched_text) <= len(kw) * 2:
+                                # Проверяем, что это не дубликат уже найденного точного совпадения
+                                if m.start() not in [pos for pos, _ in found_matches]:
+                                    found_matches.append((m.start(), matched_text))
                     
                     # Добавляем результаты только для уникальных позиций
-                    for pos in found_positions:
+                    for pos, matched_text in found_matches:
                         start = max(0, pos - context)
-                        end = min(len(body), pos + len(kw) + context)
+                        end = min(len(body), pos + len(matched_text) + context)
                         snippet = body[start:end]
                         results.append({
                             "keyword": kw,

@@ -15,7 +15,7 @@ const modalMessage = document.getElementById('modalMessage');
 const closeModal = document.querySelector('.close');
 const indexStatus = document.getElementById('indexStatus');
 
-// --- Folder Select (experimental, works in Chromium browsers) ---
+// --- Folder Select ---
 selectFolderBtn.addEventListener('click', () => {
     const folderInput = document.createElement('input');
     folderInput.type = 'file';
@@ -29,11 +29,12 @@ selectFolderBtn.addEventListener('click', () => {
     folderInput.remove();
 });
 
-// --- File Select ---
+// --- Files Select ---
 selectFilesBtn.addEventListener('click', () => {
     const fileInput = document.createElement('input');
     fileInput.type = 'file';
     fileInput.multiple = true;
+    // НЕ устанавливаем webkitdirectory, чтобы работал обычный выбор файлов
     fileInput.accept = '.pdf,.doc,.docx,.xls,.xlsx,.txt,.html,.htm,.csv,.tsv,.xml,.json';
     fileInput.style.display = 'none';
     fileInput.addEventListener('change', handleFiles);
@@ -341,6 +342,20 @@ async function performSearch(terms) {
             }
         });
         
+        // Сортировка: файлы с результатами наверх
+        document.querySelectorAll('.folder-content').forEach(contentDiv => {
+            const wrappers = Array.from(contentDiv.querySelectorAll(':scope > .file-item-wrapper'));
+            const scored = wrappers.map(el => {
+                // Файлы с результатами получают высокий приоритет
+                const hasResults = el.hasAttribute('data-has-results');
+                const score = hasResults ? 1 : 0;
+                return { el, score };
+            });
+            
+            scored.sort((a, b) => b.score - a.score);
+            scored.forEach(({ el }) => contentDiv.appendChild(el));
+        });
+        
         // Раскрываем папки с результатами, если они не были вручную свернуты
         expandFoldersWithResults();
 
@@ -451,17 +466,37 @@ if (deleteFilesBtn) {
                     el.innerHTML = '';
                 });
                 
+                // Сбрасываем прогресс-бары
+                const uploadBar = document.getElementById('uploadProgress');
+                const uploadFill = document.getElementById('progressFill');
+                const uploadText = document.getElementById('progressText');
+                const indexBar = document.getElementById('indexBuildProgress');
+                const indexFill = document.getElementById('indexBuildFill');
+                const indexText = document.getElementById('indexBuildText');
+                const indexTime = document.getElementById('indexBuildTime');
+                
+                if (uploadBar) uploadBar.style.display = 'none';
+                if (uploadFill) uploadFill.style.width = '0%';
+                if (uploadText) uploadText.textContent = '0%';
+                if (indexBar) indexBar.style.display = 'none';
+                if (indexFill) {
+                    indexFill.style.width = '0%';
+                    indexFill.classList.remove('completed');
+                }
+                if (indexText) indexText.textContent = 'Построение индекса…';
+                
+                // Полный сброс таймера индексации
+                resetIndexingTimer();
+                
                 // Обновляем список файлов (покажет пустое дерево)
                 updateFilesList();
                 refreshIndexStatus();
                 
-                // Показываем результат
-                const message = `Очистка завершена:\n• Удалено элементов: ${data.deleted_count}\n• Индекс удалён: ${data.index_deleted ? 'да' : 'нет'}`;
+                // Сообщение об успехе убрано - только тихое обновление UI
+                // Показываем ошибки, если они есть
                 if (data.errors && data.errors.length > 0) {
                     const errorList = data.errors.map(e => `  - ${e.path}: ${e.error}`).join('\n');
-                    showMessage(message + `\n• Ошибки:\n${errorList}`);
-                } else {
-                    showMessage(message);
+                    showMessage(`При удалении возникли ошибки:\n${errorList}`);
                 }
             } else {
                 showMessage('Ошибка при очистке: ' + (data.error || 'Неизвестная ошибка'));
@@ -477,13 +512,100 @@ if (deleteFilesBtn) {
 // (Кнопка очистки результатов удалена — очистка выполняется при пустом поисковом запросе)
 
 // --- Build Index auto ---
+// Глобальная переменная для таймера индексации
+let indexingTimerInterval = null;
+let indexingStartTime = null;
+let accumulatedIndexingTime = 0; // Накопленное время в секундах
+
+function formatElapsedTime(seconds) {
+    if (seconds < 60) {
+        return `${seconds} сек`;
+    }
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins} мин ${secs} сек`;
+}
+
+function startIndexingTimer() {
+    const timeDisplay = document.getElementById('indexBuildTime');
+    if (!timeDisplay) return;
+    
+    // Останавливаем предыдущий таймер если он был запущен
+    if (indexingTimerInterval) {
+        clearInterval(indexingTimerInterval);
+        indexingTimerInterval = null;
+    }
+    
+    // Запоминаем время начала новой индексации
+    indexingStartTime = Date.now();
+    
+    // Обновляем таймер каждую секунду
+    indexingTimerInterval = setInterval(() => {
+        const currentSessionTime = Math.floor((Date.now() - indexingStartTime) / 1000);
+        const totalTime = accumulatedIndexingTime + currentSessionTime;
+        timeDisplay.textContent = formatElapsedTime(totalTime);
+    }, 1000);
+}
+
+function stopIndexingTimer(keepDisplay = true) {
+    if (indexingTimerInterval) {
+        // Добавляем время текущей сессии к накопленному
+        if (indexingStartTime) {
+            const currentSessionTime = Math.floor((Date.now() - indexingStartTime) / 1000);
+            accumulatedIndexingTime += currentSessionTime;
+            indexingStartTime = null;
+        }
+        
+        clearInterval(indexingTimerInterval);
+        indexingTimerInterval = null;
+    }
+    
+    if (keepDisplay) {
+        const timeDisplay = document.getElementById('indexBuildTime');
+        if (timeDisplay) {
+            timeDisplay.textContent = formatElapsedTime(accumulatedIndexingTime);
+        }
+    }
+}
+
+function resetIndexingTimer() {
+    // Полный сброс таймера (вызывается при "Удалить все")
+    if (indexingTimerInterval) {
+        clearInterval(indexingTimerInterval);
+        indexingTimerInterval = null;
+    }
+    indexingStartTime = null;
+    accumulatedIndexingTime = 0;
+    
+    const timeDisplay = document.getElementById('indexBuildTime');
+    if (timeDisplay) {
+        timeDisplay.textContent = '';
+    }
+}
+
 function rebuildIndexWithProgress() {
     const bar = document.getElementById('indexBuildProgress');
     const fill = document.getElementById('indexBuildFill');
     const text = document.getElementById('indexBuildText');
-    if (bar) bar.style.display = 'flex';
-    if (fill) fill.style.width = '10%';
+    const timeDisplay = document.getElementById('indexBuildTime');
+    
+    // Показываем прогресс-бар
+    if (bar) {
+        bar.style.display = 'block';
+        bar.style.visibility = 'visible';
+    }
+    
+    // Устанавливаем начальное состояние
+    if (fill) {
+        fill.style.width = '10%';
+        fill.classList.remove('completed');
+    }
+    
     if (text) text.textContent = 'Построение индекса…';
+    if (timeDisplay) timeDisplay.textContent = '0 сек';
+    
+    // Запускаем таймер
+    startIndexingTimer();
     
     // Запускаем построение индекса с групповой индексацией
     return fetch('/build_index', { 
@@ -498,7 +620,13 @@ function rebuildIndexWithProgress() {
             // Запускаем опрос статуса групп
             return pollIndexGroupStatus(fill, text);
         })
+        .catch(error => {
+            stopIndexingTimer(false);
+            throw error;
+        })
         .finally(() => {
+            // Останавливаем таймер, но оставляем финальное время на экране
+            stopIndexingTimer(true);
             // Не скрываем прогресс после завершения — оставляем 100% и статус
         });
 }
@@ -506,8 +634,9 @@ function rebuildIndexWithProgress() {
 // --- Poll Index Group Status (increment-014) ---
 function pollIndexGroupStatus(fill, text) {
     return new Promise((resolve, reject) => {
-        const maxAttempts = 60; // 60 секунд максимум
+        const maxAttempts = 120; // 120 секунд максимум (2 минуты)
         let attempts = 0;
+        let lastProgress = 10;
         
         const checkStatus = () => {
             attempts++;
@@ -518,36 +647,65 @@ function pollIndexGroupStatus(fill, text) {
                     const status = data.status || 'idle';
                     const groupStatus = data.group_status || {};
                     const currentGroup = data.current_group || '';
+                    const totalFiles = data.total_files || 0;
+                    const processedFiles = data.processed_files || 0;
                     
-                    // Обновляем прогресс-бар и текст
+                    // Вычисляем прогресс на основе обработанных файлов
                     let progress = 10;
                     let statusText = 'Построение индекса…';
                     
-                    if (groupStatus.fast === 'completed') {
-                        progress = 33;
-                        statusText = '✅ Быстрые файлы готовы | Поиск доступен';
+                    // Если есть информация о файлах, используем её для точного прогресса
+                    if (totalFiles > 0 && processedFiles > 0) {
+                        const fileProgress = Math.floor((processedFiles / totalFiles) * 100);
+                        progress = Math.max(10, Math.min(95, fileProgress)); // От 10% до 95%
+                        statusText = `🔄 Обработка: ${processedFiles}/${totalFiles} файлов`;
+                    } else {
+                        // Иначе используем групповой прогресс
+                        if (groupStatus.fast === 'completed') {
+                            progress = 33;
+                            statusText = '✅ Быстрые файлы готовы';
+                        }
+                        if (groupStatus.medium === 'completed') {
+                            progress = 66;
+                            statusText = '✅ Средние файлы готовы';
+                        }
+                        if (groupStatus.slow === 'completed') {
+                            progress = 95;
+                            statusText = '🔄 Завершение индексации…';
+                        }
                     }
-                    if (groupStatus.medium === 'completed') {
-                        progress = 66;
-                        statusText = '✅ DOCX/XLSX готовы | Поиск доступен';
-                    }
-                    if (groupStatus.slow === 'completed' || status === 'completed') {
+                    
+                    // Завершено
+                    if (status === 'completed') {
                         progress = 100;
                         statusText = '✅ Все файлы обработаны';
                     }
                     
-                    // Добавляем индикацию текущей группы
-                    if (status === 'running' && currentGroup) {
+                    // Добавляем индикацию текущей группы, если индексация идёт
+                    if (status === 'running' && currentGroup && !totalFiles) {
                         const groupLabels = {
-                            'fast': '🔄 Обработка: быстрые файлы (TXT, CSV)',
-                            'medium': '🔄 Обработка: средние файлы (DOCX, XLSX, PDF)',
-                            'slow': '🔄 Обработка: медленные файлы (OCR, архивы)'
+                            'fast': '🔄 Обработка быстрых файлов',
+                            'medium': '🔄 Обработка средних файлов',
+                            'slow': '🔄 Обработка медленных файлов'
                         };
                         statusText = groupLabels[currentGroup] || statusText;
                     }
                     
-                    if (fill) fill.style.width = progress + '%';
+                    // Плавное заполнение полоски с CSS transition
+                    if (fill) {
+                        fill.style.transition = 'width 0.5s ease-out';
+                        fill.style.width = progress + '%';
+                        
+                        // Убираем анимацию "бегущих полосок" когда завершено
+                        if (status === 'completed' || progress === 100) {
+                            fill.classList.add('completed');
+                        } else {
+                            fill.classList.remove('completed');
+                        }
+                    }
                     if (text) text.textContent = statusText;
+                    
+                    lastProgress = progress;
                     
                     // Обновляем список файлов и статус индекса после каждой группы
                     if (progress >= 33) {
