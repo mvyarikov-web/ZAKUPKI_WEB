@@ -5,7 +5,6 @@ from flask import Blueprint, request, jsonify, current_app, send_file, Response
 from urllib.parse import unquote, quote as url_quote
 from webapp.services.files import is_safe_subpath, safe_filename, allowed_file
 from webapp.services.state import FilesState
-from webapp.services.archives import list_archive_contents, is_archive_path
 
 files_bp = Blueprint('files', __name__)
 
@@ -198,13 +197,9 @@ def delete_folder(folder_path):
 
 @files_bp.get('/download/<path:filepath>')
 def download_file(filepath: str):
-    """Безопасная выдача файла из uploads, включая файлы из архивов (FR-005, FR-010)."""
+    """Безопасная выдача файла из uploads."""
     try:
         decoded_filepath = unquote(filepath)
-        
-        # Проверяем, является ли путь виртуальным (из архива)
-        if is_archive_path(decoded_filepath):
-            return download_from_archive(decoded_filepath)
         
         # Обычный файл
         if not is_safe_subpath(current_app.config['UPLOAD_FOLDER'], decoded_filepath):
@@ -278,89 +273,6 @@ def download_file(filepath: str):
         return jsonify({'error': str(e)}), 500
 
 
-def download_from_archive(virtual_path: str):
-    """Извлекает и отдаёт файл из архива по виртуальному пути."""
-    import zipfile
-    import io
-    from webapp.services.archives import parse_virtual_path, sanitize_archive_path, get_archive_root
-    
-    try:
-        # Парсим виртуальный путь
-        scheme, segments = parse_virtual_path(virtual_path)
-        if not segments:
-            return jsonify({'error': 'Некорректный виртуальный путь'}), 400
-        
-        # Извлекаем корневой архив
-        archive_name = get_archive_root(virtual_path)
-        if not archive_name:
-            return jsonify({'error': 'Не удалось определить архив'}), 400
-        
-        # Проверяем безопасность пути к архиву
-        if not is_safe_subpath(current_app.config['UPLOAD_FOLDER'], archive_name):
-            return jsonify({'error': 'Недопустимый путь к архиву'}), 400
-        
-        archive_full_path = os.path.join(current_app.config['UPLOAD_FOLDER'], archive_name)
-        if not os.path.exists(archive_full_path):
-            return jsonify({'error': 'Архив не найден'}), 404
-        
-        # Извлекаем путь внутри архива из виртуального пути
-        # Для простоты берём последний сегмент после последнего !/
-        inner_path = virtual_path.split('!/')[-1]
-        inner_path = sanitize_archive_path(inner_path)
-        
-        # Извлекаем файл из архива
-        data = None
-        filename = os.path.basename(inner_path)
-        
-        if scheme == 'zip':
-            try:
-                with zipfile.ZipFile(archive_full_path, 'r') as z:
-                    # Ищем файл в архиве (учитываем возможные вложенные архивы)
-                    if inner_path in z.namelist():
-                        data = z.read(inner_path)
-                    else:
-                        # Попробуем найти с учётом нормализации путей
-                        for name in z.namelist():
-                            if name.endswith(inner_path) or name == inner_path:
-                                data = z.read(name)
-                                break
-            except zipfile.BadZipFile:
-                return jsonify({'error': 'Повреждённый архив'}), 400
-        elif scheme == 'rar':
-            try:
-                import rarfile  # type: ignore
-                with rarfile.RarFile(archive_full_path, 'r') as rf:
-                    if inner_path in rf.namelist():
-                        with rf.open(inner_path) as rfp:
-                            data = rfp.read()
-                    else:
-                        for name in rf.namelist():
-                            if name.endswith(inner_path) or name == inner_path:
-                                with rf.open(name) as rfp:
-                                    data = rfp.read()
-                                break
-            except Exception as e:
-                return jsonify({'error': f'Ошибка чтения RAR: {str(e)}'}), 400
-        
-        if data is None:
-            return jsonify({'error': 'Файл не найден в архиве'}), 404
-        
-        # Отдаём файл
-        ext = os.path.splitext(filename)[1].lower().lstrip('.')
-        inline = ext in current_app.config.get('PREVIEW_INLINE_EXTENSIONS', set())
-        
-        resp = Response(data, mimetype='application/octet-stream')
-        disp = 'inline' if inline else 'attachment'
-        fname_enc = url_quote(filename, safe='')
-        resp.headers['Content-Disposition'] = f"{disp}; filename=\"{filename}\"; filename*=UTF-8''{fname_enc}"
-        resp.headers['Content-Length'] = str(len(data))
-        
-        return resp
-    
-    except Exception as e:
-        current_app.logger.exception('download_from_archive error')
-        return jsonify({'error': str(e)}), 500
-
 @files_bp.route('/clear_all', methods=['POST'])
 def clear_all():
     """Очистка всех загруженных файлов и индекса (increment-002)."""
@@ -426,75 +338,68 @@ def clear_all():
 
 @files_bp.get('/files_json')
 def files_json():
-    """JSON-список файлов в uploads, включая виртуальное содержимое архивов (FR-001, FR-009)."""
+    """JSON-список файлов в uploads (только верхнего уровня, без архивов и подпапок)."""
     uploads = current_app.config['UPLOAD_FOLDER']
     if not os.path.exists(uploads):
-        return jsonify({'folders': {}, 'total_files': 0, 'archives': [], 'file_statuses': {}})
+        return jsonify({'folders': {}, 'total_files': 0, 'file_statuses': {}})
     
     files_by_folder = {}
-    archives_info = []
     total_files = 0
     
     # Получаем статусы всех файлов
     files_state = _get_files_state()
     all_statuses = files_state.get_file_status()
     
-    for root, dirs, files in os.walk(uploads):
-        rel_dir = os.path.relpath(root, uploads)
-        for filename in files:
-            # Скрываем служебный индексный файл и временные файлы Office
-            if filename == '_search_index.txt' or filename.startswith('~$') or filename.startswith('$'):
-                continue
-            if not allowed_file(filename, current_app.config['ALLOWED_EXTENSIONS']):
-                continue
+    # Обрабатываем только файлы первого уровня (не заходим в подпапки)
+    for item in os.listdir(uploads):
+        item_path = os.path.join(uploads, item)
+        
+        # Пропускаем подпапки - они будут помечены как неподдерживаемые
+        if os.path.isdir(item_path):
+            continue
             
-            file_path = os.path.join(root, filename)
-            rel_path = os.path.normpath(os.path.join(rel_dir, filename)) if rel_dir != '.' else filename
-            folder_key = 'root' if rel_dir == '.' else rel_dir
+        # Скрываем служебный индексный файл и временные файлы Office
+        if item == '_search_index.txt' or item.startswith('~$') or item.startswith('$'):
+            continue
             
-            # Определяем, является ли файл архивом
-            ext = filename.rsplit('.', 1)[-1].lower() if '.' in filename else ''
-            is_archive = ext in ('zip', 'rar')
-            
+        # Проверяем поддержку формата
+        if not allowed_file(item, current_app.config['ALLOWED_EXTENSIONS']):
+            # Помечаем неподдерживаемые файлы (включая архивы)
+            folder_key = 'root'
             if folder_key not in files_by_folder:
                 files_by_folder[folder_key] = []
             
             file_info = {
-                'name': filename,
-                'path': rel_path,
-                'size': os.path.getsize(file_path),
-                'is_archive': is_archive
+                'name': item,
+                'path': item,
+                'size': os.path.getsize(item_path) if os.path.isfile(item_path) else 0,
             }
             files_by_folder[folder_key].append(file_info)
-            total_files += 1
             
-            # FR-001, FR-009: Если это архив, получаем его содержимое
-            if is_archive:
-                try:
-                    archive_entries = list_archive_contents(rel_path, uploads)
-                    archive_contents = []
-                    
-                    for entry in archive_entries:
-                        archive_contents.append({
-                            'name': entry.name,
-                            'path': entry.path,
-                            'is_virtual_folder': entry.is_virtual_folder,
-                            'is_archive': entry.is_archive,
-                            'size': entry.size,
-                            'status': entry.status,
-                            'error': entry.error
-                        })
-                    
-                    archives_info.append({
-                        'archive_path': rel_path,
-                        'contents': archive_contents
-                    })
-                except Exception as e:
-                    current_app.logger.warning(f"Не удалось прочитать архив {rel_path}: {e}")
+            # Устанавливаем статус unsupported с char_count=0
+            if item not in all_statuses:
+                all_statuses[item] = {
+                    'status': 'unsupported',
+                    'char_count': 0,
+                    'error': 'Неподдерживаемый формат'
+                }
+            total_files += 1
+            continue
+        
+        folder_key = 'root'
+        if folder_key not in files_by_folder:
+            files_by_folder[folder_key] = []
+        
+        file_info = {
+            'name': item,
+            'path': item,
+            'size': os.path.getsize(item_path),
+        }
+        files_by_folder[folder_key].append(file_info)
+        total_files += 1
     
     return jsonify({
         'folders': files_by_folder,
         'total_files': total_files,
-        'archives': archives_info,
         'file_statuses': all_statuses
     })
