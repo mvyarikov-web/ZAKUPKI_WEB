@@ -338,7 +338,7 @@ def clear_all():
 
 @files_bp.get('/files_json')
 def files_json():
-    """JSON-список файлов в uploads (только верхнего уровня, без архивов и подпапок)."""
+    """JSON-список файлов в uploads (без архивов, без вложенных подпапок)."""
     uploads = current_app.config['UPLOAD_FOLDER']
     if not os.path.exists(uploads):
         return jsonify({'folders': {}, 'total_files': 0, 'file_statuses': {}})
@@ -350,21 +350,88 @@ def files_json():
     files_state = _get_files_state()
     all_statuses = files_state.get_file_status()
     
-    # Обрабатываем только файлы первого уровня (не заходим в подпапки)
+    # Рекурсивно обходим папки, но только на 1 уровень вложенности
     for item in os.listdir(uploads):
         item_path = os.path.join(uploads, item)
         
-        # Пропускаем подпапки - они будут помечены как неподдерживаемые
-        if os.path.isdir(item_path):
-            continue
-            
-        # Скрываем служебный индексный файл и временные файлы Office
+        # Скрываем служебные файлы
         if item == '_search_index.txt' or item.startswith('~$') or item.startswith('$'):
             continue
+        
+        if os.path.isdir(item_path):
+            # Это папка - показываем её содержимое
+            folder_key = item
+            if folder_key not in files_by_folder:
+                files_by_folder[folder_key] = []
             
-        # Проверяем поддержку формата
-        if not allowed_file(item, current_app.config['ALLOWED_EXTENSIONS']):
-            # Помечаем неподдерживаемые файлы (включая архивы)
+            # Обрабатываем файлы внутри папки (без вложенных подпапок)
+            for subitem in os.listdir(item_path):
+                subitem_path = os.path.join(item_path, subitem)
+                
+                # Пропускаем служебные файлы
+                if subitem.startswith('~$') or subitem.startswith('$') or subitem == '_search_index.txt':
+                    continue
+                
+                # Пропускаем вложенные подпапки (по спецификации 000)
+                if os.path.isdir(subitem_path):
+                    continue
+                
+                # Формируем относительный путь
+                rel_path = os.path.join(item, subitem)
+                
+                # Проверяем поддержку формата
+                if not allowed_file(subitem, current_app.config['ALLOWED_EXTENSIONS']):
+                    # Неподдерживаемый файл
+                    file_info = {
+                        'name': subitem,
+                        'path': rel_path,
+                        'size': os.path.getsize(subitem_path),
+                    }
+                    files_by_folder[folder_key].append(file_info)
+                    
+                    # Устанавливаем статус unsupported
+                    if rel_path not in all_statuses:
+                        all_statuses[rel_path] = {
+                            'status': 'unsupported',
+                            'char_count': 0,
+                            'error': 'Неподдерживаемый формат'
+                        }
+                    total_files += 1
+                    continue
+                
+                # Поддерживаемый файл
+                file_info = {
+                    'name': subitem,
+                    'path': rel_path,
+                    'size': os.path.getsize(subitem_path),
+                }
+                files_by_folder[folder_key].append(file_info)
+                total_files += 1
+        
+        else:
+            # Файл в корне uploads
+            # Проверяем поддержку формата
+            if not allowed_file(item, current_app.config['ALLOWED_EXTENSIONS']):
+                folder_key = 'root'
+                if folder_key not in files_by_folder:
+                    files_by_folder[folder_key] = []
+                
+                file_info = {
+                    'name': item,
+                    'path': item,
+                    'size': os.path.getsize(item_path),
+                }
+                files_by_folder[folder_key].append(file_info)
+                
+                if item not in all_statuses:
+                    all_statuses[item] = {
+                        'status': 'unsupported',
+                        'char_count': 0,
+                        'error': 'Неподдерживаемый формат'
+                    }
+                total_files += 1
+                continue
+            
             folder_key = 'root'
             if folder_key not in files_by_folder:
                 files_by_folder[folder_key] = []
@@ -372,31 +439,10 @@ def files_json():
             file_info = {
                 'name': item,
                 'path': item,
-                'size': os.path.getsize(item_path) if os.path.isfile(item_path) else 0,
+                'size': os.path.getsize(item_path),
             }
             files_by_folder[folder_key].append(file_info)
-            
-            # Устанавливаем статус unsupported с char_count=0
-            if item not in all_statuses:
-                all_statuses[item] = {
-                    'status': 'unsupported',
-                    'char_count': 0,
-                    'error': 'Неподдерживаемый формат'
-                }
             total_files += 1
-            continue
-        
-        folder_key = 'root'
-        if folder_key not in files_by_folder:
-            files_by_folder[folder_key] = []
-        
-        file_info = {
-            'name': item,
-            'path': item,
-            'size': os.path.getsize(item_path),
-        }
-        files_by_folder[folder_key].append(file_info)
-        total_files += 1
     
     return jsonify({
         'folders': files_by_folder,
