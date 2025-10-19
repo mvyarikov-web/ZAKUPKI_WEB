@@ -230,7 +230,7 @@ function renderFileItem(file, file_statuses) {
     if (isUnreadable) {
         fileLink = `<span class="file-name" title="Файл недоступен для просмотра/скачивания">${escapeHtml(file.name)}</span>`;
     } else {
-        fileLink = `<a class="file-name result-file-link" href="/view_file/${encodeURIComponent(file.path)}" target="_blank" rel="noopener">${escapeHtml(file.name)}</a>`;
+        fileLink = `<a class="file-name result-file-link" href="/view/${encodeURIComponent(file.path)}" target="_blank" rel="noopener">${escapeHtml(file.name)}</a>`;
     }
     
     let charCountHtml = '';
