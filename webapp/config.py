@@ -13,6 +13,7 @@ class Config:
     UPLOAD_FOLDER = os.path.join(BASE_DIR, 'uploads')
     INDEX_FOLDER = os.path.join(BASE_DIR, 'index')
     LOGS_DIR = os.path.join(BASE_DIR, 'logs')
+    PROMPTS_FOLDER = os.path.join(BASE_DIR, 'PROMPT')
     
     # Flask
     JSON_AS_ASCII = False  # корректная кириллица в JSON
@@ -46,6 +47,13 @@ class Config:
     OCR_USE_OSD = False  # определение ориентации страниц (OSD)
     OCR_PARALLEL_PAGES = False  # параллельная обработка страниц
     OCR_MAX_WORKERS = 4  # максимум потоков для параллельного OCR
+    
+    # OpenAI GPT API Configuration
+    OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY', '')  # API ключ для GPT
+    GPT_MODEL = 'gpt-3.5-turbo'  # Модель GPT
+    GPT_MAX_TOKENS = 150  # Максимум токенов в ответе
+    GPT_TEMPERATURE = 0.7  # Температура генерации (0-1)
+    GPT_MAX_REQUEST_SIZE = 4096  # Максимальный размер запроса (символы)
 
 
 class DevConfig(Config):

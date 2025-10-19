@@ -13,6 +13,7 @@ Pillow==10.4.0
 pdf2image==1.17.0
 rarfile==4.2
 pytest-timeout==2.1.0
+requests==2.31.0
 
 # Опциональные зависимости для модуля анализа текста
 # spacy>=3.0.0

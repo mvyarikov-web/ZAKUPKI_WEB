@@ -28,6 +28,7 @@ def create_app(config_name=None):
     os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
     os.makedirs(app.config['INDEX_FOLDER'], exist_ok=True)
     os.makedirs(app.config['LOGS_DIR'], exist_ok=True)
+    os.makedirs(app.config['PROMPTS_FOLDER'], exist_ok=True)
 
     # Таймаут для долгих запросов (например, сборка индекса)
     try:
@@ -54,11 +55,13 @@ def create_app(config_name=None):
     from webapp.routes.files import files_bp
     from webapp.routes.search import search_bp
     from webapp.routes.health import health_bp
+    from webapp.routes.ai_analysis import ai_analysis_bp
     
     app.register_blueprint(pages_bp)
     app.register_blueprint(files_bp)
     app.register_blueprint(search_bp)
     app.register_blueprint(health_bp)
+    app.register_blueprint(ai_analysis_bp)
     
     # Настраиваем хуки для логирования запросов
     from webapp.utils.logging import generate_request_id
