@@ -207,6 +207,14 @@ class Indexer:
                 'updated_at': datetime.now().isoformat()
             })
             
+            # Финальный добор недостающих файлов (best-effort): если какой-то файл
+            # по граничной причине не попал в секцию — дозапишем его постфактум.
+            try:
+                self._final_sweep_for_missing(index_path, root_folder)
+            except Exception:
+                # Не критично для основной операции
+                self._log.debug("Финальный добор пропущенных файлов не выполнен")
+            
             self._log.info("Групповая индексация завершена: %s", index_path)
             return index_path
         
@@ -222,6 +230,78 @@ class Indexer:
             raise
         finally:
             self._cleanup_temp_paths()
+
+    def _final_sweep_for_missing(self, index_path: str, root_folder: str) -> None:
+        """Дозапись недостающих файлов в соответствующие секции групп.
+
+        Алгоритм:
+        - Читаем текущий индекс и собираем множество уже присутствующих rel_path по строкам 'ЗАГОЛОВОК: ...'.
+        - Повторно собираем список файлов и группируем их стандартной логикой.
+        - Для каждой группы вычисляем недостающие rel_path и дозаписываем их в секцию.
+        """
+        try:
+            with io.open(index_path, 'r', encoding='utf-8') as f:
+                index_content = f.read()
+        except Exception:
+            return
+
+        present: set = set()
+        for m in re.finditer(r"^ЗАГОЛОВОК:\s+(.+)$", index_content, flags=re.MULTILINE):
+            present.add(m.group(1).strip())
+
+        all_files = self._collect_all_files(root_folder)
+        groups = self._classify_files(all_files)
+
+        for group_name in ['fast', 'medium', 'slow']:
+            missing = []  # type: List[Tuple[str, str]]
+            for rel_path, abs_path in groups.get(group_name, []):
+                if rel_path not in present:
+                    missing.append((rel_path, abs_path))
+            if missing:
+                self._append_files_to_group(index_path, group_name, missing)
+
+    def _append_files_to_group(self, index_path: str, group_name: str, files: 'List[Tuple[str, str]]') -> None:
+        """Дозаписывает записи файлов в секцию группы, не удаляя существующее содержимое.
+
+        Args:
+            index_path: путь к индексу
+            group_name: fast/medium/slow
+            files: список (rel_path, abs_path)
+        """
+        begin_marker = f'<!-- BEGIN_{group_name.upper()} -->'
+        end_marker = f'<!-- END_{group_name.upper()} -->'
+
+        with io.open(index_path, 'r', encoding='utf-8') as f:
+            index_content = f.read()
+
+        start = index_content.find(begin_marker)
+        end = index_content.find(end_marker)
+        if start == -1 or end == -1 or end < start:
+            return
+
+        section_start = start + len(begin_marker)
+        current_section = index_content[section_start:end]
+
+        buf = io.StringIO()
+        for rel_path, abs_path in files:
+            text, meta = self._extract_text(abs_path, rel_path, rel_path)
+            self._write_entry(buf, rel_path=rel_path, text=text, meta=meta)
+        appendix = buf.getvalue()
+
+        new_section = f"\n{current_section.rstrip()}\n{appendix.rstrip()}\n"
+        new_content = index_content[:start] + begin_marker + new_section + index_content[end:]
+
+        # Обновим статус группы в заголовке (на случай, если ещё 'ожидание')
+        status_pattern = re.compile(
+            rf'(\[ГРУППА: {re.escape(group_name.upper())}\].*?Статус: )ожидание',
+            re.DOTALL
+        )
+        new_content = status_pattern.sub(lambda m: m.group(1) + '✅ завершено', new_content)
+
+        temp_index = index_path + '.tmp'
+        with io.open(temp_index, 'w', encoding='utf-8') as f:
+            f.write(new_content)
+        os.replace(temp_index, index_path)
     
     def _create_index_classic(self, root_folder: str) -> str:
         """Классическая индексация (одним проходом) — для обратной совместимости."""
@@ -488,18 +568,17 @@ class Indexer:
             re.DOTALL
         )
         
-        new_content = pattern.sub(
-            f'{begin_marker}\n{group_content}\n{end_marker}',
-            index_content
-        )
+        # Используем lambda для избежания интерпретации обратных ссылок в содержимом
+        replacement_text = f'{begin_marker}\n{group_content}\n{end_marker}'
+        new_content = pattern.sub(lambda m: replacement_text, index_content)
         
         # Обновляем статус группы в заголовке
-        new_content = re.sub(
-            rf'(\[ГРУППА: {group_name.upper()}\].*?Статус: )ожидание',
-            r'\1✅ завершено',
-            new_content,
-            flags=re.DOTALL
+        # Используем функцию для безопасной замены
+        status_pattern = re.compile(
+            rf'(\[ГРУППА: {re.escape(group_name.upper())}\].*?Статус: )ожидание',
+            re.DOTALL
         )
+        new_content = status_pattern.sub(lambda m: m.group(1) + '✅ завершено', new_content)
         
         # Атомарная запись
         temp_index = index_path + '.tmp'

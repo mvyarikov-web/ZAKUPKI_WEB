@@ -261,9 +261,9 @@ def search():
     current_app.logger.info(f"Запрос поиска: terms='{','.join(filtered)}' (из {len(raw_terms)} входных), exclude_mode={exclude_mode}")
     results = _search_in_files(','.join(filtered), exclude_mode=exclude_mode)
     
-    # Сохраняем результаты поиска
+    # Сохраняем результаты поиска (сохраняем отфильтрованные термины)
     files_state = _get_files_state()
-    files_state.set_last_search_terms(search_terms)
+    files_state.set_last_search_terms(','.join(filtered))
     
     return jsonify({'results': results})
 
@@ -616,6 +616,17 @@ def view_index():
         # Режим отображения и подсветка
         show_raw = request.args.get('raw', '0') == '1'
         q = request.args.get('q') or ''
+        
+        # Если не передан параметр q, пытаемся взять термины из последнего поиска
+        if not q:
+            try:
+                files_state = _get_files_state()
+                last_terms = files_state.get_last_search_terms()
+                if last_terms:
+                    q = last_terms
+            except Exception:
+                pass  # Игнорируем ошибки чтения
+        
         terms = [t.strip() for t in q.split(',') if t and t.strip()]
 
         if show_raw:
@@ -650,6 +661,11 @@ def view_index():
                 # Игнорируем некорректный паттерн
                 continue
 
+        # Формируем параметры для кнопки переключения режима
+        q_param = f"&q={htmllib.escape(q)}" if q else ""
+        toggle_text = "Показать с подсветкой" if show_raw else "Показать полную структуру"
+        toggle_raw = '0' if show_raw else '1'
+        
         html_page = (
             "<!DOCTYPE html>\n"
             "<html lang=\"ru\">\n<head>\n<meta charset=\"utf-8\">\n"
@@ -657,9 +673,13 @@ def view_index():
             "<style>body{font:14px/1.5 -apple-system,Segoe UI,Arial,sans-serif;padding:16px;}"
             "pre{white-space:pre-wrap;word-wrap:break-word;background:#f8f8f8;padding:12px;border-radius:6px;}"
             "mark{background:#ffeb3b;padding:0 2px;border-radius:2px;}"
-            "a.btn{display:inline-block;margin-bottom:12px;text-decoration:none;background:#3498db;color:#fff;padding:6px 10px;border-radius:4px}</style>\n"
+            "a.btn{display:inline-block;margin-bottom:12px;text-decoration:none;background:#3498db;color:#fff;padding:6px 10px;border-radius:4px;margin-right:8px;}"
+            ".search-info{background:#e8f5e9;padding:8px 12px;border-radius:4px;margin-bottom:12px;display:inline-block;}"
+            "</style>\n"
             "</head><body>\n"
-            f"<a class=\"btn\" href=\"/view_index?raw={'1' if show_raw else '0'}\">Показать без подсветки</a>"
+            f"<div><a class=\"btn\" href=\"/\">← На главную</a>"
+            f"<a class=\"btn\" href=\"/view_index?raw={toggle_raw}{q_param}\">{toggle_text}</a></div>"
+            f"<div class=\"search-info\">🔍 Подсвечены термины: <strong>{', '.join(terms)}</strong></div>"
             "<pre>" + highlighted + "</pre>\n"
             "</body></html>\n"
         )
