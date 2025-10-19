@@ -114,6 +114,10 @@ class Indexer:
         os.makedirs(os.path.dirname(status_path), exist_ok=True)
         
         try:
+            # Локальный словарь времён по группам
+            group_times: dict = {
+                'fast': {}, 'medium': {}, 'slow': {}
+            }
             # Инициализация статуса
             self._update_status(status_path, {
                 'status': 'running',
@@ -125,6 +129,7 @@ class Indexer:
                     'medium': 'pending',
                     'slow': 'pending'
                 },
+                'group_times': group_times,
                 'started_at': datetime.now().isoformat(),
                 'updated_at': datetime.now().isoformat()
             })
@@ -141,6 +146,9 @@ class Indexer:
                 
                 self._log.info(f"Обработка группы {group_name}: {len(group_files)} файлов")
                 
+                # Отметим старт времени группы
+                start_dt = datetime.now()
+                group_times[group_name]['started_at'] = start_dt.isoformat()
                 # Обновляем статус группы
                 self._update_status(status_path, {
                     'status': 'running',
@@ -152,6 +160,7 @@ class Indexer:
                         'medium': 'completed' if group_name == 'slow' else ('running' if group_name == 'medium' else 'pending'),
                         'slow': 'running' if group_name == 'slow' else 'pending'
                     },
+                    'group_times': group_times,
                     'updated_at': datetime.now().isoformat()
                 })
                 
@@ -169,6 +178,14 @@ class Indexer:
                 processed_files += len(group_files)
                 
                 # Обновляем статус после завершения группы
+                end_dt = datetime.now()
+                try:
+                    duration_sec = int((end_dt - start_dt).total_seconds())
+                except Exception:
+                    duration_sec = None
+                group_times[group_name]['completed_at'] = end_dt.isoformat()
+                if duration_sec is not None:
+                    group_times[group_name]['duration_sec'] = duration_sec
                 self._update_status(status_path, {
                     'processed': processed_files,
                     'group_status': {
@@ -176,6 +193,7 @@ class Indexer:
                         'medium': 'completed' if group_name != 'fast' else 'pending',
                         'slow': 'completed' if group_name == 'slow' else 'pending'
                     },
+                    'group_times': group_times,
                     'updated_at': datetime.now().isoformat()
                 })
             

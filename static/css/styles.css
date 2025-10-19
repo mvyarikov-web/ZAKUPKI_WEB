@@ -789,3 +789,54 @@ section h2 {
     color: #e74c3c;
     font-weight: 600;
 }
+
+/* Индикатор групп индексации (increment-014) */
+.group-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    background: white;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-size: 12px;
+    transition: all 0.3s ease;
+}
+
+.group-status.completed {
+    background: #d4edda;
+    border-color: #c3e6cb;
+    color: #155724;
+}
+
+.group-status.running {
+    background: #fff3cd;
+    border-color: #ffeaa7;
+    color: #856404;
+    animation: pulse 1.5s ease-in-out infinite;
+}
+
+.group-status.pending {
+    background: #f8f9fa;
+    border-color: #e9ecef;
+    color: #6c757d;
+}
+
+.group-icon {
+    font-size: 14px;
+    line-height: 1;
+}
+
+.group-label {
+    font-weight: 500;
+}
+
+@keyframes pulse {
+    0%, 100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.7;
+    }
+}
+

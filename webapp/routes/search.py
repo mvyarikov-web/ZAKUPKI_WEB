@@ -2,6 +2,8 @@
 import os
 import re
 import shutil
+import json
+import html as htmllib
 from datetime import datetime
 from flask import Blueprint, request, jsonify, current_app, Response
 from document_processor import DocumentProcessor
@@ -50,20 +52,42 @@ def _search_in_files(search_terms, exclude_mode=False):
                 rel_path = os.path.relpath(os.path.join(root, fname), uploads)
                 files_to_search.append(rel_path)
 
-    # Убедимся, что индекс существует (если нет — создадим)
-    index_path = get_index_path(current_app.config['INDEX_FOLDER'])
-    if not os.path.exists(index_path):
+    # Резолвер актуального индекса: index/_search_index.txt или uploads/_search_index.txt
+    def _resolve_live_index_path():
+        idx_in_index = get_index_path(current_app.config['INDEX_FOLDER'])
+        if os.path.exists(idx_in_index):
+            return idx_in_index
+        idx_in_uploads = os.path.join(uploads, '_search_index.txt')
+        if os.path.exists(idx_in_uploads):
+            return idx_in_uploads
+        return None
+
+    # Убедимся, что индекс существует (если нет — запустим сборку в фоне и не блокируем UI)
+    index_path = _resolve_live_index_path()
+    if not index_path:
+        current_app.logger.info('Индекс отсутствует — запускаем фоновую сборку (use_groups=True) и возвращаем пустой результат')
         try:
-            dp = DocumentProcessor()
-            tmp_index = dp.create_search_index(uploads)
-            # Переместим в папку index
-            os.makedirs(current_app.config['INDEX_FOLDER'], exist_ok=True)
-            if tmp_index != index_path and os.path.exists(tmp_index):
-                shutil.move(tmp_index, index_path)
-            current_app.logger.info('Индекс создан автоматически для поиска')
-        except Exception as e:
-            current_app.logger.exception(f'Ошибка создания индекса: {e}')
-            return results
+            import threading
+            def _bg_build():
+                try:
+                    dp = DocumentProcessor()
+                    tmp_index = dp.create_search_index(uploads, use_groups=True)
+                    # Перемещать не обязательно: поиск читает из uploads; по завершении можно скопировать в index/
+                    try:
+                        os.makedirs(current_app.config['INDEX_FOLDER'], exist_ok=True)
+                        final_idx = get_index_path(current_app.config['INDEX_FOLDER'])
+                        if os.path.exists(tmp_index):
+                            shutil.copyfile(tmp_index, final_idx)
+                    except Exception:
+                        pass
+                    current_app.logger.info('Фоновая сборка индекса завершена (доступна по uploads/_search_index.txt)')
+                except Exception:
+                    current_app.logger.exception('Ошибка фоновой индексации')
+            threading.Thread(target=_bg_build, daemon=True).start()
+        except Exception:
+            current_app.logger.exception('Не удалось стартовать фоновую индексацию')
+        # Возвращаем пусто: UI покажет индикатор групп и предложит повторить поиск спустя секунды
+        return results
 
     # Поиск по индексу с привязкой к файлам
     try:
@@ -298,8 +322,8 @@ def build_index_route():
     if not os.path.exists(uploads):
         return jsonify({'success': False, 'message': 'Папка uploads не найдена'}), 400
     
-    # Проверяем, запрошена ли групповая индексация
-    use_groups = request.json.get('use_groups', False) if request.is_json else False
+    # Групповая индексация активна по умолчанию (increment-014)
+    use_groups = request.json.get('use_groups', True) if request.is_json else True
     
     try:
         dp = DocumentProcessor()
@@ -445,7 +469,10 @@ def index_status():
                 response['progress'] = progress_data
             return jsonify(response)
 
-        idx = get_index_path(current_app.config['INDEX_FOLDER'])
+        # Резолвим актуальный индекс (index/ или uploads/)
+        idx_primary = get_index_path(current_app.config['INDEX_FOLDER'])
+        idx_uploads = os.path.join(uploads, '_search_index.txt')
+        idx = idx_primary if os.path.exists(idx_primary) else (idx_uploads if os.path.exists(idx_uploads) else idx_primary)
         exists = os.path.exists(idx)
         
         if not exists:
@@ -480,7 +507,7 @@ def index_status():
         }
         
         # Парсим группы из индекса
-        groups_info = _parse_index_groups(idx)
+        groups_info = _parse_index_groups(idx) if exists else {}
         if groups_info:
             response['groups_info'] = groups_info
         
@@ -509,13 +536,59 @@ def view_index():
     - raw=1: показать индекс как есть (с заголовками групп)
     - raw=0 (default): показать только записи документов (без служебных строк)
     """
-    idx = get_index_path(current_app.config['INDEX_FOLDER'])
-    if not os.path.exists(idx):
-        return jsonify({'error': 'Индекс не найден'}), 404
+    # Показываем живой индекс из index/ или uploads/
+    uploads = current_app.config.get('UPLOAD_FOLDER', 'uploads')
+    idx_primary = get_index_path(current_app.config['INDEX_FOLDER'])
+    idx_uploads = os.path.join(uploads, '_search_index.txt')
+    idx = idx_primary if os.path.exists(idx_primary) else (idx_uploads if os.path.exists(idx_uploads) else idx_primary)
     
     try:
-        with open(idx, 'r', encoding='utf-8', errors='ignore') as f:
-            content = f.read()
+        content = None
+        if os.path.exists(idx):
+            try:
+                with open(idx, 'r', encoding='utf-8', errors='ignore') as f:
+                    content = f.read()
+            except Exception:
+                # Во время атомарной замены файл может быть временно недоступен
+                content = None
+
+        # Если не удалось прочитать индекс — формируем скелет по статусу
+        if content is None:
+            # Загружаем прогресс статуса
+            progress = None
+            status_json_path = os.path.join(current_app.config.get('INDEX_FOLDER'), 'status.json')
+            try:
+                if status_json_path and os.path.exists(status_json_path):
+                    with open(status_json_path, 'r', encoding='utf-8') as sf:
+                        progress = json.load(sf)
+            except Exception:
+                progress = None
+
+            group_labels = {
+                'fast': 'TXT, CSV, HTML',
+                'medium': 'DOCX, XLSX, векторные PDF',
+                'slow': 'PDF-сканы с OCR'
+            }
+            def map_status(s):
+                if s == 'completed':
+                    return '✅ завершено'
+                if s == 'running':
+                    return 'обрабатывается'
+                return 'ожидание'
+            grp_status = (progress or {}).get('group_status', {}) if progress else {}
+            # Собираем скелет: заголовки + пустые секции между маркерами
+            parts = []
+            for g in ['fast', 'medium', 'slow']:
+                parts.append('' )
+                parts.append('═' * 80)
+                parts.append(f"[ГРУППА: {g.upper()}] {group_labels[g]}")
+                status_text = map_status(grp_status.get(g)) if grp_status else 'ожидание'
+                parts.append(f"Файлов: — | Статус: {status_text}")
+                parts.append('═' * 80)
+                parts.append(f"<!-- BEGIN_{g.upper()} -->")
+                parts.append(f"<!-- END_{g.upper()} -->")
+                parts.append('')
+            content = "\n".join(parts)
         
         # Добавляем метаинформацию в начало
         metadata = [
@@ -540,28 +613,57 @@ def view_index():
         
         metadata.append("#\n" + "=" * 80 + "\n")
         
-        # Режим отображения
+        # Режим отображения и подсветка
         show_raw = request.args.get('raw', '0') == '1'
-        
+        q = request.args.get('q') or ''
+        terms = [t.strip() for t in q.split(',') if t and t.strip()]
+
         if show_raw:
-            # Показываем как есть
-            full_content = '\n'.join(metadata) + '\n' + content
+            base_text = '\n'.join(metadata) + '\n' + content
         else:
             # Фильтруем служебные строки
             lines = content.split('\n')
             filtered_lines = []
             for line in lines:
-                # Пропускаем заголовки групп и маркеры
                 if line.startswith('═') or \
                    line.startswith('[ГРУППА:') or \
                    line.startswith('<!--') or \
                    ('Файлов:' in line and 'Статус:' in line):
                     continue
                 filtered_lines.append(line)
-            
-            full_content = '\n'.join(metadata) + '\n' + '\n'.join(filtered_lines)
-        
-        return Response(full_content, mimetype='text/plain; charset=utf-8')
+            base_text = '\n'.join(metadata) + '\n' + '\n'.join(filtered_lines)
+
+        # Если нет терминов — отдаём как text/plain
+        if not terms:
+            return Response(base_text, mimetype='text/plain; charset=utf-8')
+
+        # Подсветка: экранируем HTML, затем выделяем совпадения <mark>
+        safe = htmllib.escape(base_text)
+        highlighted = safe
+        for term in terms:
+            if not term:
+                continue
+            try:
+                pattern = re.compile(re.escape(term), re.IGNORECASE)
+                highlighted = pattern.sub(lambda m: f"<mark>{m.group(0)}</mark>", highlighted)
+            except re.error:
+                # Игнорируем некорректный паттерн
+                continue
+
+        html_page = (
+            "<!DOCTYPE html>\n"
+            "<html lang=\"ru\">\n<head>\n<meta charset=\"utf-8\">\n"
+            "<title>Сводный индекс — подсветка</title>\n"
+            "<style>body{font:14px/1.5 -apple-system,Segoe UI,Arial,sans-serif;padding:16px;}"
+            "pre{white-space:pre-wrap;word-wrap:break-word;background:#f8f8f8;padding:12px;border-radius:6px;}"
+            "mark{background:#ffeb3b;padding:0 2px;border-radius:2px;}"
+            "a.btn{display:inline-block;margin-bottom:12px;text-decoration:none;background:#3498db;color:#fff;padding:6px 10px;border-radius:4px}</style>\n"
+            "</head><body>\n"
+            f"<a class=\"btn\" href=\"/view_index?raw={'1' if show_raw else '0'}\">Показать без подсветки</a>"
+            "<pre>" + highlighted + "</pre>\n"
+            "</body></html>\n"
+        )
+        return Response(html_page, mimetype='text/html; charset=utf-8')
     
     except Exception as e:
         current_app.logger.exception('Ошибка чтения сводного файла индекса')

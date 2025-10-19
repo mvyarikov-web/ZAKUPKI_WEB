@@ -111,8 +111,10 @@ function handleFiles(e) {
     })
     .then(data => {
         if (data.success) {
-            // Тихо перестраиваем индекс без модальных сообщений
-            return rebuildIndexWithProgress();
+            // 1) Сразу обновляем дерево файлов, чтобы пользователь видел структуру
+            try { updateFilesList(); } catch (_) {}
+            // 2) Запускаем построение индекса в фоне (без ожидания), чтобы не блокировать UI
+            try { rebuildIndexWithProgress().catch(() => {}); } catch (_) {}
         } else {
             throw new Error(data.error || 'Ошибка загрузки папки');
         }
@@ -896,18 +898,178 @@ function rebuildIndexWithProgress() {
     if (bar) bar.style.display = 'flex';
     if (fill) fill.style.width = '10%';
     if (text) text.textContent = 'Построение индекса…';
-    return fetch('/build_index', { method: 'POST' })
+    
+    // Запускаем построение индекса с групповой индексацией
+    return fetch('/build_index', { 
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ use_groups: true })
+    })
         .then(res => res.json())
         .then(data => {
             if (!data.success) throw new Error(data.message || 'Ошибка построения индекса');
-            if (fill) fill.style.width = '100%';
-            if (text) text.textContent = 'Готово';
-            refreshIndexStatus();
-            updateFilesList();
+            
+            // Запускаем опрос статуса групп
+            return pollIndexGroupStatus(fill, text);
         })
         .finally(() => {
-            setTimeout(() => { if (bar) bar.style.display = 'none'; if (fill) fill.style.width = '0%'; }, 600);
+            // Не скрываем прогресс после завершения — оставляем 100% и статус
         });
+}
+
+// --- Poll Index Group Status (increment-014) ---
+function pollIndexGroupStatus(fill, text) {
+    return new Promise((resolve, reject) => {
+        const maxAttempts = 60; // 60 секунд максимум
+        let attempts = 0;
+        
+        const checkStatus = () => {
+            attempts++;
+            
+            fetch('/index_status')
+                .then(res => res.json())
+                .then(data => {
+                    const status = data.status || 'idle';
+                    const groupStatus = data.group_status || {};
+                    const currentGroup = data.current_group || '';
+                    
+                    // Обновляем прогресс-бар и текст
+                    let progress = 10;
+                    let statusText = 'Построение индекса…';
+                    
+                    if (groupStatus.fast === 'completed') {
+                        progress = 33;
+                        statusText = '✅ Быстрые файлы готовы | Поиск доступен';
+                    }
+                    if (groupStatus.medium === 'completed') {
+                        progress = 66;
+                        statusText = '✅ DOCX/XLSX готовы | Поиск доступен';
+                    }
+                    if (groupStatus.slow === 'completed' || status === 'completed') {
+                        progress = 100;
+                        statusText = '✅ Все файлы обработаны';
+                    }
+                    
+                    // Добавляем индикацию текущей группы
+                    if (status === 'running' && currentGroup) {
+                        const groupLabels = {
+                            'fast': '🔄 Обработка: быстрые файлы (TXT, CSV)',
+                            'medium': '🔄 Обработка: средние файлы (DOCX, XLSX, PDF)',
+                            'slow': '🔄 Обработка: медленные файлы (OCR, архивы)'
+                        };
+                        statusText = groupLabels[currentGroup] || statusText;
+                    }
+                    
+                    if (fill) fill.style.width = progress + '%';
+                    if (text) text.textContent = statusText;
+                    
+                    // Обновляем список файлов и статус индекса после каждой группы
+                    if (progress >= 33) {
+                        refreshIndexStatus();
+                        updateFilesList();
+                    }
+                    
+                    // Проверяем завершение
+                    if (status === 'completed' || progress === 100) {
+                        refreshIndexStatus();
+                        updateFilesList();
+                        resolve();
+                    } else if (status === 'error') {
+                        reject(new Error('Ошибка индексации'));
+                    } else if (attempts >= maxAttempts) {
+                        reject(new Error('Превышено время ожидания'));
+                    } else {
+                        // Продолжаем опрос каждые 1 секунду
+                        setTimeout(checkStatus, 1000);
+                    }
+                    
+                    // Обновляем визуальный индикатор групп
+                    updateGroupsIndicator(groupStatus, status);
+                })
+                .catch(err => {
+                    console.error('Ошибка опроса статуса:', err);
+                    if (attempts >= maxAttempts) {
+                        reject(err);
+                    } else {
+                        setTimeout(checkStatus, 1000);
+                    }
+                });
+        };
+        
+        // Первый опрос через 500мс
+        setTimeout(checkStatus, 500);
+    });
+}
+
+// --- Update Groups Indicator (increment-014) ---
+function updateGroupsIndicator(groupStatus, indexStatus) {
+    const indicator = document.getElementById('groupsIndicator');
+    if (!indicator) return;
+    
+    // Всегда показываем индикатор, чтобы видеть финальный статус групп
+    indicator.style.display = 'block';
+    
+    // Обновляем статусы групп
+    const groups = ['fast', 'medium', 'slow'];
+    groups.forEach(groupName => {
+        const groupDiv = indicator.querySelector(`[data-group="${groupName}"]`);
+        if (!groupDiv) return;
+        
+        const status = groupStatus[groupName] || 'pending';
+        const icon = groupDiv.querySelector('.group-icon');
+        
+        // Удаляем все классы статусов
+        groupDiv.classList.remove('pending', 'running', 'completed');
+        groupDiv.classList.add(status);
+        
+        // Обновляем иконку
+        if (status === 'completed') {
+            icon.textContent = '✅';
+        } else if (status === 'running') {
+            icon.textContent = '🔄';
+        } else {
+            icon.textContent = '⏳';
+        }
+        
+        // Время обработки (если доступно в последнем ответе refreshIndexStatus -> сохраним глобально)
+        try {
+            if (window.__lastIndexStatus && window.__lastIndexStatus.group_times && window.__lastIndexStatus.group_times[groupName]) {
+                const gt = window.__lastIndexStatus.group_times[groupName];
+                const duration = gt.duration_sec;
+                const label = groupDiv.querySelector('.group-label');
+                if (label) {
+                    if (typeof duration === 'number') {
+                        label.textContent = label.textContent.replace(/\s*\(.*?сек\)$/, '');
+                        label.textContent += ` (${duration} сек)`;
+                    } else if (gt.started_at && gt.completed_at) {
+                        // Если duration отсутствует, но есть времена — посчитаем на лету
+                        const d = Math.round((new Date(gt.completed_at) - new Date(gt.started_at)) / 1000);
+                        if (isFinite(d) && d >= 0) {
+                            label.textContent = label.textContent.replace(/\s*\(.*?сек\)$/, '');
+                            label.textContent += ` (${d} сек)`;
+                        }
+                    }
+                }
+            }
+        } catch (_) {}
+    });
+    
+    // Обновляем подсказку
+    const hint = document.getElementById('groupsHint');
+    if (hint) {
+        if (indexStatus === 'completed') {
+            hint.textContent = '✅ Индексация завершена! Поиск доступен по всем файлам';
+        } else if (groupStatus.fast === 'completed') {
+            hint.textContent = '💡 Поиск доступен! Остальные группы обрабатываются в фоне';
+        } else {
+            hint.textContent = '💡 Поиск будет доступен по мере обработки групп';
+        }
+    }
+
+    // Авто-повтор поиска при завершении MEDIUM/SLOW, если поиск запускался ранее
+    try {
+        maybeRerunSearchOnGroupCompletion(groupStatus);
+    } catch (_) {}
 }
 
 function termsFromInput() {
@@ -1034,6 +1196,8 @@ function refreshIndexStatus() {
     fetch('/index_status')
         .then(res => res.json())
         .then(data => {
+            // Сохраняем последний ответ для использования времени групп
+            window.__lastIndexStatus = data;
             if (!data.exists) {
                 indexStatus.textContent = 'Сводный файл: не сформирован';
                 indexStatus.style.color = '#a00';
@@ -1044,11 +1208,52 @@ function refreshIndexStatus() {
                 indexStatus.textContent = `Сводный файл: сформирован, ${sizeKb} KB, записей: ${entries}`;
                 indexStatus.style.color = '#2a2';
             }
+            
+            // Обновляем индикатор групп (increment-014)
+            if (data.group_status) {
+                updateGroupsIndicator(data.group_status, data.status || 'idle');
+            }
         })
         .catch(() => {
             indexStatus.textContent = 'Сводный файл: ошибка запроса';
             indexStatus.style.color = '#a00';
         });
+}
+
+// --- Helpers: авто-повтор поиска при завершении групп ---
+function getActiveSearchTerms() {
+    const raw = (searchInput && searchInput.value ? searchInput.value : '').trim();
+    if (raw) return raw;
+    try {
+        return (localStorage.getItem('last_search_terms') || '').trim();
+    } catch (_) {
+        return '';
+    }
+}
+
+function maybeRerunSearchOnGroupCompletion(groupStatus) {
+    if (!window.searchWasPerformed) return; // поиск не запускался — ничего не делаем
+    const terms = getActiveSearchTerms();
+    if (!terms) return; // нет терминов — нечего повторять
+    // Инициализация памяти состояний
+    if (!window.__prevGroupStatus) window.__prevGroupStatus = {};
+    if (!window.__autoReran) window.__autoReran = { medium: false, slow: false };
+    const prev = window.__prevGroupStatus;
+    const current = groupStatus || {};
+
+    // Список групп для авто-повтора
+    const targets = ['medium', 'slow'];
+    for (const g of targets) {
+        const was = prev[g] || 'pending';
+        const now = current[g] || 'pending';
+        if (!window.__autoReran[g] && was !== 'completed' && now === 'completed') {
+            // Триггерим повтор поиска один раз на группу
+            try { performSearch(terms); } catch (_) {}
+            window.__autoReran[g] = true;
+        }
+    }
+    // Обновляем предыдущее состояние
+    window.__prevGroupStatus = { ...current };
 }
 
 // --- Append current terms to /view links ---
