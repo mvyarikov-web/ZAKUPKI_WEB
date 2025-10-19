@@ -1,5 +1,6 @@
 """Blueprint для поиска и индексации."""
 import os
+import re
 import shutil
 from datetime import datetime
 from flask import Blueprint, request, jsonify, current_app, Response
@@ -243,6 +244,53 @@ def search():
     return jsonify({'results': results})
 
 
+def _parse_index_groups(index_path: str) -> dict:
+    """Парсит индекс и извлекает информацию о группах.
+    
+    Returns:
+        {
+            'fast': {'files': 50, 'completed': True, 'size_bytes': 12345},
+            'medium': {'files': 30, 'completed': False, 'size_bytes': 0},
+            'slow': {'files': 10, 'completed': False, 'size_bytes': 0}
+        }
+    """
+    groups_info = {}
+    
+    try:
+        with open(index_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        
+        for group_name in ['fast', 'medium', 'slow']:
+            # Ищем заголовок группы
+            group_pattern = rf'\[ГРУППА: {group_name.upper()}\].*?Файлов: (\d+).*?Статус: ([^\n]+)'
+            match = re.search(group_pattern, content, re.IGNORECASE | re.DOTALL)
+            
+            if match:
+                files_count = int(match.group(1))
+                status_text = match.group(2).strip()
+                completed = '✅' in status_text or 'завершено' in status_text.lower()
+                
+                # Вычисляем размер контента группы
+                begin_marker = f'<!-- BEGIN_{group_name.upper()} -->'
+                end_marker = f'<!-- END_{group_name.upper()} -->'
+                group_content = re.search(
+                    re.escape(begin_marker) + r'(.*?)' + re.escape(end_marker),
+                    content,
+                    re.DOTALL
+                )
+                size_bytes = len(group_content.group(1).strip()) if group_content else 0
+                
+                groups_info[group_name] = {
+                    'files': files_count,
+                    'completed': completed,
+                    'size_bytes': size_bytes
+                }
+    except Exception as e:
+        current_app.logger.warning(f"Ошибка парсинга групп индекса: {e}")
+    
+    return groups_info
+
+
 @search_bp.route('/build_index', methods=['POST'])
 def build_index_route():
     """Явная сборка индекса по папке uploads."""
@@ -250,12 +298,15 @@ def build_index_route():
     if not os.path.exists(uploads):
         return jsonify({'success': False, 'message': 'Папка uploads не найдена'}), 400
     
+    # Проверяем, запрошена ли групповая индексация
+    use_groups = request.json.get('use_groups', False) if request.is_json else False
+    
     try:
         dp = DocumentProcessor()
-        current_app.logger.info("Запуск явной сборки индекса для uploads")
+        current_app.logger.info(f"Запуск явной сборки индекса для uploads (use_groups={use_groups})")
         
         # Создаём индекс в uploads, затем переносим в index/
-        tmp_index_path = dp.create_search_index(uploads)
+        tmp_index_path = dp.create_search_index(uploads, use_groups=use_groups)
         os.makedirs(current_app.config['INDEX_FOLDER'], exist_ok=True)
         index_path = get_index_path(current_app.config['INDEX_FOLDER'])
         
@@ -349,12 +400,19 @@ def build_index_route():
 
 @search_bp.get('/index_status')
 def index_status():
-    """Статус индексного файла index/_search_index.txt: наличие, размер, mtime, записи.
+    """Возвращает статус индексации и информацию о группах.
     
-    Также возвращает информацию о прогрессе индексации если доступна (из status.json).
+    Returns:
+        JSON с полями:
+        - status: idle | running | completed | error
+        - group_status: {fast: pending|running|completed, medium: ..., slow: ...}
+        - current_group: fast | medium | slow (если running)
+        - index_exists: bool
+        - index_size: int (байты)
+        - groups_info: {fast: {files: int, completed: bool}, ...}
     """
     try:
-        # Проверяем наличие progress status файла (increment-013)
+        # Проверяем наличие progress status файла (increment-013/014)
         index_folder = current_app.config.get('INDEX_FOLDER')
         status_json_path = os.path.join(index_folder, 'status.json') if index_folder else None
         progress_data = None
@@ -391,9 +449,15 @@ def index_status():
         exists = os.path.exists(idx)
         
         if not exists:
-            response = {'exists': False}
+            response = {'exists': False, 'index_exists': False}
             if progress_data:
                 response['progress'] = progress_data
+                # Добавляем статусы из progress_data на верхний уровень
+                response['status'] = progress_data.get('status', 'idle')
+                response['group_status'] = progress_data.get('group_status', {})
+                response['current_group'] = progress_data.get('current_group')
+            else:
+                response['status'] = 'idle'
             return jsonify(response)
         
         size = os.path.getsize(idx)
@@ -408,14 +472,27 @@ def index_status():
         
         response = {
             'exists': True,
+            'index_exists': True,
+            'index_size': size,
             'size': size,
             'mtime': mtime,
             'entries': entries
         }
         
+        # Парсим группы из индекса
+        groups_info = _parse_index_groups(idx)
+        if groups_info:
+            response['groups_info'] = groups_info
+        
         # Добавляем информацию о прогрессе если доступна
         if progress_data:
             response['progress'] = progress_data
+            # Добавляем статусы из progress_data на верхний уровень
+            response['status'] = progress_data.get('status', 'completed')
+            response['group_status'] = progress_data.get('group_status', {})
+            response['current_group'] = progress_data.get('current_group')
+        else:
+            response['status'] = 'idle'
         
         return jsonify(response)
     
@@ -426,7 +503,12 @@ def index_status():
 
 @search_bp.get('/view_index')
 def view_index():
-    """Просмотр сводного файла индекса в отдельной вкладке."""
+    """Просмотр сводного файла индекса с автообновлением.
+    
+    Поддерживает query-параметры:
+    - raw=1: показать индекс как есть (с заголовками групп)
+    - raw=0 (default): показать только записи документов (без служебных строк)
+    """
     idx = get_index_path(current_app.config['INDEX_FOLDER'])
     if not os.path.exists(idx):
         return jsonify({'error': 'Индекс не найден'}), 404
@@ -434,7 +516,53 @@ def view_index():
     try:
         with open(idx, 'r', encoding='utf-8', errors='ignore') as f:
             content = f.read()
-        return Response(content, mimetype='text/plain; charset=utf-8')
+        
+        # Добавляем метаинформацию в начало
+        metadata = [
+            f"# Сводный индекс поиска",
+            f"# Размер: {len(content)} байт",
+            f"# Обновлён: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+            f"#",
+            f"# Формат: групповая структура (increment-014)",
+            f"# Группы: FAST (TXT,CSV,HTML) → MEDIUM (DOCX,XLSX,PDF) → SLOW (OCR)",
+            f"#",
+            ""
+        ]
+        
+        # Парсим статистику групп
+        groups_info = _parse_index_groups(idx)
+        for group_name, info in groups_info.items():
+            status = "✅ завершено" if info['completed'] else "⏳ обрабатывается"
+            metadata.append(
+                f"# {group_name.upper()}: {info['files']} файлов, "
+                f"{info['size_bytes']} байт, {status}"
+            )
+        
+        metadata.append("#\n" + "=" * 80 + "\n")
+        
+        # Режим отображения
+        show_raw = request.args.get('raw', '0') == '1'
+        
+        if show_raw:
+            # Показываем как есть
+            full_content = '\n'.join(metadata) + '\n' + content
+        else:
+            # Фильтруем служебные строки
+            lines = content.split('\n')
+            filtered_lines = []
+            for line in lines:
+                # Пропускаем заголовки групп и маркеры
+                if line.startswith('═') or \
+                   line.startswith('[ГРУППА:') or \
+                   line.startswith('<!--') or \
+                   ('Файлов:' in line and 'Статус:' in line):
+                    continue
+                filtered_lines.append(line)
+            
+            full_content = '\n'.join(metadata) + '\n' + '\n'.join(filtered_lines)
+        
+        return Response(full_content, mimetype='text/plain; charset=utf-8')
+    
     except Exception as e:
         current_app.logger.exception('Ошибка чтения сводного файла индекса')
         return jsonify({'error': str(e)}), 500

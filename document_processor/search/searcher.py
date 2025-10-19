@@ -106,8 +106,27 @@ class Searcher:
         return results
 
     def _read_index(self, path: str) -> str:
+        """Читает индекс, игнорируя служебные заголовки групп (increment-014).
+        
+        Фильтрует строки:
+        - Заголовки групп: ═════, [ГРУППА:, <!-- BEGIN_, <!-- END_
+        - Метаинформацию групп: "Файлов: X | Статус: Y"
+        """
         with io.open(path, "r", encoding="utf-8") as f:
-            return f.read()
+            lines = f.readlines()
+        
+        # Фильтруем служебные строки
+        filtered_lines = []
+        for line in lines:
+            # Пропускаем заголовки групп
+            if line.startswith('═') or \
+               line.startswith('[ГРУППА:') or \
+               line.startswith('<!--') or \
+               ('Файлов:' in line and 'Статус:' in line):
+                continue
+            filtered_lines.append(line)
+        
+        return ''.join(filtered_lines)
 
     def _strip_headers(self, text: str) -> List[str]:
         lines = text.splitlines()
