@@ -122,17 +122,10 @@ function handleFiles(e) {
 
 // --- Update Files List ---
 function updateFilesList() {
-    // FR-001, FR-009: Обновлённая версия с поддержкой архивов как виртуальных папок
     return fetch('/files_json')
         .then(res => res.json())
         .then(data => {
-            const { folders = {}, archives = [], file_statuses = {} } = data;
-            
-            // Создаём карту архивов для быстрого доступа
-            const archivesMap = new Map();
-            archives.forEach(archive => {
-                archivesMap.set(archive.archive_path, archive.contents);
-            });
+            const { folders = {}, file_statuses = {} } = data;
             
             // Сохраняем состояния открытых/закрытых папок
             const folderStates = {};
@@ -158,11 +151,7 @@ function updateFilesList() {
                 folderDiv.className = 'folder-container';
                 folderDiv.id = folderId;
                 
-        // Вычисляем агрегированный статус для папки
-        const searchPerformed = (window.searchWasPerformed === true);
-        // Папка до первого поиска должна быть серой, поэтому если поиск не выполнялся — принудительно используем gray
-        const folderStatus = searchPerformed ? calculateFolderStatus(files, file_statuses, archivesMap, searchPerformed) : 'gray';
-        const headerDiv = document.createElement('div');
+                const headerDiv = document.createElement('div');
                 headerDiv.className = 'folder-header';
                 headerDiv.onclick = () => toggleFolder(folderName);
                 
@@ -170,12 +159,6 @@ function updateFilesList() {
                     <span class="folder-icon">📁</span>
                     <span class="folder-name">${escapeHtml(folderName)}</span>
                     <span class="file-count-badge">${files.length}</span>
-                    <span class="traffic-light traffic-light-${folderStatus}" title="Статус: ${folderStatus}"></span>
-                    <button class="delete-folder-btn" title="Удалить папку" onclick="event.stopPropagation(); deleteFolder('${escapeHtml(folderKey)}', '${escapeHtml(folderName)}')">
-                        <svg class="icon-trash" viewBox="0 0 24 24" aria-hidden="true">
-                            <path d="M9 3h6a1 1 0 0 1 1 1v2h4v2h-1v12a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V8H4V6h4V4a1 1 0 0 1 1-1zm1 3h4V5h-4v1zM7 8v12h10V8H7zm3 3h2v7h-2v-7zm4 0h2v7h-2v-7z"></path>
-                        </svg>
-                    </button>
                     <span class="toggle-icon">${isExpanded ? '▼' : '▶'}</span>
                 `;
                 
@@ -185,7 +168,7 @@ function updateFilesList() {
                 
                 // Добавляем файлы
                 files.forEach(file => {
-                    const fileDiv = renderFileItem(file, archivesMap, file_statuses);
+                    const fileDiv = renderFileItem(file, file_statuses);
                     contentDiv.appendChild(fileDiv);
                 });
                 
@@ -224,199 +207,66 @@ function updateFilesList() {
         });
 }
 
-function renderFileItem(file, archivesMap, file_statuses) {
-    // FR-001, FR-009: Рендер элемента файла или архива
+function renderFileItem(file, file_statuses) {
+    // Simplified file item rendering without archives and traffic lights
+    const wrapper = document.createElement('div');
+    wrapper.className = 'file-item-wrapper';
+    wrapper.dataset.filePath = file.path;
+    
     const fileDiv = document.createElement('div');
-    fileDiv.className = 'file-item';
     
     // Получаем статус файла
     const fileStatus = file_statuses[file.path] || {};
     const status = fileStatus.status || 'not_checked';
     const charCount = fileStatus.char_count;
+    const isUnreadable = (status === 'unsupported') || (status === 'error') || (charCount === 0);
     
-    // FR-005: Определяем цвет светофора
-    // Проверяем, есть ли результаты поиска и был ли поиск
-    const hasSearchResults = window.TrafficLights.hasSearchResultsForFile(file.path);
-    const searchPerformed = window.TrafficLights.isSearchPerformed();
-    let trafficLight = window.TrafficLights.getFileTrafficLightColor(status, charCount, hasSearchResults, searchPerformed);
-
+    fileDiv.className = 'file-item' + (isUnreadable ? ' file-disabled' : '');
     
-    // Проверяем, является ли файл архивом
-    if (file.is_archive && archivesMap.has(file.path)) {
-        // FR-008: Это архив - отображаем как раскрываемую папку со словом "Архив" в названии
-        const archiveContents = archivesMap.get(file.path);
-        fileDiv.className = 'folder-container archive-folder';
-        fileDiv.id = `archive-${file.path.replace(/[^a-zA-Z0-9]/g, '-')}`;
-        fileDiv.dataset.path = file.path; // FR-009: Сохраняем путь для localStorage
-        
-    // Вычисляем агрегированный статус для архива; до первого поиска всегда серый
-    const archiveStatus = searchPerformed ? calculateArchiveStatus(archiveContents, file_statuses, searchPerformed) : 'gray';
-        
-        // Проверяем сохранённое состояние архива
-        const savedArchiveState = localStorage.getItem('archive-' + file.path);
-        const isArchiveExpanded = savedArchiveState !== 'collapsed'; // По умолчанию развернуто
-        
-        const archiveHeaderDiv = document.createElement('div');
-        archiveHeaderDiv.className = 'folder-header';
-        archiveHeaderDiv.onclick = () => toggleArchive(file.path);
-        
-        // FR-008: В названии добавляем слово "Архив", отображаем как обычную папку
-        const archiveName = file.name.replace(/\.(zip|rar)$/i, '');
-        archiveHeaderDiv.innerHTML = `
-            <span class="folder-icon">📁</span>
-            <span class="folder-name">${escapeHtml(archiveName)} (Архив)</span>
-            <span class="file-count-badge">${archiveContents.length}</span>
-            <span class="traffic-light traffic-light-${archiveStatus}" title="Статус: ${archiveStatus}"></span>
-            <button class="delete-btn" title="Удалить архив" onclick="event.stopPropagation(); deleteFile('${escapeHtml(file.path)}')">
-                <svg class="icon-trash" viewBox="0 0 24 24" aria-hidden="true">
-                    <path d="M9 3h6a1 1 0 0 1 1 1v2h4v2h-1v12a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V8H4V6h4V4a1 1 0 0 1 1-1zm1 3h4V5h-4v1zM7 8v12h10V8H7zm3 3h2v7h-2v-7zm4 0h2v7h-2v-7z"></path>
-                </svg>
-            </button>
-            <span class="toggle-icon">${isArchiveExpanded ? '▼' : '▶'}</span>
-        `;
-        
-        const archiveContentDiv = document.createElement('div');
-        archiveContentDiv.className = 'folder-content';
-        archiveContentDiv.style.display = isArchiveExpanded ? 'block' : 'none';
-        
-        // Добавляем содержимое архива
-        archiveContents.forEach(entry => {
-            if (entry.status === 'error') {
-                const errorDiv = document.createElement('div');
-                errorDiv.className = 'file-item file-disabled';
-                errorDiv.innerHTML = `
-                    <div class="file-info">
-                        <span class="file-icon">⚠️</span>
-                        <div class="file-details">
-                            <span class="file-name">${escapeHtml(entry.name || file.name)}</span>
-                            <span class="file-error text-danger">${escapeHtml(entry.error || 'Ошибка')}</span>
-                        </div>
-                    </div>
-                `;
-                archiveContentDiv.appendChild(errorDiv);
-            } else if (entry.is_virtual_folder) {
-                // Виртуальная папка внутри архива
-                const folderDiv = document.createElement('div');
-                folderDiv.className = 'file-item virtual-folder';
-                folderDiv.innerHTML = `
-                    <div class="file-info">
-                        <span class="folder-icon">📁</span>
-                        <div class="file-details">
-                            <span class="file-name">${escapeHtml(entry.name)}</span>
-                        </div>
-                    </div>
-                `;
-                archiveContentDiv.appendChild(folderDiv);
-            } else {
-                // Обычный файл внутри архива - тоже нужен контейнер для результатов поиска
-                const entryDiv = document.createElement('div');
-                entryDiv.className = 'file-item-wrapper';
-                entryDiv.setAttribute('data-file-path', entry.path);
-                
-                const icon = entry.is_archive ? '📦' : '📄';
-                
-                // Получаем статус для файла из архива
-                const entryStatus = file_statuses[entry.path] || {};
-                const entryCharCount = entryStatus.char_count || 0;
-                const entryHasResults = window.TrafficLights.hasSearchResultsForFile(entry.path);
-                const entryTrafficLight = window.TrafficLights.getFileTrafficLightColor(entryStatus.status || 'not_checked', entryCharCount, entryHasResults, searchPerformed);
-                const isUnreadable = (entryStatus.status === 'unsupported') || (entryStatus.status === 'error') || (entryCharCount === 0);
-                
-                entryDiv.innerHTML = `
-                    <div class="file-item${isUnreadable ? ' file-disabled' : ''}">
-                        <div class="file-info">
-                            <span class="file-icon">${icon}</span>
-                            <div class="file-details">
-                                ${isUnreadable ? 
-                                    `<span class="file-name" title="Файл недоступен для просмотра/скачивания">${escapeHtml(entry.name)}</span>` :
-                                    `<a class="file-name result-file-link" href="/view/${encodeURIComponent(entry.path)}" target="_blank" rel="noopener">${escapeHtml(entry.name)}</a>`
-                                }
-                                <span class="file-size">${(entry.size / 1024).toFixed(1)} KB</span>
-                                ${entryCharCount !== undefined ? `<span class="file-chars${entryCharCount === 0 ? ' text-danger' : ''}">Символов: ${entryCharCount}</span>` : ''}
-                                ${entryStatus.error ? `<span class="file-error text-danger">${escapeHtml(entryStatus.error)}</span>` : ''}
-                                ${entryStatus.status === 'unsupported' ? `<span class="file-error text-danger">Неподдерживаемый формат</span>` : ''}
-                            </div>
-                        </div>
-                        <span class="traffic-light traffic-light-${entryTrafficLight}" data-status="${entryStatus.status || 'not_checked'}" data-chars="${entryCharCount}" title="Статус: ${entryStatus.status || 'not_checked'}"></span>
-                    </div>
-                    <!-- Контейнер для результатов поиска под файлом из архива -->
-                    <div class="file-search-results" style="display:none;"></div>
-                `;
-                archiveContentDiv.appendChild(entryDiv);
-            }
-        });
-        
-        fileDiv.appendChild(archiveHeaderDiv);
-        fileDiv.appendChild(archiveContentDiv);
+    // Формируем HTML файла
+    const sizeKB = (file.size / 1024).toFixed(1);
+    let fileLink;
+    
+    if (isUnreadable) {
+        fileLink = `<span class="file-name" title="Файл недоступен для просмотра/скачивания">${escapeHtml(file.name)}</span>`;
     } else {
-        // Обычный файл - создаем обертку для поддержки результатов поиска
-        fileDiv.className = 'file-item-wrapper';
-        fileDiv.setAttribute('data-file-path', file.path);
-        
-        // Пересчитываем светофор для обычного файла с учетом поиска
-        trafficLight = window.TrafficLights.getFileTrafficLightColor(status, charCount, hasSearchResults, searchPerformed);
-        
-        const icon = file.is_archive ? '📦' : '📄';
-        const isUnreadable = (status === 'unsupported') || (status === 'error') || (charCount !== undefined && charCount === 0);
-        
-        fileDiv.innerHTML = `
-            <div class="file-item${isUnreadable ? ' file-disabled' : ''}">
-                <div class="file-info">
-                    <span class="file-icon">${icon}</span>
-                    <div class="file-details">
-                        ${isUnreadable ? 
-                            `<span class="file-name" title="Файл недоступен для просмотра/скачивания">${escapeHtml(file.name)}</span>` :
-                            `<a class="file-name result-file-link" href="/view/${encodeURIComponent(file.path)}" target="_blank" rel="noopener">${escapeHtml(file.name)}</a>`
-                        }
-                        <span class="file-size">${(file.size / 1024).toFixed(1)} KB</span>
-                        ${charCount !== undefined ? `<span class="file-chars${charCount === 0 ? ' text-danger' : ''}">Символов: ${charCount}</span>` : ''}
-                        ${fileStatus.error ? `<span class="file-error text-danger">${escapeHtml(fileStatus.error)}</span>` : ''}
-                        ${status === 'unsupported' ? `<span class="file-error text-danger">Неподдерживаемый формат</span>` : ''}
-                    </div>
-                </div>
-                <div class="file-status">
-                    <span class="traffic-light traffic-light-${trafficLight}" data-status="${status}" data-chars="${charCount ?? ''}" title="Статус: ${status}"></span>
-                    <button class="delete-btn" title="Удалить файл" onclick="deleteFile('${escapeHtml(file.path)}')">
-                        <svg class="icon-trash" viewBox="0 0 24 24" aria-hidden="true">
-                            <path d="M9 3h6a1 1 0 0 1 1 1v2h4v2h-1v12a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V8H4V6h4V4a1 1 0 0 1 1-1zm1 3h4V5h-4v1zM7 8v12h10V8H7zm3 3h2v7h-2v-7zm4 0h2v7h-2v-7z"></path>
-                        </svg>
-                    </button>
-                </div>
+        fileLink = `<a class="file-name result-file-link" href="/view_file/${encodeURIComponent(file.path)}" target="_blank" rel="noopener">${escapeHtml(file.name)}</a>`;
+    }
+    
+    let charCountHtml = '';
+    if (charCount !== null && charCount !== undefined) {
+        charCountHtml = `<span class="file-chars${charCount === 0 ? ' text-danger' : ''}">Символов: ${charCount}</span>`;
+    }
+    
+    let errorHtml = '';
+    if (fileStatus.error) {
+        errorHtml = `<span class="file-error text-danger">${escapeHtml(fileStatus.error)}</span>`;
+    } else if (status === 'unsupported') {
+        errorHtml = `<span class="file-error text-danger">Неподдерживаемый формат</span>`;
+    }
+    
+    fileDiv.innerHTML = `
+        <div class="file-info">
+            <span class="file-icon">📄</span>
+            <div class="file-details">
+                ${fileLink}
+                <span class="file-size">${sizeKB} KB</span>
+                ${charCountHtml}
+                ${errorHtml}
             </div>
-            <!-- FR-003, FR-004, FR-005: Контейнер для результатов поиска под файлом -->
-            <div class="file-search-results" style="display:none;"></div>
-        `;
-    }
+        </div>
+    `;
     
-    return fileDiv;
-}
-
-function toggleArchive(archivePath) {
-    // FR-008, FR-009: Переключение отображения содержимого архива (как обычная папка)
-    const archiveId = `archive-${archivePath.replace(/[^a-zA-Z0-9]/g, '-')}`;
-    const archiveDiv = document.getElementById(archiveId);
+    wrapper.appendChild(fileDiv);
     
-    if (archiveDiv) {
-        const contentDiv = archiveDiv.querySelector('.folder-content');
-        const toggleIcon = event.currentTarget.querySelector('.toggle-icon');
-        
-        if (contentDiv) {
-            const isHidden = contentDiv.style.display === 'none';
-            contentDiv.style.display = isHidden ? 'block' : 'none';
-            if (toggleIcon) {
-                toggleIcon.textContent = isHidden ? '▼' : '▶';
-            }
-            // FR-009: Сохраняем состояние архива в localStorage
-            try {
-                localStorage.setItem('archive-' + archivePath, isHidden ? 'expanded' : 'collapsed');
-            } catch (e) {
-                console.warn('Не удалось сохранить состояние архива в localStorage', e);
-            }
-        }
-    }
+    // Контейнер для результатов поиска
+    const resultsContainer = document.createElement('div');
+    resultsContainer.className = 'file-search-results';
+    resultsContainer.style.display = 'none';
+    wrapper.appendChild(resultsContainer);
+    
+    return wrapper;
 }
-
-// FR-005: Helper function to get traffic light color based on status
 
 // --- Search ---
 
@@ -487,50 +337,16 @@ async function performSearch(terms) {
                         resultsContainer.innerHTML = perTermHtml;
                         resultsContainer.style.display = 'block';
                         fileWrapper.setAttribute('data-has-results', '1');
-                    }
                 }
             });
             
-            // Обновляем светофоры после установки результатов
-            updateTrafficLightsAfterSearch();
-            
-            // Сортировка: файлы с результатами наверх, проиндексированные в середине, неиндексированные вниз
-            document.querySelectorAll('.folder-content').forEach(contentDiv => {
-                const wrappers = Array.from(contentDiv.querySelectorAll(':scope > .file-item-wrapper, :scope > .file-item, :scope > .folder-container.archive-folder'));
-                
-                const scored = wrappers.map(el => {
-                    // Получаем фактический цвет светофора из DOM
-                    const trafficLight = el.querySelector('.traffic-light');
-                    let lightColor = window.TrafficLights.COLORS.GRAY;
-                    
-                    if (trafficLight) {
-                        if (trafficLight.classList.contains('traffic-light-red')) {
-                            lightColor = window.TrafficLights.COLORS.RED;
-                        } else if (trafficLight.classList.contains('traffic-light-green')) {
-                            lightColor = window.TrafficLights.COLORS.GREEN;
-                        } else if (trafficLight.classList.contains('traffic-light-yellow')) {
-                            lightColor = window.TrafficLights.COLORS.YELLOW;
-                        } else if (trafficLight.classList.contains('traffic-light-gray')) {
-                            lightColor = window.TrafficLights.COLORS.GRAY;
-                        }
-                    }
-                    
-                    const score = window.TrafficLights.getTrafficLightSortPriority(lightColor);
-                    return { el, score };
-                });
-                
-                scored.sort((a, b) => b.score - a.score);
-                scored.forEach(({ el }) => contentDiv.appendChild(el));
-            });
-
             // Раскрываем папки с результатами, если они не были вручную свернуты
             expandFoldersWithResults();
 
             highlightSnippets(t);
             applyQueryToViewLinks();
     } else {
-        // Нет результатов, но нужно обновить светофоры для отображения жёлтого цвета
-        updateTrafficLightsAfterSearch();
+        // Нет результатов
     }
 }
 
@@ -949,13 +765,9 @@ document.addEventListener('DOMContentLoaded', function() {
     
     refreshIndexStatus();
     setInterval(refreshIndexStatus, 8000);
-    // Первая инициализация списка файлов через API, чтобы отрисовать светофоры
+    // Первая инициализация списка файлов через API
     updateFilesList().then(() => {
         applyQueryToViewLinks();
-        // Если поиск уже выполнялся ранее и результаты присутствуют в DOM, пересчитаем светофоры
-        if (window.TrafficLights && window.TrafficLights.isSearchPerformed()) {
-            updateTrafficLightsAfterSearch();
-        }
     });
 });
 
