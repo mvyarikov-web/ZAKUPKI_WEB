@@ -19,10 +19,19 @@ class DocumentProcessor:
         self.indexer = Indexer(max_depth=max_depth, archive_depth=archive_depth)
         self.searcher = Searcher()
 
-    def create_search_index(self, root_folder: str) -> str:
+    def create_search_index(self, root_folder: str, use_groups: bool = False) -> str:
+        """Создаёт поисковый индекс для файлов в указанной папке.
+        
+        Args:
+            root_folder: корневая папка для индексации
+            use_groups: если True, использует групповую индексацию (increment-014)
+        
+        Returns:
+            путь к созданному индексу
+        """
         if not os.path.isdir(root_folder):
             raise ValueError(f"Folder not found: {root_folder}")
-        return self.indexer.create_index(root_folder)
+        return self.indexer.create_index(root_folder, use_groups=use_groups)
 
     def search_keywords(self, index_path: str, keywords: List[str], context: int = 80) -> List[Dict]:
         return self.searcher.search(index_path, keywords, context=context)
