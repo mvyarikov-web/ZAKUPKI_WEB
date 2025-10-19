@@ -69,3 +69,6 @@ __pycache__/
 
 # Backup files
 app_old.py
+# AI Analysis prompts (keep folder structure, ignore content)
+/PROMPT/*
+!/PROMPT/.gitkeep
