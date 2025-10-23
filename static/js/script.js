@@ -246,8 +246,10 @@ function renderFileItem(file, file_statuses) {
         errorHtml = `<span class="file-error text-danger">Неподдерживаемый формат</span>`;
     }
     
+    const checkboxHtml = `<input type="checkbox" class="file-checkbox" data-file-path="${escapeHtml(file.path)}" style="margin-right:8px;">`;
     fileDiv.innerHTML = `
         <div class="file-info">
+            ${checkboxHtml}
             <span class="file-icon">📄</span>
             <div class="file-details">
                 ${fileLink}
@@ -636,7 +638,6 @@ function pollIndexGroupStatus(fill, text) {
     return new Promise((resolve, reject) => {
         const maxAttempts = 120; // 120 секунд максимум (2 минуты)
         let attempts = 0;
-        let lastProgress = 10;
         
         const checkStatus = () => {
             attempts++;
@@ -647,42 +648,26 @@ function pollIndexGroupStatus(fill, text) {
                     const status = data.status || 'idle';
                     const groupStatus = data.group_status || {};
                     const currentGroup = data.current_group || '';
-                    const totalFiles = data.total_files || 0;
-                    const processedFiles = data.processed_files || 0;
                     
-                    // Вычисляем прогресс на основе обработанных файлов
+                    // Обновляем прогресс-бар и текст
                     let progress = 10;
                     let statusText = 'Построение индекса…';
                     
-                    // Если есть информация о файлах, используем её для точного прогресса
-                    if (totalFiles > 0 && processedFiles > 0) {
-                        const fileProgress = Math.floor((processedFiles / totalFiles) * 100);
-                        progress = Math.max(10, Math.min(95, fileProgress)); // От 10% до 95%
-                        statusText = `🔄 Обработка: ${processedFiles}/${totalFiles} файлов`;
-                    } else {
-                        // Иначе используем групповой прогресс
-                        if (groupStatus.fast === 'completed') {
-                            progress = 33;
-                            statusText = '✅ Быстрые файлы готовы';
-                        }
-                        if (groupStatus.medium === 'completed') {
-                            progress = 66;
-                            statusText = '✅ Средние файлы готовы';
-                        }
-                        if (groupStatus.slow === 'completed') {
-                            progress = 95;
-                            statusText = '🔄 Завершение индексации…';
-                        }
+                    if (groupStatus.fast === 'completed') {
+                        progress = 33;
+                        statusText = '✅ Быстрые файлы готовы';
                     }
-                    
-                    // Завершено
-                    if (status === 'completed') {
+                    if (groupStatus.medium === 'completed') {
+                        progress = 66;
+                        statusText = '✅ Средние файлы готовы';
+                    }
+                    if (groupStatus.slow === 'completed' || status === 'completed') {
                         progress = 100;
                         statusText = '✅ Все файлы обработаны';
                     }
                     
                     // Добавляем индикацию текущей группы, если индексация идёт
-                    if (status === 'running' && currentGroup && !totalFiles) {
+                    if (status === 'running' && currentGroup) {
                         const groupLabels = {
                             'fast': '🔄 Обработка быстрых файлов',
                             'medium': '🔄 Обработка средних файлов',
@@ -704,8 +689,6 @@ function pollIndexGroupStatus(fill, text) {
                         }
                     }
                     if (text) text.textContent = statusText;
-                    
-                    lastProgress = progress;
                     
                     // Обновляем список файлов и статус индекса после каждой группы
                     if (progress >= 33) {
@@ -938,6 +921,10 @@ function refreshIndexStatus() {
         .then(data => {
             // Сохраняем последний ответ для использования времени групп
             window.__lastIndexStatus = data;
+            
+            // Проверяем статус индексации
+            const currentStatus = data.status || 'idle';
+            
             if (!data.exists) {
                 indexStatus.textContent = 'Сводный файл: не сформирован';
                 indexStatus.style.color = '#a00';
@@ -945,13 +932,23 @@ function refreshIndexStatus() {
                 const size = (data.size || 0);
                 const sizeKb = (size / 1024).toFixed(1);
                 const entries = (data.entries == null) ? '—' : data.entries;
-                indexStatus.textContent = `Сводный файл: сформирован, ${sizeKb} KB, записей: ${entries}`;
-                indexStatus.style.color = '#2a2';
+                
+                // Если индексация только что завершилась, показываем актуальный статус
+                if (currentStatus === 'completed' || currentStatus === 'idle') {
+                    indexStatus.textContent = `Сводный файл: сформирован, ${sizeKb} KB, записей: ${entries}`;
+                    indexStatus.style.color = '#2a2';
+                } else if (currentStatus === 'running') {
+                    indexStatus.textContent = `Сводный файл: обновляется… (${sizeKb} KB)`;
+                    indexStatus.style.color = '#f90';
+                } else {
+                    indexStatus.textContent = `Сводный файл: сформирован, ${sizeKb} KB, записей: ${entries}`;
+                    indexStatus.style.color = '#2a2';
+                }
             }
             
             // Обновляем индикатор групп (increment-014)
             if (data.group_status) {
-                updateGroupsIndicator(data.group_status, data.status || 'idle');
+                updateGroupsIndicator(data.group_status, currentStatus);
             }
         })
         .catch(() => {

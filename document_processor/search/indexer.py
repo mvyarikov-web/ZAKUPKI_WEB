@@ -931,7 +931,30 @@ class Indexer:
         return "\n".join(texts).strip()
 
     def _extract_doc(self, path: str) -> str:
-        # Best-effort: simple binary heuristic + cp1251 decode fallback
+        """Извлечение текста из устаревшего формата DOC.
+        
+        Стратегия (с fallback):
+        1. Попытка через antiword (системная утилита)
+        2. Попытка через textract (Python библиотека)
+        3. Попытка через python-docx (иногда работает для простых DOC)
+        4. Fallback: бинарный парсинг с cp1251
+        """
+        # Попытка 1: antiword (лучшее качество для старых DOC)
+        text = self._try_antiword(path)
+        if text and len(text.strip()) > 50:  # Минимальный порог качества
+            return text
+        
+        # Попытка 2: textract (универсальная библиотека)
+        text = self._try_textract(path)
+        if text and len(text.strip()) > 50:
+            return text
+        
+        # Попытка 3: python-docx (иногда работает для простых DOC)
+        text = self._try_docx_for_doc(path)
+        if text and len(text.strip()) > 50:
+            return text
+        
+        # Fallback: бинарный парсинг (низкое качество, но лучше чем ничего)
         try:
             with open(path, "rb") as f:
                 data = f.read()
@@ -948,6 +971,55 @@ class Indexer:
                 return filtered.decode("latin-1", errors="ignore")
         except Exception:
             return ""
+    
+    def _try_antiword(self, path: str) -> str:
+        """Попытка извлечения через antiword (системная утилита)."""
+        try:
+            import subprocess
+            result = subprocess.run(
+                ['antiword', path],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False
+            )
+            if result.returncode == 0 and result.stdout:
+                return result.stdout.strip()
+        except (FileNotFoundError, subprocess.TimeoutExpired, Exception):
+            # antiword не установлен или ошибка — пропускаем
+            pass
+        return ""
+    
+    def _try_textract(self, path: str) -> str:
+        """Попытка извлечения через textract библиотеку."""
+        try:
+            import textract
+            text = textract.process(path, encoding='utf-8').decode('utf-8')
+            return text.strip()
+        except ImportError:
+            # textract не установлен
+            pass
+        except Exception:
+            # Ошибка извлечения
+            pass
+        return ""
+    
+    def _try_docx_for_doc(self, path: str) -> str:
+        """Попытка открыть DOC через python-docx (работает для некоторых простых файлов)."""
+        try:
+            import docx
+            d = docx.Document(path)
+            parts = [p.text for p in d.paragraphs if p.text]
+            # tables
+            for table in d.tables:
+                for row in table.rows:
+                    row_txt = [cell.text for cell in row.cells if cell.text]
+                    if row_txt:
+                        parts.append(" | ".join(row_txt))
+            return "\n".join(parts).strip()
+        except Exception:
+            pass
+        return ""
 
     def _extract_xlsx(self, path: str, max_rows: int = 1000, max_sheets: int = 10) -> str:
         """FR-004: Извлечение текста из XLSX с ограничениями для оптимизации."""

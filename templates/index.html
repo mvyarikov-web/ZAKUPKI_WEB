@@ -88,9 +88,7 @@
                             <div class="file-item-wrapper" data-file-path="{{ file.path }}">
                                 <div class="file-item{% if is_unreadable %} file-disabled{% endif %}">
                                     <div class="file-info">
-                                        {% if not is_unreadable %}
                                         <input type="checkbox" class="file-checkbox" data-file-path="{{ file.path }}" style="margin-right: 8px;">
-                                        {% endif %}
                                         <span class="file-icon">📄</span>
                                         <div class="file-details">
                                             {% if is_unreadable %}

@@ -449,6 +449,13 @@ section h2 {
     font-size: 24px;
 }
 
+/* Чекбоксы слева от иконки файла */
+.file-info .file-checkbox {
+    width: 18px;
+    height: 18px;
+    accent-color: #3498db;
+}
+
 .file-details {
     display: flex;
     flex-direction: column;
@@ -883,14 +890,27 @@ section h2 {
 /* AI Analysis Styles */
 .file-checkbox {
     cursor: pointer;
-    width: 16px;
-    height: 16px;
+    width: 18px;
+    height: 18px;
     vertical-align: middle;
+    margin: 0;
+    accent-color: #3498db; /* Цвет галочки */
+    flex-shrink: 0; /* Не сжимать при недостатке места */
+}
+
+.file-checkbox:hover {
+    transform: scale(1.1);
+    transition: transform 0.2s ease;
+}
+
+.file-checkbox:checked {
+    background-color: #3498db;
 }
 
 .file-checkbox:disabled {
     cursor: not-allowed;
-    opacity: 0.5;
+    opacity: 0.4;
+    filter: grayscale(100%);
 }
 
 .spinner {

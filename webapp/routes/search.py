@@ -4,7 +4,7 @@ import re
 import shutil
 import json
 import html as htmllib
-from datetime import datetime
+from datetime import datetime, timedelta
 from flask import Blueprint, request, jsonify, current_app, Response
 from document_processor import DocumentProcessor
 from document_processor.search.searcher import Searcher
@@ -515,7 +515,20 @@ def index_status():
         if progress_data:
             response['progress'] = progress_data
             # Добавляем статусы из progress_data на верхний уровень
-            response['status'] = progress_data.get('status', 'completed')
+            prog_status = progress_data.get('status', 'completed')
+            # Если индекс существует и статус в progress_data 'running', но индекс уже полный,
+            # значит индексация завершилась — показываем completed
+            if prog_status == 'running' and entries and entries > 0:
+                # Проверяем timestamp: если статус не обновлялся > 10 секунд, считаем завершённым
+                try:
+                    updated_at = progress_data.get('updated_at')
+                    if updated_at:
+                        last_update = datetime.fromisoformat(updated_at)
+                        if datetime.now() - last_update > timedelta(seconds=10):
+                            prog_status = 'completed'
+                except Exception:
+                    pass
+            response['status'] = prog_status
             response['group_status'] = progress_data.get('group_status', {})
             response['current_group'] = progress_data.get('current_group')
         else:
