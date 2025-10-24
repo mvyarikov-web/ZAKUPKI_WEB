@@ -1025,23 +1025,50 @@ class Indexer:
         """FR-004: Извлечение текста из XLSX с ограничениями для оптимизации."""
         try:
             import openpyxl  # type: ignore
-            wb = openpyxl.load_workbook(path, data_only=True)
-            out: List[str] = []
-            # FR-004: Ограничиваем количество листов
-            for ws in wb.worksheets[:max_sheets]:
-                out.append(f"Лист: {ws.title}")
-                row_count = 0
-                for row in ws.iter_rows(values_only=True):
-                    # FR-004: Ограничиваем количество строк на листе
-                    if row_count >= max_rows:
-                        break
-                    vals = [str(v) for v in row if v is not None]
-                    if vals:
-                        out.append(" | ".join(vals))
-                        row_count += 1
-            return "\n".join(out).strip()
+            # read_only снижает потребление памяти и ускоряет чтение больших файлов
+            wb = openpyxl.load_workbook(path, data_only=True, read_only=True, keep_links=False)
         except Exception:
+            # Ошибка открытия книги — логируем и выходим
+            self._log.exception("Не удалось открыть XLSX: %s", path)
             return ""
+
+        out: List[str] = []
+        try:
+            # FR-004: Ограничиваем количество листов
+            sheets = list(wb.worksheets)[:max_sheets]
+            for ws in sheets:
+                try:
+                    out.append(f"Лист: {ws.title}")
+                except Exception:
+                    out.append("Лист: (без названия)")
+                row_count = 0
+                try:
+                    for row in ws.iter_rows(values_only=True):
+                        if row_count >= max_rows:
+                            break
+                        vals = []
+                        for v in row:
+                            if v is None:
+                                continue
+                            try:
+                                vals.append(str(v))
+                            except Exception:
+                                # Непредставимое значение — пропускаем ячейку
+                                continue
+                        if vals:
+                            out.append(" | ".join(vals))
+                            row_count += 1
+                except Exception:
+                    # Проблема на уровне листа — продолжаем со следующим
+                    self._log.exception("Ошибка чтения листа XLSX: %s", getattr(ws, 'title', '(unknown)'))
+                    continue
+        finally:
+            try:
+                wb.close()
+            except Exception:
+                pass
+
+        return "\n".join(out).strip()
 
     def _extract_xls(self, path: str, max_rows: int = 1000, max_sheets: int = 10) -> str:
         """FR-004: Извлечение текста из XLS с ограничениями для оптимизации."""
