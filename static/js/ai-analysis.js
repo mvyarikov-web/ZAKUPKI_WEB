@@ -43,11 +43,11 @@
                 return;
             }
             
-            // Загружаем последний промпт
-            loadLastPrompt();
-            
-            // Обновляем информацию
-            updatePromptInfo(selectedFiles);
+            // Загружаем последний промпт и затем обновляем информацию
+            loadLastPrompt().then(() => {
+                // Обновляем информацию после загрузки промпта
+                updatePromptInfo(selectedFiles);
+            });
             
             // Показываем модальное окно
             aiPromptModal.style.display = 'block';
@@ -120,16 +120,65 @@
             selectedFilesCount.textContent = `Файлов выбрано: ${selectedFiles.length}`;
         }
         
-        // Подсчитываем примерный размер
-        if (estimatedSize) {
-            const promptLength = aiPromptText.value.length;
-            estimatedSize.textContent = `Размер промпта: ${promptLength} символов. Подсчёт размера текста...`;
-        }
+        // Получаем актуальные размеры с сервера
+        updateSizeInfo(selectedFiles, aiPromptText.value);
+    }
+    
+    // Обновить информацию о размерах
+    function updateSizeInfo(selectedFiles, prompt) {
+        if (!estimatedSize) return;
+        
+        estimatedSize.textContent = 'Подсчёт размера...';
+        
+        fetch('/ai_analysis/get_text_size', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                file_paths: selectedFiles,
+                prompt: prompt
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                const textSize = data.text_size || 0;
+                const promptSize = data.prompt_size || 0;
+                const totalSize = data.total_size || 0;
+                const maxSize = data.max_size || 4096;
+                const exceeds = data.exceeds_limit || false;
+                const excess = data.excess || 0;
+                
+                let sizeText = `📄 Документ: ${textSize.toLocaleString()} симв. | 📝 Промпт: ${promptSize.toLocaleString()} симв.\n`;
+                sizeText += `📊 Итого: ${totalSize.toLocaleString()} симв. | ✅ Лимит: ${maxSize.toLocaleString()} симв.`;
+                
+                if (exceeds) {
+                    sizeText += `\n⚠️ ПРЕВЫШЕНИЕ: ${excess.toLocaleString()} симв. — требуется оптимизация!`;
+                    estimatedSize.style.color = '#d32f2f';
+                    estimatedSize.style.fontWeight = 'bold';
+                } else {
+                    const remaining = maxSize - totalSize;
+                    sizeText += `\n✓ Запас: ${remaining.toLocaleString()} симв.`;
+                    estimatedSize.style.color = '#2e7d32';
+                    estimatedSize.style.fontWeight = 'normal';
+                }
+                
+                estimatedSize.textContent = sizeText;
+            } else {
+                estimatedSize.textContent = `Ошибка подсчёта: ${data.message}`;
+                estimatedSize.style.color = '#d32f2f';
+            }
+        })
+        .catch(error => {
+            estimatedSize.textContent = `Ошибка подсчёта размера: ${error}`;
+            estimatedSize.style.color = '#d32f2f';
+        });
     }
 
     // Загрузить последний использованный промпт
     function loadLastPrompt() {
-        fetch('/ai_analysis/prompts/last')
+        return fetch('/ai_analysis/prompts/last')
             .then(response => response.json())
             .then(data => {
                 if (data.success && data.prompt) {
@@ -144,14 +193,14 @@
     // Сохранить промпт
     if (savePromptBtn) {
         savePromptBtn.addEventListener('click', function() {
-            const prompt = aiPromptText.value.trim();
+            const promptText = aiPromptText.value.trim();
             
-            if (!prompt) {
+            if (!promptText) {
                 showMessage('Промпт пуст', 'error');
                 return;
             }
             
-            const filename = prompt('Введите имя файла для сохранения промпта (без расширения):');
+            const filename = window.prompt('Введите имя файла для сохранения промпта (без расширения):');
             
             if (!filename) {
                 return;
@@ -163,7 +212,7 @@
                     'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({
-                    prompt: prompt,
+                    prompt: promptText,
                     filename: filename
                 })
             })
@@ -281,6 +330,20 @@
         });
     }
 
+    // Обновить размеры при изменении промпта
+    if (aiPromptText) {
+        let updateTimeout;
+        aiPromptText.addEventListener('input', function() {
+            clearTimeout(updateTimeout);
+            updateTimeout = setTimeout(() => {
+                const selectedFiles = getSelectedFiles();
+                if (selectedFiles.length > 0) {
+                    updateSizeInfo(selectedFiles, this.value);
+                }
+            }, 500); // Обновляем с задержкой, чтобы не спамить запросы
+        });
+    }
+    
     // Начать AI анализ
     if (startAiAnalysisBtn) {
         startAiAnalysisBtn.addEventListener('click', function() {
@@ -326,6 +389,9 @@
                     aiResultText.value = data.response;
                     aiResultModal.style.display = 'block';
                 } else {
+                    // Возвращаем пользователя в окно настроек
+                    aiPromptModal.style.display = 'block';
+                    
                     // Если превышен лимит, показываем информацию
                     if (data.current_size && data.max_size) {
                         const msg = `${data.message}\n\nТекущий размер: ${data.current_size} символов\nМаксимальный размер: ${data.max_size} символов\nПревышение: ${data.excess} символов\n\nИспользуйте кнопку "Оптимизировать текст" или отредактируйте промпт.`;
@@ -335,6 +401,9 @@
                         if (data.text) {
                             currentText = data.text;
                         }
+                        
+                        // Обновляем информацию о размерах в окне
+                        updateSizeInfo(selectedFiles, prompt);
                     } else {
                         showMessage(data.message, 'error');
                     }
@@ -342,6 +411,7 @@
             })
             .catch(error => {
                 aiProgressModal.style.display = 'none';
+                aiPromptModal.style.display = 'block';
                 showMessage('Ошибка AI анализа: ' + error, 'error');
             });
         });

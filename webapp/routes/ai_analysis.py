@@ -2,6 +2,7 @@
 import os
 from flask import Blueprint, request, jsonify, current_app
 from webapp.services.gpt_analysis import GPTAnalysisService, PromptManager
+from webapp.services.indexing import get_index_path
 from webapp.services.state import FilesState
 from document_processor.core import DocumentProcessor
 
@@ -13,6 +14,84 @@ def _get_files_state():
     """Получить экземпляр FilesState."""
     results_file = current_app.config['SEARCH_RESULTS_FILE']
     return FilesState(results_file)
+
+
+@ai_analysis_bp.route('/get_text_size', methods=['POST'])
+def get_text_size():
+    """
+    Получить размер текста для выбранных файлов без выполнения анализа.
+    
+    Ожидает JSON:
+    {
+        "file_paths": ["path1", "path2", ...],
+        "prompt": "текст промпта"
+    }
+    
+    Returns:
+        JSON с информацией о размерах
+    """
+    try:
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({
+                'success': False,
+                'message': 'Не переданы данные'
+            }), 400
+        
+        file_paths = data.get('file_paths', [])
+        prompt = data.get('prompt', '')
+        
+        if not file_paths:
+            return jsonify({
+                'success': False,
+                'message': 'Не выбраны файлы для анализа'
+            }), 400
+        
+        # Собираем текст из индекса
+        index_folder = current_app.config.get('INDEX_FOLDER')
+        index_path = get_index_path(index_folder) if index_folder else None
+
+        if not index_path or not os.path.exists(index_path):
+            return jsonify({
+                'success': False,
+                'message': 'Сводный индекс не найден. Постройте индекс через кнопку «Построить индекс».'
+            }), 400
+
+        combined_text = _extract_text_from_index_for_files(file_paths, index_path)
+
+        if not combined_text:
+            upload_folder = current_app.config['UPLOAD_FOLDER']
+            combined_text = _extract_text_from_files(file_paths, upload_folder)
+        
+        if not combined_text:
+            return jsonify({
+                'success': False,
+                'message': 'Не удалось извлечь текст из файлов'
+            }), 400
+        
+        # Считаем размеры
+        text_size = len(combined_text)
+        prompt_size = len(prompt)
+        total_size = text_size + prompt_size + 2  # +2 для переноса строк
+        max_size = current_app.config.get('GPT_MAX_REQUEST_SIZE', 4096)
+        
+        return jsonify({
+            'success': True,
+            'text_size': text_size,
+            'prompt_size': prompt_size,
+            'total_size': total_size,
+            'max_size': max_size,
+            'exceeds_limit': total_size > max_size,
+            'excess': max(0, total_size - max_size)
+        }), 200
+            
+    except Exception as e:
+        current_app.logger.exception(f'Ошибка в /ai_analysis/get_text_size: {e}')
+        return jsonify({
+            'success': False,
+            'message': f'Ошибка получения размера: {str(e)}'
+        }), 500
 
 
 @ai_analysis_bp.route('/analyze', methods=['POST'])
@@ -57,9 +136,23 @@ def analyze():
         
         current_app.logger.info(f'AI анализ: получено {len(file_paths)} файлов')
         
-        # Собираем текст из выбранных файлов
-        upload_folder = current_app.config['UPLOAD_FOLDER']
-        combined_text = _extract_text_from_files(file_paths, upload_folder)
+        # Собираем текст из индекса (FR-003: источник данных — только индекс)
+        index_folder = current_app.config.get('INDEX_FOLDER')
+        index_path = get_index_path(index_folder) if index_folder else None
+
+        if not index_path or not os.path.exists(index_path):
+            return jsonify({
+                'success': False,
+                'message': 'Сводный индекс не найден. Постройте индекс через кнопку «Построить индекс».'
+            }), 400
+
+        combined_text = _extract_text_from_index_for_files(file_paths, index_path)
+
+        # Безопасный фолбэк: если по какой-то причине текста нет в индексе (не должен происходить при валидном индексе),
+        # пробуем старый способ извлечения из исходных файлов. Это не блокирует UI и сработает только точечно.
+        if not combined_text:
+            upload_folder = current_app.config['UPLOAD_FOLDER']
+            combined_text = _extract_text_from_files(file_paths, upload_folder)
         
         if not combined_text:
             return jsonify({
@@ -330,3 +423,72 @@ def _extract_text_from_files(file_paths, upload_folder):
             current_app.logger.error(f'Ошибка извлечения текста из {rel_path}: {e}')
     
     return '\n'.join(combined_text)
+
+
+def _extract_text_from_index_for_files(file_paths, index_path: str) -> str:
+    """Извлекает текст для набора файлов из сводного индекса.
+
+    Использует маркеры начала/конца документа, чтобы получить тело, и не обращается к исходным файлам.
+    Совместимо с виртуальными путями из архивов (zip://, rar://). Возвращает объединённый текст
+    c простыми разделителями между файлами.
+
+    Args:
+        file_paths: Список относительных путей к файлам (как в UI/индексе)
+        index_path: Полный путь к '_search_index.txt'
+
+    Returns:
+        Строка объединённого текста
+    """
+    DOC_START_MARKER = "<<< НАЧАЛО ДОКУМЕНТА >>>"
+    DOC_END_MARKER = "<<< КОНЕЦ ДОКУМЕНТА >>>"
+
+    try:
+        import re
+        # Читаем индекс один раз для эффективности
+        with open(index_path, 'r', encoding='utf-8', errors='ignore') as f:
+            content = f.read()
+
+        chunks: list[str] = []
+
+        for rel_path in file_paths:
+            try:
+                # Нормализуем для поиска по индексу
+                norm = (rel_path or '').replace('\\', '/')
+                norm_clean = re.sub(r'^(zip://|rar://)', '', norm)
+
+                # Пытаемся найти соответствующий заголовок
+                patterns = [
+                    rf"ЗАГОЛОВОК: {re.escape(norm)}\n",
+                    rf"ЗАГОЛОВОК: {re.escape(norm_clean)}\n",
+                    rf"ЗАГОЛОВОК: .*{re.escape(os.path.basename(norm))}\n",
+                    rf"ЗАГОЛОВОК: .*{re.escape(os.path.basename(norm_clean))}\n",
+                ]
+
+                extracted = ''
+                for pat in patterns:
+                    for m in re.finditer(pat, content, re.MULTILINE | re.IGNORECASE):
+                        start_pos = content.find(DOC_START_MARKER, m.end())
+                        if start_pos == -1:
+                            continue
+                        end_pos = content.find(DOC_END_MARKER, start_pos + len(DOC_START_MARKER))
+                        if end_pos == -1:
+                            body = content[start_pos + len(DOC_START_MARKER):].strip()
+                        else:
+                            body = content[start_pos + len(DOC_START_MARKER):end_pos].strip()
+                        if body:
+                            extracted = body
+                            break
+                    if extracted:
+                        break
+
+                if extracted:
+                    chunks.append(f"=== {os.path.basename(rel_path)} ===\n{extracted}\n")
+                else:
+                    current_app.logger.debug("Текст в индексе не найден для: %s", rel_path)
+            except Exception:
+                current_app.logger.debug("Ошибка извлечения из индекса для: %s", rel_path, exc_info=True)
+
+        return '\n'.join(chunks).strip()
+    except Exception:
+        current_app.logger.exception('Сбой извлечения текста из индекса для AI-анализа')
+        return ''
