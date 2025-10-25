@@ -54,6 +54,30 @@ class Config:
     GPT_MAX_TOKENS = 150  # Максимум токенов в ответе
     GPT_TEMPERATURE = 0.7  # Температура генерации (0-1)
     GPT_MAX_REQUEST_SIZE = 4096  # Максимальный размер запроса (символы)
+    
+    # RAG Configuration
+    RAG_ENABLED = os.environ.get('RAG_ENABLED', 'true').lower() in ('true', '1', 'yes')
+    RAG_CHUNK_SIZE = int(os.environ.get('RAG_CHUNK_SIZE', '2000'))  # Токены на чанк
+    RAG_CHUNK_OVERLAP = int(os.environ.get('RAG_CHUNK_OVERLAP', '3'))  # Предложений overlap
+    RAG_TOP_K = int(os.environ.get('RAG_TOP_K', '5'))  # Количество чанков для контекста
+    RAG_MIN_SIMILARITY = float(os.environ.get('RAG_MIN_SIMILARITY', '0.7'))  # Порог релевантности
+    RAG_EMBEDDING_MODEL = os.environ.get('RAG_EMBEDDING_MODEL', 'text-embedding-3-small')
+    RAG_DEFAULT_MODEL = os.environ.get('RAG_DEFAULT_MODEL', 'gpt-4o-mini')
+    RAG_MAX_OUTPUT_TOKENS = int(os.environ.get('RAG_MAX_OUTPUT_TOKENS', '600'))
+    RAG_TEMPERATURE = float(os.environ.get('RAG_TEMPERATURE', '0.3'))  # Более детерминированный
+    RAG_MODELS_FILE = os.path.join(BASE_DIR, 'index', 'models.json')
+    RAG_HYBRID_SEARCH = True  # Семантика + ключевые слова
+    
+    # PostgreSQL Configuration (для векторного поиска)
+    POSTGRES_HOST = os.environ.get('POSTGRES_HOST', 'localhost')
+    POSTGRES_PORT = int(os.environ.get('POSTGRES_PORT', '5432'))
+    POSTGRES_DB = os.environ.get('POSTGRES_DB', 'zakupki_rag')
+    POSTGRES_USER = os.environ.get('POSTGRES_USER', 'postgres')
+    POSTGRES_PASSWORD = os.environ.get('POSTGRES_PASSWORD', '')
+    DATABASE_URL = os.environ.get(
+        'DATABASE_URL',
+        f'postgresql://{POSTGRES_USER}:{POSTGRES_PASSWORD}@{POSTGRES_HOST}:{POSTGRES_PORT}/{POSTGRES_DB}'
+    )
 
 
 class DevConfig(Config):

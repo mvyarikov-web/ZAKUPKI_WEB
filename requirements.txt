@@ -16,6 +16,12 @@ pytest-timeout==2.1.0
 requests==2.31.0
 xlrd==2.0.1
 
+# RAG и векторный поиск
+psycopg2-binary==2.9.9
+pgvector==0.2.5
+openai==1.54.0
+tiktoken==0.8.0
+
 # Опциональные зависимости для модуля анализа текста
 # spacy>=3.0.0
 # ru_core_news_sm (устанавливается через: python -m spacy download ru_core_news_sm)
