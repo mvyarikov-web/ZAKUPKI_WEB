@@ -153,10 +153,9 @@
         });
     }
 
-    // Получить выбранные файлы
+    // Используем глобальную функцию getSelectedFiles из script.js
     function getSelectedFiles() {
-        const checkboxes = document.querySelectorAll('.file-checkbox:checked');
-        return Array.from(checkboxes).map(cb => cb.dataset.filePath);
+        return window.getSelectedFiles ? window.getSelectedFiles() : [];
     }
 
     // Загрузить модели
@@ -494,10 +493,10 @@
         return div.innerHTML;
     }
 
+    // Используем глобальную функцию showMessage из script.js
     function showMessage(message, type) {
-        // Переиспользуем существующую функцию из script.js, если есть
-        if (typeof window.showMessage === 'function') {
-            window.showMessage(message, type);
+        if (window.showMessage) {
+            window.showMessage(message);
         } else {
             alert(message);
         }

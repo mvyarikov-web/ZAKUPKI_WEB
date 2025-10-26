@@ -58,7 +58,8 @@ function handleFiles(e) {
             if (any.webkitdirectory && any.path) {
                 // Если доступен полный путь - используем его
                 const fullPath = any.path.replace('/' + any.name, '').replace(folderPath, '');
-                if (selectedFolderPathEl) selectedFolderPathEl.textContent = fullPath + '/' + folderPath;
+                const displayPath = (fullPath ? fullPath + '/' : '') + folderPath;
+                if (selectedFolderPathEl) selectedFolderPathEl.textContent = displayPath;
             } else {
                 // Иначе показываем относительный путь как есть
                 if (selectedFolderPathEl) selectedFolderPathEl.textContent = folderPath;
@@ -120,6 +121,8 @@ function handleFiles(e) {
         uploadProgress.style.display = 'none';
     });
 }
+
+
 
 // --- Update Files List ---
 function updateFilesList() {
@@ -246,7 +249,11 @@ function renderFileItem(file, file_statuses) {
         errorHtml = `<span class="file-error text-danger">Неподдерживаемый формат</span>`;
     }
     
-    const checkboxHtml = `<input type="checkbox" class="file-checkbox" data-file-path="${escapeHtml(file.path)}" style="margin-right:8px;">`;
+    // Чекбокс показываем только если файл проиндексирован (char_count > 0)
+    const showCheckbox = !(charCount === 0);
+    const checkboxHtml = showCheckbox
+        ? `<input type="checkbox" class="file-checkbox" data-file-path="${escapeHtml(file.path)}" style="margin-right:8px;">`
+        : '';
     fileDiv.innerHTML = `
         <div class="file-info">
             ${checkboxHtml}
@@ -830,6 +837,16 @@ function showMessage(msg) {
     modalMessage.textContent = msg;
     messageModal.style.display = 'flex';
 }
+// Экспортируем в глобальный контекст для использования в модулях
+window.showMessage = showMessage;
+
+// Функция получения выбранных файлов (используется в ai-analysis.js и rag-analysis.js)
+function getSelectedFiles() {
+    const checkboxes = document.querySelectorAll('.file-checkbox:checked');
+    return Array.from(checkboxes).map(cb => cb.dataset.filePath);
+}
+window.getSelectedFiles = getSelectedFiles;
+
 closeModal.addEventListener('click', () => messageModal.style.display = 'none');
 window.addEventListener('click', (e) => {
     if (e.target === messageModal) messageModal.style.display = 'none';

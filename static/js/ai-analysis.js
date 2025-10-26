@@ -33,6 +33,36 @@
     let currentText = '';
     let maxRequestSize = 4096;
 
+    // Элементы редактора оптимизации
+    const aiOptimizeModal = document.getElementById('aiOptimizeModal');
+    const aiOptimizeClose = document.getElementById('aiOptimizeClose');
+    const optPromptText = document.getElementById('optPromptText');
+    const optDocsContainer = document.getElementById('optDocsContainer');
+    const optInfo = document.getElementById('optInfo');
+    const optBackBtn = document.getElementById('optBackBtn');
+    const optAutoBtn = document.getElementById('optAutoBtn');
+    const optSaveBtn = document.getElementById('optSaveBtn');
+    const optDeleteBtn = document.getElementById('optDeleteBtn');
+    const optAnalyzeBtn = document.getElementById('optAnalyzeBtn');
+    const optCancelBtn = document.getElementById('optCancelBtn');
+    
+    // Класс подсветки удаляемого фрагмента
+    const DELETE_CLASS = 'to-delete';
+    
+    // CSS для подсветки (минимально)
+    (function injectOptimizeStyles(){
+        const style = document.createElement('style');
+        style.textContent = `
+            .opt-doc { margin:10px 0; padding:8px; border:1px solid #eee; border-radius:4px; }
+            .opt-doc-title { font-weight:bold; margin-bottom:6px; }
+            .opt-block { padding:2px 4px; border-radius:3px; cursor:pointer; }
+            .opt-block.${DELETE_CLASS} { background-color: #ffe6ea; }
+            .opt-sep { margin:8px 0; border-top:1px dashed #ccc; }
+            .opt-header { background:#f7f7f7; padding:6px; border-radius:4px; }
+        `;
+        document.head.appendChild(style);
+    })();
+
     // Открытие модального окна промпта
     if (aiAnalysisBtn) {
         aiAnalysisBtn.addEventListener('click', function() {
@@ -104,14 +134,9 @@
         }
     });
 
-    // Получить список выбранных файлов
+    // Используем глобальную функцию getSelectedFiles из script.js
     function getSelectedFiles() {
-        const checkboxes = document.querySelectorAll('.file-checkbox:checked');
-        const files = [];
-        checkboxes.forEach(cb => {
-            files.push(cb.getAttribute('data-file-path'));
-        });
-        return files;
+        return window.getSelectedFiles ? window.getSelectedFiles() : [];
     }
 
     // Обновить информацию о выборе
@@ -141,12 +166,14 @@
             })
         })
         .then(response => response.json())
-        .then(data => {
+    .then(data => {
             if (data.success) {
                 const textSize = data.text_size || 0;
                 const promptSize = data.prompt_size || 0;
                 const totalSize = data.total_size || 0;
-                const maxSize = data.max_size || 4096;
+        const maxSize = data.max_size || 4096;
+        // Обновляем глобальный лимит, если пришёл с сервера
+        maxRequestSize = maxSize;
                 const exceeds = data.exceeds_limit || false;
                 const excess = data.excess || 0;
                 
@@ -296,37 +323,238 @@
 
     // Оптимизировать текст
     if (optimizeTextBtn) {
-        optimizeTextBtn.addEventListener('click', function() {
-            if (!currentText) {
-                showMessage('Сначала нужно начать анализ, чтобы получить текст для оптимизации', 'info');
+        optimizeTextBtn.addEventListener('click', async function() {
+            const selectedFiles = getSelectedFiles();
+            // Открываем модал сразу, тексты подгружаем асинхронно
+            openOptimizeModal(aiPromptText.value, []);
+            optInfo.textContent = selectedFiles.length === 0 ? 'Файлы не выбраны. Отметьте галочками документы слева.' : 'Загрузка текстов выбранных документов...';
+
+            if (selectedFiles.length === 0) {
+                showMessage('Не выбраны файлы для оптимизации', 'error');
                 return;
             }
-            
-            const promptLength = aiPromptText.value.length;
-            const targetSize = maxRequestSize - promptLength - 100; // Запас
-            
-            fetch('/ai_analysis/optimize_text', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    text: currentText,
-                    target_size: targetSize
-                })
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.success) {
-                    currentText = data.optimized_text;
-                    showMessage(`Текст оптимизирован: ${data.original_size} → ${data.optimized_size} символов (сокращено на ${data.reduction})`, 'success');
-                } else {
-                    showMessage(data.message, 'error');
+
+            try {
+                const res = await fetch('/ai_analysis/get_texts', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ file_paths: selectedFiles })
+                });
+                const data = await res.json();
+                if (!data.success) {
+                    optInfo.textContent = data.message || 'Не удалось получить тексты';
+                    showMessage(data.message || 'Не удалось получить тексты', 'error');
+                    return;
                 }
-            })
-            .catch(error => {
-                showMessage('Ошибка оптимизации: ' + error, 'error');
+                renderDocsForOptimize(data.docs || []);
+                updateOptimizeInfo();
+            } catch (e) {
+                optInfo.textContent = 'Ошибка загрузки текстов';
+                showMessage('Ошибка загрузки текстов: ' + e, 'error');
+            }
+        });
+    }
+
+    // Снэпшот исходного состояния модала (для отмены)
+    let optimizeSnapshot = null;
+
+    function openOptimizeModal(promptValue, docs) {
+        optPromptText.value = promptValue || '';
+        renderDocsForOptimize(docs);
+        updateOptimizeInfo();
+        aiOptimizeModal.style.display = 'block';
+        // Сохраняем исходный HTML, чтобы можно было легко откатить
+        optimizeSnapshot = {
+            prompt: optPromptText.value,
+            docsHtml: optDocsContainer.innerHTML
+        };
+    }
+
+    function renderDocsForOptimize(docs) {
+        optDocsContainer.innerHTML = '';
+        docs.forEach((doc, idx) => {
+            const wrap = document.createElement('div');
+            wrap.className = 'opt-doc';
+            const title = document.createElement('div');
+            title.className = 'opt-doc-title';
+            title.textContent = `${idx+1}. ${doc.path}`;
+            const body = document.createElement('div');
+            // Разбиваем текст на абзацы/строки
+            const lines = (doc.text || '').split(/\n+/);
+            lines.forEach(line => {
+                const span = document.createElement('span');
+                span.className = 'opt-block';
+                span.textContent = line;
+                span.dataset.length = String(line.length);
+                span.addEventListener('click', () => {
+                    span.classList.toggle(DELETE_CLASS);
+                    updateOptimizeInfo();
+                });
+                body.appendChild(span);
+                body.appendChild(document.createElement('br'));
             });
+            wrap.appendChild(title);
+            wrap.appendChild(body);
+            // Разделитель между документами
+            const sep = document.createElement('div');
+            sep.className = 'opt-sep';
+            optDocsContainer.appendChild(wrap);
+            optDocsContainer.appendChild(sep);
+        });
+    }
+
+    function collectOptimizedPlainText() {
+        // Собираем текст без подсвеченных блоков; без визуальных разделителей
+        const parts = [];
+        const docs = optDocsContainer.querySelectorAll('.opt-doc');
+        docs.forEach(doc => {
+            const blocks = doc.querySelectorAll('.opt-block');
+            const rows = [];
+            blocks.forEach(bl => {
+                if (!bl.classList.contains(DELETE_CLASS)) {
+                    rows.push(bl.textContent || '');
+                }
+            });
+            parts.push(rows.join('\n'));
+        });
+        return parts.join('\n\n');
+    }
+
+    function updateOptimizeInfo() {
+        const textOnly = collectOptimizedPlainText();
+        const textSize = textOnly.length;
+        const promptSize = (optPromptText.value || '').length;
+        const total = textSize + promptSize + 2;
+        const maxSize = maxRequestSize;
+        const exceeds = total > maxSize;
+        optInfo.textContent = `📄 Документ: ${textSize} симв. | 📝 Промпт: ${promptSize} симв. | 📊 Итого: ${total} / ${maxSize} симв.` + (exceeds ? `  ⚠️ Превышение на ${total - maxSize}` : `  ✓ ОК`);
+        optInfo.style.color = exceeds ? '#d32f2f' : '#2e7d32';
+    }
+
+    // Авто-оптимизация: подсвечиваем длинные строки (>200 символов)
+    if (optAutoBtn) {
+        optAutoBtn.addEventListener('click', () => {
+            optDocsContainer.querySelectorAll('.opt-block').forEach(bl => {
+                const L = parseInt(bl.dataset.length || '0', 10);
+                if (L > 200) bl.classList.add(DELETE_CLASS);
+            });
+            updateOptimizeInfo();
+        });
+    }
+
+    // Удалить подсвеченное
+    if (optDeleteBtn) {
+        optDeleteBtn.addEventListener('click', () => {
+            const count = optDocsContainer.querySelectorAll('.opt-block.'+DELETE_CLASS).length;
+            if (count === 0) {
+                showMessage('Нет подсвеченных фрагментов для удаления', 'info');
+                return;
+            }
+            if (!confirm(`Будет удалено фрагментов: ${count}. Подтвердить?`)) return;
+            optDocsContainer.querySelectorAll('.opt-block.'+DELETE_CLASS).forEach(bl => bl.remove());
+            updateOptimizeInfo();
+        });
+    }
+
+    // Сохранить рабочее состояние в файл
+    if (optSaveBtn) {
+        optSaveBtn.addEventListener('click', async () => {
+            const docsPayload = [];
+            const docs = optDocsContainer.querySelectorAll('.opt-doc');
+            docs.forEach(doc => {
+                const title = doc.querySelector('.opt-doc-title')?.textContent || '';
+                const text = Array.from(doc.querySelectorAll('.opt-block'))
+                    .map(bl => bl.textContent || '')
+                    .join('\n');
+                docsPayload.push({ path: title.replace(/^\d+\.\s*/, ''), text });
+            });
+            const res = await fetch('/ai_analysis/workspace/save', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ prompt: optPromptText.value, docs: docsPayload })
+            });
+            const data = await res.json();
+            if (data.success) {
+                showMessage('Воркспейс сохранён', 'success');
+            } else {
+                showMessage(data.message || 'Ошибка сохранения воркспейса', 'error');
+            }
+        });
+    }
+
+    // Назад — вернуться к окну Настройка анализа
+    if (optBackBtn) {
+        optBackBtn.addEventListener('click', () => {
+            aiOptimizeModal.style.display = 'none';
+            aiPromptModal.style.display = 'block';
+        });
+    }
+
+    // Закрыть редактор
+    if (aiOptimizeClose) {
+        aiOptimizeClose.addEventListener('click', () => {
+            aiOptimizeModal.style.display = 'none';
+        });
+    }
+
+    // Отменить изменения — откат к снэпшоту
+    if (optCancelBtn) {
+        optCancelBtn.addEventListener('click', () => {
+            if (optimizeSnapshot) {
+                optPromptText.value = optimizeSnapshot.prompt;
+                optDocsContainer.innerHTML = optimizeSnapshot.docsHtml;
+                // Повесим обработчики повторно на восстановленные блоки
+                optDocsContainer.querySelectorAll('.opt-block').forEach(span => {
+                    span.addEventListener('click', () => {
+                        span.classList.toggle(DELETE_CLASS);
+                        updateOptimizeInfo();
+                    });
+                });
+                updateOptimizeInfo();
+            }
+        });
+    }
+
+    // Пересчитывать размеры при изменении промпта в редакторе
+    if (optPromptText) {
+        let t;
+        optPromptText.addEventListener('input', () => {
+            clearTimeout(t);
+            t = setTimeout(updateOptimizeInfo, 300);
+        });
+    }
+
+    // Начать анализ с текущей версией текста
+    if (optAnalyzeBtn) {
+        optAnalyzeBtn.addEventListener('click', async () => {
+            const selectedFiles = getSelectedFiles();
+            const prompt = optPromptText.value.trim();
+            const overrideText = collectOptimizedPlainText();
+            if (!prompt) { showMessage('Промпт не может быть пустым', 'error'); return; }
+
+            aiOptimizeModal.style.display = 'none';
+            aiProgressModal.style.display = 'block';
+            aiProgressStatus.textContent = 'Отправка запроса...';
+
+            try {
+                const resp = await fetch('/ai_analysis/analyze', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ file_paths: selectedFiles, prompt, max_request_size: maxRequestSize, override_text: overrideText })
+                });
+                const data = await resp.json();
+                aiProgressModal.style.display = 'none';
+                if (data.success) {
+                    aiResultText.value = data.response;
+                    aiResultModal.style.display = 'block';
+                } else {
+                    aiPromptModal.style.display = 'block';
+                    showMessage(data.message || 'Ошибка анализа', 'error');
+                }
+            } catch (e) {
+                aiProgressModal.style.display = 'none';
+                aiPromptModal.style.display = 'block';
+                showMessage('Ошибка AI анализа: ' + e, 'error');
+            }
         });
     }
 
@@ -464,13 +692,11 @@
         });
     }
 
-    // Показать сообщение (использует существующую функцию из script.js)
+    // Используем глобальную функцию showMessage из script.js
     function showMessage(message, type) {
-        // Если есть глобальная функция showModal из script.js
-        if (typeof window.showModal === 'function') {
-            window.showModal(message);
+        if (window.showMessage) {
+            window.showMessage(message);
         } else {
-            // Fallback: используем alert
             alert(message);
         }
     }

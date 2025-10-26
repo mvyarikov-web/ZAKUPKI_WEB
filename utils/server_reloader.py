@@ -15,6 +15,7 @@ import os
 import time
 import subprocess
 import logging
+import shlex
 from typing import Optional
 
 try:
@@ -75,27 +76,50 @@ class ServerReloader:
             return self._free_port_fallback()
     
     def _free_port_psutil(self) -> bool:
-        """Освобождение порта через psutil (предпочтительный метод)."""
-        killed = []
-        
+        """Освобождение порта через psutil (предпочтительный метод). Завершаем только LISTEN."""
         try:
-            for conn in psutil.net_connections(kind='inet'):
-                if conn.laddr.port == self.port and conn.pid:
-                    try:
-                        proc = psutil.Process(conn.pid)
-                        proc_name = proc.name()
-                        self.logger.info(
-                            f"🔪 Завершаю процесс {proc_name} (PID: {conn.pid}) на порту {self.port}"
-                        )
-                        proc.terminate()
-                        killed.append(conn.pid)
-                    except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
-                        self.logger.warning(f"⚠️  Не удалось завершить процесс {conn.pid}: {e}")
-            
-            # Даём время на корректное завершение
+            try:
+                conns = psutil.net_connections(kind='inet')
+            except Exception as e:
+                self.logger.warning(f"⚠️  psutil.net_connections недоступен: {e}. Перехожу на fallback")
+                return self._free_port_fallback()
+
+            target_pids = set()
+            for conn in conns:
+                try:
+                    if (
+                        conn.laddr
+                        and hasattr(conn.laddr, 'port')
+                        and conn.laddr.port == self.port
+                        and getattr(psutil, 'CONN_LISTEN', 'LISTEN') == conn.status
+                        and conn.pid
+                    ):
+                        target_pids.add(conn.pid)
+                except Exception:
+                    # Пропускаем странные записи
+                    continue
+
+            if not target_pids:
+                self.logger.info(f"✅ Порт {self.port} свободен (LISTEN не найден)")
+                return True
+
+            killed = []
+            for pid in list(target_pids):
+                try:
+                    proc = psutil.Process(pid)
+                    proc_name = proc.name()
+                    self.logger.info(f"🔪 Завершаю процесс {proc_name} (PID: {pid}) на порту {self.port}")
+                    proc.terminate()
+                    killed.append(pid)
+                except psutil.NoSuchProcess:
+                    target_pids.discard(pid)
+                except psutil.AccessDenied as e:
+                    self.logger.warning(f"⚠️  Нет доступа к процессу {pid}: {e}")
+                except Exception as e:
+                    self.logger.warning(f"⚠️  Ошибка при завершении процесса {pid}: {e}")
+
             if killed:
                 time.sleep(0.5)
-                # Принудительное завершение если процесс ещё жив
                 for pid in killed:
                     try:
                         proc = psutil.Process(pid)
@@ -103,17 +127,28 @@ class ServerReloader:
                             self.logger.warning(f"⚠️  Принудительное завершение процесса {pid}")
                             proc.kill()
                     except psutil.NoSuchProcess:
-                        pass  # Процесс уже завершён
-                
-                self.logger.info(f"✅ Порт {self.port} освобождён (завершено процессов: {len(killed)})")
-            else:
-                self.logger.info(f"✅ Порт {self.port} свободен")
-            
-            return True
-        
+                        pass
+                    except psutil.AccessDenied as e:
+                        self.logger.warning(f"⚠️  Нет доступа при kill процесса {pid}: {e}")
+
+            # Повторная проверка: остались ли LISTEN на порту
+            try:
+                conns2 = psutil.net_connections(kind='inet')
+                still_listen = [c for c in conns2 if c.laddr and hasattr(c.laddr, 'port') and c.laddr.port == self.port and getattr(psutil, 'CONN_LISTEN', 'LISTEN') == c.status]
+            except Exception:
+                still_listen = []
+
+            if not still_listen:
+                self.logger.info(f"✅ Порт {self.port} освобождён")
+                return True
+
+            self.logger.warning(f"⚠️  Не удалось освободить порт {self.port} через psutil. Пробую fallback")
+            return self._free_port_fallback()
+
         except Exception as e:
             self.logger.error(f"❌ Ошибка при освобождении порта: {e}")
-            return False
+            # Последняя попытка через fallback
+            return self._free_port_fallback()
     
     def _free_port_fallback(self) -> bool:
         """Освобождение порта через системные команды (fallback для macOS/Linux)."""
@@ -155,8 +190,8 @@ class ServerReloader:
         try:
             self.logger.info(f"🚀 Запуск сервера: {self.start_command}")
             
-            # Разбиваем команду на части для subprocess
-            cmd_parts = self.start_command.split()
+            # Разбиваем команду на части для subprocess (учитываем кавычки и пробелы)
+            cmd_parts = shlex.split(self.start_command)
             
             # Запускаем в фоновом режиме
             process = subprocess.Popen(
@@ -231,14 +266,14 @@ def main():
     parser.add_argument(
         '--port', '-p',
         type=int,
-        default=5000,
-        help='Номер порта для освобождения (по умолчанию: 5000)'
+        default=int(os.environ.get('FLASK_PORT', 8081)),
+        help='Номер порта для освобождения (по умолчанию: значение FLASK_PORT или 8081)'
     )
     parser.add_argument(
         '--command', '-c',
         type=str,
-        default='python3 app.py',
-        help='Команда запуска сервера (по умолчанию: "python3 app.py")'
+        default=f'"{sys.executable}" app.py',
+        help='Команда запуска сервера (по умолчанию: текущий интерпретатор Python + app.py)'
     )
     parser.add_argument(
         '--wait', '-w',

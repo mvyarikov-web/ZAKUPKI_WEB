@@ -121,6 +121,7 @@ def analyze():
         file_paths = data.get('file_paths', [])
         prompt = data.get('prompt', '')
         max_request_size = data.get('max_request_size', 4096)
+        override_text = data.get('override_text', None)
         
         if not file_paths:
             return jsonify({
@@ -146,7 +147,11 @@ def analyze():
                 'message': 'Сводный индекс не найден. Постройте индекс через кнопку «Построить индекс».'
             }), 400
 
-        combined_text = _extract_text_from_index_for_files(file_paths, index_path)
+        # Если передан override_text (из окна оптимизации) — используем его
+        if isinstance(override_text, str) and override_text.strip():
+            combined_text = override_text
+        else:
+            combined_text = _extract_text_from_index_for_files(file_paths, index_path)
 
         # Безопасный фолбэк: если по какой-то причине текста нет в индексе (не должен происходить при валидном индексе),
         # пробуем старый способ извлечения из исходных файлов. Это не блокирует UI и сработает только точечно.
@@ -203,6 +208,125 @@ def analyze():
             'success': False,
             'message': f'Внутренняя ошибка сервера: {str(e)}'
         }), 500
+
+
+@ai_analysis_bp.route('/get_texts', methods=['POST'])
+def get_texts():
+    """Вернуть тексты выбранных файлов (по индексу) для редактора оптимизации."""
+    try:
+        data = request.get_json() or {}
+        file_paths = data.get('file_paths', [])
+        if not file_paths:
+            return jsonify({'success': False, 'message': 'Не выбраны файлы'}), 400
+
+        index_folder = current_app.config.get('INDEX_FOLDER')
+        index_path = get_index_path(index_folder) if index_folder else None
+        if not index_path or not os.path.exists(index_path):
+            return jsonify({'success': False, 'message': 'Сводный индекс не найден'}), 400
+
+        # Извлечём тексты по каждому пути отдельно
+        docs = []
+        try:
+            with open(index_path, 'r', encoding='utf-8', errors='ignore') as f:
+                content = f.read()
+        except Exception:
+            return jsonify({'success': False, 'message': 'Не удалось прочитать индекс'}), 500
+
+        for rel_path in file_paths:
+            text = _extract_single_from_index(content, rel_path)
+            docs.append({'path': rel_path, 'text': text or '', 'length': len(text or '')})
+
+        return jsonify({'success': True, 'docs': docs}), 200
+    except Exception as e:
+        current_app.logger.exception('Ошибка в /ai_analysis/get_texts: %s', e)
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@ai_analysis_bp.route('/workspace/save', methods=['POST'])
+def save_workspace():
+    """Сохранить рабочее состояние оптимизации в файл (JSON и TXT)."""
+    try:
+        data = request.get_json() or {}
+        prompt = data.get('prompt', '')
+        docs = data.get('docs', [])  # [{'path','text'}]
+        if not isinstance(docs, list):
+            return jsonify({'success': False, 'message': 'Некорректный формат docs'}), 400
+
+        index_folder = current_app.config.get('INDEX_FOLDER')
+        if not index_folder:
+            return jsonify({'success': False, 'message': 'INDEX_FOLDER не настроен'}), 500
+        os.makedirs(index_folder, exist_ok=True)
+
+        json_path = os.path.join(index_folder, 'ai_workspace.json')
+        txt_path = os.path.join(index_folder, 'ai_workspace.txt')
+
+        # Сохраняем JSON
+        payload = {'prompt': prompt, 'docs': docs}
+        try:
+            import json
+            with open(json_path, 'w', encoding='utf-8') as jf:
+                json.dump(payload, jf, ensure_ascii=False, indent=2)
+        except Exception as e:
+            current_app.logger.exception('Ошибка сохранения JSON воркспейса: %s', e)
+            return jsonify({'success': False, 'message': 'Не удалось сохранить JSON воркспейс'}), 500
+
+        # Сохраняем TXT для ручного просмотра/редактирования
+        try:
+            with open(txt_path, 'w', encoding='utf-8') as tf:
+                tf.write(f"PROMPT:\n{prompt}\n\n")
+                for d in docs:
+                    tf.write(f"===== {d.get('path','(без имени)')} =====\n")
+                    tf.write((d.get('text') or '') + "\n\n")
+        except Exception as e:
+            current_app.logger.exception('Ошибка сохранения TXT воркспейса: %s', e)
+            # Не критично: продолжаем
+
+        return jsonify({'success': True, 'message': 'Воркспейс сохранён', 'json_path': json_path, 'txt_path': txt_path}), 200
+    except Exception as e:
+        current_app.logger.exception('Ошибка в /ai_analysis/workspace/save: %s', e)
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@ai_analysis_bp.route('/workspace', methods=['GET'])
+def get_workspace():
+    """Получить сохранённый воркспейс (если есть)."""
+    try:
+        index_folder = current_app.config.get('INDEX_FOLDER')
+        json_path = os.path.join(index_folder, 'ai_workspace.json') if index_folder else None
+        if not json_path or not os.path.exists(json_path):
+            return jsonify({'success': True, 'exists': False, 'prompt': '', 'docs': []}), 200
+        import json
+        with open(json_path, 'r', encoding='utf-8') as jf:
+            payload = json.load(jf)
+        return jsonify({'success': True, 'exists': True, 'prompt': payload.get('prompt',''), 'docs': payload.get('docs', [])}), 200
+    except Exception as e:
+        current_app.logger.exception('Ошибка в /ai_analysis/workspace: %s', e)
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+def _extract_single_from_index(index_content: str, rel_path: str) -> str:
+    """Извлечь текст одного документа из содержимого индекса по rel_path."""
+    try:
+        DOC_START_MARKER = "<<< НАЧАЛО ДОКУМЕНТА >>>"
+        DOC_END_MARKER = "<<< КОНЕЦ ДОКУМЕНТА >>>"
+        # Ищем заголовок соответствующего файла
+        marker = f"ЗАГОЛОВОК: {rel_path}\n"
+        start_pos = index_content.find(marker)
+        if start_pos == -1:
+            return ''
+        # От начала заголовка ищем маркер начала документа
+        doc_start = index_content.find(DOC_START_MARKER, start_pos)
+        if doc_start == -1:
+            return ''
+        doc_start += len(DOC_START_MARKER) + 1  # +\n
+        # Ищем конец документа
+        doc_end = index_content.find(DOC_END_MARKER, doc_start)
+        if doc_end == -1:
+            return ''
+        body = index_content[doc_start:doc_end]
+        return body.strip()
+    except Exception:
+        return ''
 
 
 @ai_analysis_bp.route('/optimize_text', methods=['POST'])
