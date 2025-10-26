@@ -216,10 +216,14 @@ class RAGService:
         
         try:
             # Получаем эмбеддинг запроса
-            query_embedding = self.embeddings_service.get_embedding(query)
+            try:
+                query_embedding = self.embeddings_service.get_embedding(query)
+            except Exception as emb_err:
+                current_app.logger.exception(f'Ошибка при получении эмбеддинга запроса: {emb_err}')
+                return False, f"Ошибка эмбеддинга: {str(emb_err)}", None
             
             if not query_embedding:
-                return False, "Не удалось получить эмбеддинг запроса", None
+                return False, "Не удалось получить эмбеддинг запроса. Проверьте API-ключ и подключение к OpenAI.", None
             
             # Получаем ID документов для фильтрации
             document_ids = []

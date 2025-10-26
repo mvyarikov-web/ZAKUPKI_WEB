@@ -160,6 +160,7 @@ function updateFilesList() {
                 headerDiv.onclick = () => toggleFolder(folderName);
                 
                 headerDiv.innerHTML = `
+                    <input type="checkbox" class="folder-checkbox" title="Выбрать все файлы в папке" style="margin-right:8px;">
                     <span class="folder-icon">📁</span>
                     <span class="folder-name">${escapeHtml(folderName)}</span>
                     <span class="file-count-badge">${files.length}</span>
@@ -175,7 +176,18 @@ function updateFilesList() {
                     const fileDiv = renderFileItem(file, file_statuses);
                     contentDiv.appendChild(fileDiv);
                 });
-                
+
+                // Обработчик для чекбокса папки: выбрать/снять все в папке
+                const folderCheckbox = headerDiv.querySelector('.folder-checkbox');
+                if (folderCheckbox) {
+                    folderCheckbox.addEventListener('click', (ev) => ev.stopPropagation());
+                    folderCheckbox.addEventListener('change', (ev) => {
+                        const checked = ev.target.checked;
+                        const cbs = contentDiv.querySelectorAll('.file-checkbox');
+                        cbs.forEach(cb => { cb.checked = checked; });
+                    });
+                }
+
                 folderDiv.appendChild(headerDiv);
                 folderDiv.appendChild(contentDiv);
                 filesList.appendChild(folderDiv);

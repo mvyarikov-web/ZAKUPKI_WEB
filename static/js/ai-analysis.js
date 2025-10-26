@@ -572,78 +572,7 @@
         });
     }
     
-    // Начать AI анализ
-    if (startAiAnalysisBtn) {
-        startAiAnalysisBtn.addEventListener('click', function() {
-            const selectedFiles = getSelectedFiles();
-            const prompt = aiPromptText.value.trim();
-            
-            if (selectedFiles.length === 0) {
-                showMessage('Не выбраны файлы', 'error');
-                return;
-            }
-            
-            if (!prompt) {
-                showMessage('Промпт не может быть пустым', 'error');
-                return;
-            }
-            
-            // Закрываем модальное окно промпта
-            aiPromptModal.style.display = 'none';
-            
-            // Показываем прогресс
-            aiProgressModal.style.display = 'block';
-            aiProgressStatus.textContent = 'Отправка запроса...';
-            
-            // Отправляем запрос
-            fetch('/ai_analysis/analyze', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    file_paths: selectedFiles,
-                    prompt: prompt,
-                    max_request_size: maxRequestSize
-                })
-            })
-            .then(response => response.json())
-            .then(data => {
-                // Закрываем прогресс
-                aiProgressModal.style.display = 'none';
-                
-                if (data.success) {
-                    // Показываем результат
-                    aiResultText.value = data.response;
-                    aiResultModal.style.display = 'block';
-                } else {
-                    // Возвращаем пользователя в окно настроек
-                    aiPromptModal.style.display = 'block';
-                    
-                    // Если превышен лимит, показываем информацию
-                    if (data.current_size && data.max_size) {
-                        const msg = `${data.message}\n\nТекущий размер: ${data.current_size} символов\nМаксимальный размер: ${data.max_size} символов\nПревышение: ${data.excess} символов\n\nИспользуйте кнопку "Оптимизировать текст" или отредактируйте промпт.`;
-                        showMessage(msg, 'error');
-                        
-                        // Сохраняем текст для возможной оптимизации
-                        if (data.text) {
-                            currentText = data.text;
-                        }
-                        
-                        // Обновляем информацию о размерах в окне
-                        updateSizeInfo(selectedFiles, prompt);
-                    } else {
-                        showMessage(data.message, 'error');
-                    }
-                }
-            })
-            .catch(error => {
-                aiProgressModal.style.display = 'none';
-                aiPromptModal.style.display = 'block';
-                showMessage('Ошибка AI анализа: ' + error, 'error');
-            });
-        });
-    }
+    // Удалено: запуск AI-анализа по кнопке (перенос фокуса на RAG)
 
     // Копировать результат в буфер обмена
     if (copyResultBtn) {

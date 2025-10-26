@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Тест загрузки моделей</title>
+</head>
+<body>
+    <h1>Тест загрузки моделей AI RAG</h1>
+    <button id="testBtn">Загрузить модели</button>
+    <div id="result" style="margin-top: 20px; padding: 10px; border: 1px solid #ccc;"></div>
+    
+    <script>
+        document.getElementById('testBtn').addEventListener('click', async () => {
+            const resultDiv = document.getElementById('result');
+            resultDiv.innerHTML = 'Загрузка...';
+            
+            try {
+                const res = await fetch('/ai_rag/models');
+                console.log('Response status:', res.status);
+                
+                if (!res.ok) {
+                    resultDiv.innerHTML = `<strong>Ошибка HTTP:</strong> ${res.status} ${res.statusText}`;
+                    return;
+                }
+                
+                const data = await res.json();
+                console.log('Response data:', data);
+                
+                if (data.success) {
+                    const models = data.models || [];
+                    const default_model = data.default_model;
+                    
+                    let html = `<strong>Успешно загружено ${models.length} моделей:</strong><br><br>`;
+                    html += `<strong>Модель по умолчанию:</strong> ${default_model}<br><br>`;
+                    
+                    models.forEach(m => {
+                        html += `<div style="margin: 10px 0; padding: 10px; background: #f5f5f5; border-radius: 4px;">`;
+                        html += `<strong>${m.display_name}</strong> (${m.model_id})<br>`;
+                        html += `Контекст: ${m.context_window_tokens} токенов<br>`;
+                        html += `Цена вход: ${m.price_input_per_1m || 0} за 1M токенов<br>`;
+                        html += `Цена выход: ${m.price_output_per_1m || 0} за 1M токенов<br>`;
+                        html += `Статус: ${m.enabled ? 'активна' : 'не активна'}`;
+                        html += `</div>`;
+                    });
+                    
+                    resultDiv.innerHTML = html;
+                } else {
+                    resultDiv.innerHTML = `<strong>Ошибка:</strong> ${data.message || 'Неизвестная ошибка'}`;
+                }
+            } catch (e) {
+                console.error('Error:', e);
+                resultDiv.innerHTML = `<strong>Ошибка сети:</strong> ${e.message}`;
+            }
+        });
+    </script>
+</body>
+</html>

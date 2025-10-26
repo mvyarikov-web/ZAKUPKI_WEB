@@ -12,48 +12,281 @@ ai_rag_bp = Blueprint('ai_rag', __name__, url_prefix='/ai_rag')
 
 
 def _load_models_config() -> Dict[str, Any]:
-    """Загрузить конфигурацию моделей из файла."""
+    """Загрузить и при необходимости мигрировать конфигурацию моделей из файла.
+
+    Поддерживаются варианты:
+    - отсутствует файл: возвращаем дефолтную конфигурацию;
+    - файл-список (устаревший формат): оборачиваем в объект с ключом models;
+    - ключи цен с заглавной M (price_input_per_1M): нормализуем в price_*_per_1m.
+    """
     models_file = current_app.config.get('RAG_MODELS_FILE')
-    
+
+    # Базовая дефолтная конфигурация
+    default_cfg: Dict[str, Any] = {
+        'models': [
+            {
+                'model_id': 'gpt-4o-mini',
+                'display_name': 'GPT-4o Mini',
+                'context_window_tokens': 128000,
+                'price_input_per_1m': 0.0,
+                'price_output_per_1m': 0.0,
+                'enabled': True,
+            }
+        ],
+        'default_model': 'gpt-4o-mini',
+    }
+
     if not models_file or not os.path.exists(models_file):
-        # Дефолтная конфигурация
-        return {
-            'models': [
-                {
-                    'model_id': 'gpt-4o-mini',
-                    'display_name': 'GPT-4o Mini',
-                    'context_window_tokens': 128000,
-                    'price_input_per_1m': 0.0,
-                    'price_output_per_1m': 0.0,
-                    'enabled': True
-                }
-            ],
-            'default_model': 'gpt-4o-mini'
-        }
-    
+        return default_cfg
+
     try:
         with open(models_file, 'r', encoding='utf-8') as f:
-            return json.load(f)
+            raw = json.load(f)
     except Exception as e:
         current_app.logger.error(f'Ошибка загрузки models.json: {e}')
-        return {'models': [], 'default_model': 'gpt-4o-mini'}
+        return default_cfg
+
+    migrated = False
+
+    # Если старый формат (список моделей), оборачиваем в объект
+    if isinstance(raw, list):
+        config: Dict[str, Any] = {'models': raw, 'default_model': (raw[0].get('model_id') if raw and isinstance(raw[0], dict) else 'gpt-4o-mini')}
+        migrated = True
+    elif isinstance(raw, dict):
+        config = raw
+    else:
+        # Некорректный формат
+        current_app.logger.warning('models.json имеет некорректный формат, используется дефолтная конфигурация')
+        return default_cfg
+
+    # Нормализация структуры models
+    models = config.get('models', [])
+    if not isinstance(models, list):
+        models = []
+        config['models'] = models
+        migrated = True
+
+    normalized_models: List[Dict[str, Any]] = []
+    for m in models:
+        if not isinstance(m, dict):
+            migrated = True
+            continue
+        model_id = m.get('model_id') or m.get('id') or 'unknown-model'
+        display_name = m.get('display_name') or model_id
+        context_window = m.get('context_window_tokens') or m.get('context_window') or 0
+        # Нормализация цен (поддержка старых ключей с заглавной M)
+        price_in = m.get('price_input_per_1m')
+        if price_in is None and 'price_input_per_1M' in m:
+            price_in = m.get('price_input_per_1M')
+            migrated = True
+        price_out = m.get('price_output_per_1m')
+        if price_out is None and 'price_output_per_1M' in m:
+            price_out = m.get('price_output_per_1M')
+            migrated = True
+        enabled = m.get('enabled')
+        if enabled is None:
+            enabled = True
+            migrated = True
+
+        normalized_models.append({
+            'model_id': model_id,
+            'display_name': display_name,
+            'context_window_tokens': int(context_window) if isinstance(context_window, (int, float)) else 0,
+            'price_input_per_1m': float(price_in) if price_in is not None else 0.0,
+            'price_output_per_1m': float(price_out) if price_out is not None else 0.0,
+            'enabled': bool(enabled),
+        })
+
+    if normalized_models != models:
+        config['models'] = normalized_models
+        migrated = True
+
+    # Дефолтная модель
+    default_model = config.get('default_model')
+    if not default_model:
+        config['default_model'] = normalized_models[0]['model_id'] if normalized_models else 'gpt-4o-mini'
+        migrated = True
+
+    # Если произошла миграция — сохраняем обратно
+    if migrated:
+        try:
+            _save_models_config(config)
+            current_app.logger.info('models.json был автоматически мигрирован в актуальный формат')
+        except Exception as e:
+            current_app.logger.warning(f'Не удалось сохранить мигрированный models.json: {e}')
+
+    return config
 
 
 def _save_models_config(config: Dict[str, Any]):
-    """Сохранить конфигурацию моделей в файл."""
+    """Сохранить конфигурацию моделей в файл (атомарно)."""
     models_file = current_app.config.get('RAG_MODELS_FILE')
-    
+
     if not models_file:
         return
-    
+
     try:
         # Создаём директорию если нужно
-        os.makedirs(os.path.dirname(models_file), exist_ok=True)
-        
-        with open(models_file, 'w', encoding='utf-8') as f:
+        dir_path = os.path.dirname(models_file)
+        os.makedirs(dir_path, exist_ok=True)
+
+        # Атомарная запись: пишем во временный файл в той же директории и заменяем
+        tmp_path = models_file + '.tmp'
+        with open(tmp_path, 'w', encoding='utf-8') as f:
             json.dump(config, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, models_file)
     except Exception as e:
         current_app.logger.error(f'Ошибка сохранения models.json: {e}')
+
+
+def _fetch_openai_models() -> List[Dict[str, Any]]:
+    """Попробовать получить список моделей из OpenAI SDK. Возвращает [] при ошибке.
+
+    Возвращаем упрощённые записи: {model_id, display_name, context_window_tokens}
+    Цены не извлекаем (нет публичного API) — оставляем 0, пользователь задаёт вручную.
+    """
+    try:
+        from openai import OpenAI  # type: ignore
+        api_key = current_app.config.get('OPENAI_API_KEY') or os.environ.get('OPENAI_API_KEY')
+        if not api_key:
+            return []
+        client = OpenAI(api_key=api_key)
+        models = client.models.list()
+        items = []
+        # Оставляем только chat/completions/omni семейство (эвристика по id)
+        for m in getattr(models, 'data', []) or []:
+            mid = getattr(m, 'id', None) or (isinstance(m, dict) and m.get('id'))
+            if not mid:
+                continue
+            # Фильтрация по известным префиксам
+            if any(mid.startswith(p) for p in ('gpt-', 'o', 'chatgpt', 'gpt-4o')):
+                items.append({
+                    'model_id': mid,
+                    'display_name': mid,
+                    'context_window_tokens': 0,  # нет надёжного поля в API
+                    'price_input_per_1m': 0.0,
+                    'price_output_per_1m': 0.0,
+                    'enabled': True,
+                })
+        return items
+    except Exception as e:
+        # Не логируем как ошибку сервера маршрута — просто вернём пусто
+        current_app.logger.info(f'Не удалось получить список моделей OpenAI: {e}')
+        return []
+
+
+@ai_rag_bp.route('/models/refresh', methods=['POST'])
+def refresh_models():
+    """Обновить список моделей: объединить локальные и OpenAI (если доступно).
+
+    Поведение:
+    - Пытаемся получить список из OpenAI; если нет — считаем, что добавлений 0.
+    - Сливаем по model_id: новые добавляем с нулевыми ценами; существующим не трогаем цены и enabled.
+    - Сохраняем конфигурацию. Возвращаем числа added/updated.
+    """
+    try:
+        config = _load_models_config()
+        local_models = {m['model_id']: m for m in config.get('models', [])}
+        remote_models = _fetch_openai_models()
+
+        added = 0
+        updated = 0
+
+        for rm in remote_models:
+            mid = rm['model_id']
+            if mid in local_models:
+                # Обновим только display/context, цены не трогаем
+                lm = local_models[mid]
+                new_display = rm.get('display_name') or mid
+                new_ctx = int(rm.get('context_window_tokens') or 0)
+                if lm.get('display_name') != new_display:
+                    lm['display_name'] = new_display
+                    updated += 1
+                if lm.get('context_window_tokens') != new_ctx:
+                    lm['context_window_tokens'] = new_ctx
+                    updated += 1
+            else:
+                # Добавляем новую модель с нулевыми ценами
+                local_models[mid] = {
+                    'model_id': mid,
+                    'display_name': rm.get('display_name') or mid,
+                    'context_window_tokens': int(rm.get('context_window_tokens') or 0),
+                    'price_input_per_1m': 0.0,
+                    'price_output_per_1m': 0.0,
+                    'enabled': True,
+                }
+                added += 1
+
+        # Пересобираем список, сохраняем порядок алфавитный по display_name
+        merged_list = list(local_models.values())
+        merged_list.sort(key=lambda x: (str(x.get('display_name') or x.get('model_id'))).lower())
+        config['models'] = merged_list
+
+        # Если default_model отсутствует — проставим первый
+        if not config.get('default_model') and merged_list:
+            config['default_model'] = merged_list[0]['model_id']
+
+        _save_models_config(config)
+
+        return jsonify({'success': True, 'added': added, 'updated': updated, 'count': len(merged_list)}), 200
+    except Exception as e:
+        current_app.logger.exception(f'Ошибка в /ai_rag/models/refresh: {e}')
+        # Возвращаем 200 с success=false, чтобы фронтенд не падал на non-JSON/500
+        return jsonify({'success': False, 'message': f'Не удалось обновить модели: {str(e)}'}), 200
+
+
+@ai_rag_bp.route('/models/default', methods=['PUT'])
+def set_default_model():
+    """
+    Установить модель по умолчанию.
+    
+    Ожидает JSON:
+    {
+        "model_id": "gpt-4o-mini"
+    }
+    
+    Returns:
+        JSON с результатом
+    """
+    try:
+        data = request.get_json()
+        
+        if not data or 'model_id' not in data:
+            return jsonify({
+                'success': False,
+                'message': 'Не передан model_id'
+            }), 400
+        
+        model_id = data['model_id']
+        config = _load_models_config()
+        
+        # Проверяем, что модель существует
+        model_exists = any(m['model_id'] == model_id for m in config.get('models', []))
+        
+        if not model_exists:
+            return jsonify({
+                'success': False,
+                'message': f'Модель {model_id} не найдена'
+            }), 404
+        
+        # Устанавливаем модель по умолчанию
+        config['default_model'] = model_id
+        _save_models_config(config)
+        
+        current_app.logger.info(f'Модель по умолчанию изменена на: {model_id}')
+        
+        return jsonify({
+            'success': True,
+            'message': 'Модель по умолчанию сохранена',
+            'default_model': model_id
+        }), 200
+        
+    except Exception as e:
+        current_app.logger.exception(f'Ошибка в /ai_rag/models/default: {e}')
+        return jsonify({
+            'success': False,
+            'message': f'Ошибка сохранения: {str(e)}'
+        }), 500
 
 
 @ai_rag_bp.route('/models', methods=['GET'])
@@ -342,6 +575,104 @@ def index_documents():
         }), 500
 
 
+def _direct_analyze_without_rag(
+    file_paths: List[str],
+    prompt: str,
+    model_id: str,
+    max_output_tokens: int,
+    temperature: float,
+    upload_folder: str
+):
+    """Прямой анализ без RAG - просто читаем тексты и отправляем в OpenAI."""
+    try:
+        import openai
+        
+        # Получаем API ключ
+        api_key = current_app.config.get('OPENAI_API_KEY') or os.environ.get('OPENAI_API_KEY')
+        if not api_key:
+            return jsonify({
+                'success': False,
+                'message': 'OpenAI API ключ не настроен'
+            }), 500
+        
+        # Читаем тексты из файлов (используем функцию из ai_analysis)
+        from webapp.routes.ai_analysis import _extract_text_from_files
+        
+        combined_docs = _extract_text_from_files(file_paths, upload_folder)
+        
+        if not combined_docs or not combined_docs.strip():
+            return jsonify({
+                'success': False,
+                'message': 'Не удалось извлечь текст из файлов'
+            }), 400
+        
+        # Формируем запрос к OpenAI
+        client = openai.OpenAI(api_key=api_key)
+        
+        messages = [
+            {"role": "system", "content": "Вы - помощник для анализа документов. Отвечайте на русском языке."},
+            {"role": "user", "content": f"Документы:\n\n{combined_docs}\n\nЗапрос: {prompt}"}
+        ]
+        
+        response = client.chat.completions.create(
+            model=model_id,
+            messages=messages,
+            max_tokens=max_output_tokens,
+            temperature=temperature
+        )
+        
+        # Извлекаем результат
+        answer = response.choices[0].message.content
+        usage = {
+            'input_tokens': response.usage.prompt_tokens,
+            'output_tokens': response.usage.completion_tokens,
+            'total_tokens': response.usage.total_tokens
+        }
+        
+        # Вычисляем стоимость
+        config = _load_models_config()
+        model_config = None
+        
+        for m in config.get('models', []):
+            if m['model_id'] == model_id:
+                model_config = m
+                break
+        
+        result = {
+            'answer': answer,
+            'usage': usage,
+            'model': model_id
+        }
+        
+        if model_config:
+            price_input = model_config.get('price_input_per_1m', 0.0)
+            price_output = model_config.get('price_output_per_1m', 0.0)
+            
+            cost_input = (usage['input_tokens'] / 1_000_000) * price_input
+            cost_output = (usage['output_tokens'] / 1_000_000) * price_output
+            total_cost = cost_input + cost_output
+            
+            result['cost'] = {
+                'input': round(cost_input, 4),
+                'output': round(cost_output, 4),
+                'total': round(total_cost, 4),
+                'currency': 'USD'
+            }
+        
+        return jsonify({
+            'success': True,
+            'message': 'Анализ выполнен успешно (без RAG)',
+            'result': result
+        }), 200
+        
+    except Exception as e:
+        current_app.logger.exception(f'Ошибка прямого анализа: {e}')
+        return jsonify({
+            'success': False,
+            'message': f'Ошибка анализа: {str(e)}'
+        }), 500
+
+
 @ai_rag_bp.route('/analyze', methods=['POST'])
 def analyze():
     """
@@ -394,22 +725,56 @@ def analyze():
         upload_folder = current_app.config['UPLOAD_FOLDER']
         rag_service = get_rag_service()
         
+        # Проверяем доступность БД для RAG
         if not rag_service.db_available:
-            return jsonify({
-                'success': False,
-                'message': 'База данных недоступна'
-            }), 503
+            # Если БД недоступна, делаем прямой анализ без векторного поиска
+            current_app.logger.warning('БД недоступна, используется прямой анализ без RAG')
+            return _direct_analyze_without_rag(
+                file_paths=file_paths,
+                prompt=prompt,
+                model_id=model_id,
+                max_output_tokens=max_output_tokens,
+                temperature=temperature,
+                upload_folder=upload_folder
+            )
         
-        # Выполняем анализ
-        success, message, result = rag_service.search_and_analyze(
-            query=prompt,
-            file_paths=file_paths,
-            model=model_id,
-            top_k=top_k,
-            max_output_tokens=max_output_tokens,
-            temperature=temperature,
-            upload_folder=upload_folder
-        )
+        # Выполняем анализ с RAG
+        try:
+            success, message, result = rag_service.search_and_analyze(
+                query=prompt,
+                file_paths=file_paths,
+                model=model_id,
+                top_k=top_k,
+                max_output_tokens=max_output_tokens,
+                temperature=temperature,
+                upload_folder=upload_folder
+            )
+        except Exception as rag_err:
+            # При любой ошибке RAG (включая эмбеддинги) используем fallback
+            current_app.logger.warning(f'Ошибка RAG, переключение на прямой анализ: {rag_err}')
+            return _direct_analyze_without_rag(
+                file_paths=file_paths,
+                prompt=prompt,
+                model_id=model_id,
+                max_output_tokens=max_output_tokens,
+                temperature=temperature,
+                upload_folder=upload_folder
+            )
+        
+        # Если RAG вернул ошибку, тоже используем fallback
+        if not success:
+            if 'эмбеддинг' in message.lower() or 'embedding' in message.lower():
+                current_app.logger.warning(f'Ошибка эмбеддинга в RAG, переключение на прямой анализ: {message}')
+                return _direct_analyze_without_rag(
+                    file_paths=file_paths,
+                    prompt=prompt,
+                    model_id=model_id,
+                    max_output_tokens=max_output_tokens,
+                    temperature=temperature,
+                    upload_folder=upload_folder
+                )
+            # Другие ошибки возвращаем как есть
+            return jsonify({'success': False, 'message': message}), 400
         
         if success:
             current_app.logger.info(f'RAG анализ выполнен успешно: {result["usage"]}')

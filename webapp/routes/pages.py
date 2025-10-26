@@ -278,4 +278,9 @@ def _extract_text_from_index(index_path: str, target_path: str) -> str:
     except Exception as e:
         current_app.logger.exception(f'Ошибка извлечения текста из индекса для {target_path}')
         return ''
-    
+
+
+@pages_bp.route('/test_models')
+def test_models():
+    """Тестовая страница для проверки загрузки моделей."""
+    return render_template('test_models.html')
