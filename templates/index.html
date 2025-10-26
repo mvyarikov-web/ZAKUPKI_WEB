@@ -66,6 +66,23 @@
                     </button>
                 </div>
             </section>
+
+            <!-- Секция RAG-анализа -->
+            <section class="rag-section" style="margin-top: 20px; padding: 15px; background: #f9f9f9; border-radius: 5px;">
+                <h2>AI-анализ (RAG)</h2>
+                <div class="rag-controls">
+                    <button id="ragAnalysisBtn" class="btn btn-primary" style="margin-bottom: 10px;">
+                        <i class="icon">🤖</i> Анализ RAG
+                    </button>
+                    <button id="ragIndexBtn" class="btn btn-secondary" style="margin-bottom: 10px; margin-left: 10px;">
+                        <i class="icon">📊</i> Индексировать
+                    </button>
+                    <button id="ragStatusBtn" class="btn btn-secondary" style="margin-bottom: 10px; margin-left: 10px;">
+                        <i class="icon">ℹ️</i> Статус
+                    </button>
+                </div>
+                <div id="ragStatus" style="font-size: 14px; color: #666; margin-top: 5px;"></div>
+            </section>
             
             <!-- Список файлов с метриками извлечения -->
             <section class="files-section">
@@ -208,6 +225,126 @@
         </div>
     </div>
 
+    <!-- Модальное окно RAG-анализа -->
+    <div id="ragPromptModal" class="modal" style="display: none;">
+        <div class="modal-content" style="max-width: 800px;">
+            <span class="close" id="ragPromptClose">&times;</span>
+            <h2>RAG-анализ документов</h2>
+            
+            <div style="margin: 20px 0;">
+                <label for="ragPromptText" style="display: block; margin-bottom: 5px; font-weight: bold;">Промпт:</label>
+                <textarea id="ragPromptText" rows="5" style="width: 100%; padding: 10px; font-size: 14px; border: 1px solid #ddd; border-radius: 4px;">Проанализируй документы закупки климатической техники. Извлеки список оборудования с характеристиками и определи, требуется ли монтаж.</textarea>
+            </div>
+            
+            <div style="display: flex; gap: 10px; margin: 15px 0;">
+                <button id="ragSelectModelBtn" class="btn btn-secondary">
+                    <i class="icon">⚙️</i> Модель
+                </button>
+                <div style="flex: 1;">
+                    <label for="ragTopK" style="display: block; margin-bottom: 5px;">Top-K фрагментов:</label>
+                    <input type="number" id="ragTopK" value="5" min="3" max="10" style="width: 80px; padding: 5px;">
+                </div>
+                <div style="flex: 1;">
+                    <label for="ragMaxTokens" style="display: block; margin-bottom: 5px;">Макс. выходных токенов:</label>
+                    <input type="number" id="ragMaxTokens" value="600" min="0" max="2000" style="width: 100px; padding: 5px;">
+                </div>
+            </div>
+            
+            <div id="ragSelectedFiles" style="background: #f5f5f5; padding: 10px; border-radius: 4px; margin: 15px 0;">
+                <strong>Выбрано файлов:</strong> <span id="ragSelectedCount">0</span>
+            </div>
+            
+            <div id="ragEstimate" style="background: #e8f4f8; padding: 10px; border-radius: 4px; margin: 15px 0; display: none;">
+                <h4>Оценка запроса:</h4>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                    <div><strong>Входные токены:</strong> <span id="ragEstInputTokens">-</span></div>
+                    <div><strong>Выходные токены:</strong> <span id="ragEstOutputTokens">-</span></div>
+                    <div><strong>Всего токенов:</strong> <span id="ragEstTotalTokens">-</span></div>
+                    <div><strong>Ожид. стоимость:</strong> <span id="ragEstCost">-</span></div>
+                </div>
+            </div>
+            
+            <div style="margin-top: 20px; display: flex; gap: 10px; justify-content: flex-end;">
+                <button id="ragEstimateBtn" class="btn btn-secondary">
+                    Оценить
+                </button>
+                <button id="ragStartAnalysisBtn" class="btn btn-primary">
+                    Начать анализ
+                </button>
+                <button id="ragCancelBtn" class="btn btn-secondary">
+                    Отмена
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Модальное окно выбора модели -->
+    <div id="ragModelModal" class="modal" style="display: none;">
+        <div class="modal-content" style="max-width: 600px;">
+            <span class="close" id="ragModelClose">&times;</span>
+            <h2>Выбор модели GPT</h2>
+            
+            <div id="ragModelsList" style="margin: 20px 0;">
+                <!-- Список моделей загружается динамически -->
+            </div>
+            
+            <div style="margin: 20px 0; padding: 15px; background: #f9f9f9; border-radius: 4px;">
+                <h4>Настройка цен:</h4>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px;">
+                    <div>
+                        <label for="ragPriceInput">Цена входных токенов (за 1M):</label>
+                        <input type="number" id="ragPriceInput" step="0.01" min="0" placeholder="0.00" style="width: 100%; padding: 5px;">
+                    </div>
+                    <div>
+                        <label for="ragPriceOutput">Цена выходных токенов (за 1M):</label>
+                        <input type="number" id="ragPriceOutput" step="0.01" min="0" placeholder="0.00" style="width: 100%; padding: 5px;">
+                    </div>
+                </div>
+                <p style="font-size: 12px; color: #666; margin-top: 10px;">Укажите цены для расчёта стоимости (в руб. или USD)</p>
+            </div>
+            
+            <div style="margin-top: 20px; display: flex; gap: 10px; justify-content: flex-end;">
+                <button id="ragSavePricesBtn" class="btn btn-primary">
+                    Сохранить
+                </button>
+                <button id="ragCloseModelBtn" class="btn btn-secondary">
+                    Закрыть
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Модальное окно результатов RAG -->
+    <div id="ragResultModal" class="modal" style="display: none;">
+        <div class="modal-content" style="max-width: 900px;">
+            <span class="close" id="ragResultClose">&times;</span>
+            <h2>Результаты RAG-анализа</h2>
+            
+            <div id="ragResultContent" style="margin: 20px 0;">
+                <!-- Результаты загружаются динамически -->
+            </div>
+            
+            <div id="ragActualUsage" style="background: #e8f4f8; padding: 10px; border-radius: 4px; margin: 15px 0; display: none;">
+                <h4>Фактический расход:</h4>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                    <div><strong>Входные токены:</strong> <span id="ragActualInputTokens">-</span></div>
+                    <div><strong>Выходные токены:</strong> <span id="ragActualOutputTokens">-</span></div>
+                    <div><strong>Всего токенов:</strong> <span id="ragActualTotalTokens">-</span></div>
+                    <div><strong>Стоимость:</strong> <span id="ragActualCost">-</span></div>
+                </div>
+            </div>
+            
+            <div style="margin-top: 20px; display: flex; gap: 10px; justify-content: flex-end;">
+                <button id="ragCopyResultBtn" class="btn btn-secondary">
+                    Копировать
+                </button>
+                <button id="ragCloseResultBtn" class="btn btn-primary">
+                    Закрыть
+                </button>
+            </div>
+        </div>
+    </div>
+
     <!-- Модальное окно для выбора промпта -->
     <div id="promptListModal" class="modal" style="display: none;">
         <div class="modal-content" style="max-width: 600px;">
@@ -228,5 +365,6 @@
 
     <script src="{{ url_for('static', filename='js/script.js') }}"></script>
     <script src="{{ url_for('static', filename='js/ai-analysis.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/rag-analysis.js') }}"></script>
 </body>
 </html>
