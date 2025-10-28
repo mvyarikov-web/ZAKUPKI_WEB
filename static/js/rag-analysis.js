@@ -234,7 +234,9 @@
         // Обработчики кнопок удаления модели
         modelsList.querySelectorAll('.btn-delete-model').forEach(btn => {
             btn.addEventListener('click', async (e) => {
-                const modelId = e.target.getAttribute('data-model-id');
+                e.preventDefault();
+                e.stopPropagation();
+                const modelId = e.currentTarget.getAttribute('data-model-id');
                 const model = models.find(m => m.model_id === modelId);
                 if (!model) return;
 
