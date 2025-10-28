@@ -227,10 +227,16 @@ class RAGService:
             
             # Получаем ID документов для фильтрации
             document_ids = []
-            for file_path in file_paths:
-                doc = self.db.get_document_by_path(file_path)
-                if doc:
-                    document_ids.append(doc['id'])
+            try:
+                for file_path in file_paths:
+                    doc = self.db.get_document_by_path(file_path)
+                    if doc:
+                        document_ids.append(doc['id'])
+            except Exception as db_err:
+                # Ошибка подключения к БД - помечаем как недоступную
+                current_app.logger.warning(f'Ошибка подключения к БД: {db_err}')
+                self.db_available = False
+                return False, "База данных недоступна", None
             
             if not document_ids:
                 return False, "Документы не проиндексированы", None
@@ -238,12 +244,18 @@ class RAGService:
             # Ищем релевантные чанки
             min_similarity = self._get_config('RAG_MIN_SIMILARITY', 0.7)
             
-            relevant_chunks = self.db.search_similar_chunks(
-                query_embedding=query_embedding,
-                top_k=top_k,
-                min_similarity=min_similarity,
-                document_ids=document_ids
-            )
+            try:
+                relevant_chunks = self.db.search_similar_chunks(
+                    query_embedding=query_embedding,
+                    top_k=top_k,
+                    min_similarity=min_similarity,
+                    document_ids=document_ids
+                )
+            except Exception as db_err:
+                # Ошибка при поиске - помечаем БД как недоступную
+                current_app.logger.warning(f'Ошибка поиска в БД: {db_err}')
+                self.db_available = False
+                return False, "База данных недоступна", None
             
             if not relevant_chunks:
                 return False, "Не найдено релевантных фрагментов", None

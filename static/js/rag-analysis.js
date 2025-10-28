@@ -33,6 +33,8 @@
     const aiResultModal = document.getElementById('aiResultModal');
     const aiResultText = document.getElementById('aiResultText');
     const aiResultClose = document.getElementById('aiResultClose');
+    const aiResultError = document.getElementById('aiResultError');
+    const aiResultErrorText = document.getElementById('aiResultErrorText');
 
     // Модал выбора промпта (переиспользуем существующий)
     const promptListModal = document.getElementById('promptListModal');
@@ -44,6 +46,8 @@
     let models = [];
     let selectedModelId = null;
     let debounceTimer = null;
+    let analysisTimerInterval = null;
+    let analysisStartTime = null;
 
     function getSelectedFiles() {
         return window.getSelectedFiles ? window.getSelectedFiles() : [];
@@ -52,6 +56,53 @@
     function showMessage(message) {
         if (window.showMessage) return window.showMessage(message);
         alert(message);
+    }
+    
+    // Функция для запуска таймера анализа
+    function startAnalysisTimer() {
+        stopAnalysisTimer(); // Останавливаем предыдущий таймер, если есть
+        analysisStartTime = Date.now();
+        
+        const updateTimer = () => {
+            const elapsed = Math.floor((Date.now() - analysisStartTime) / 1000);
+            const minutes = Math.floor(elapsed / 60);
+            const seconds = elapsed % 60;
+            const timeStr = minutes > 0 
+                ? `${minutes}:${seconds.toString().padStart(2, '0')}`
+                : `${seconds} сек`;
+            showMessage(`Выполняется AI анализ... (${timeStr})`);
+        };
+        
+        // Обновляем сразу и затем каждую секунду
+        updateTimer();
+        analysisTimerInterval = setInterval(updateTimer, 1000);
+    }
+    
+    // Функция для остановки таймера анализа
+    function stopAnalysisTimer() {
+        if (analysisTimerInterval) {
+            clearInterval(analysisTimerInterval);
+            analysisTimerInterval = null;
+        }
+        analysisStartTime = null;
+    }
+    
+    // Функция для завершения анализа с показом итогового времени
+    function finishAnalysisTimer(success = true) {
+        if (analysisStartTime) {
+            const elapsed = Math.floor((Date.now() - analysisStartTime) / 1000);
+            const minutes = Math.floor(elapsed / 60);
+            const seconds = elapsed % 60;
+            const timeStr = minutes > 0 
+                ? `${minutes} мин ${seconds} сек`
+                : `${seconds} сек`;
+            
+            stopAnalysisTimer();
+            
+            if (success) {
+                showMessage(`Анализ выполнен успешно за ${timeStr}`);
+            }
+        }
     }
     
     // Функции для работы с курсом USD/RUB
@@ -128,9 +179,11 @@
                                             <div><strong>${m.display_name}</strong> <span style="color:#777; font-size:12px;">(${m.model_id})</span> · ${status}</div>
                                             <div style="color:#666; font-size:12px;">Контекст: ${Number(m.context_window_tokens || 0).toLocaleString()} токенов</div>
                                         </div>
-                                        <div style="display:flex; gap:8px;">
+                                        <div style="display:flex; gap:8px; align-items:center;">
                                             <label style="font-size:12px; color:#555;">Вход (за 1М): <input type="number" step="0.0001" min="0" data-price-in="${m.model_id}" value="${m.price_input_per_1m || 0}" style="width:120px;" /></label>
                                             <label style="font-size:12px; color:#555;">Выход (за 1М): <input type="number" step="0.0001" min="0" data-price-out="${m.model_id}" value="${m.price_output_per_1m || 0}" style="width:120px;" /></label>
+                                            <label style="font-size:12px; color:#555;">Таймаут (сек): <input type="number" step="1" min="5" max="600" data-timeout="${m.model_id}" value="${m.timeout || 30}" style="width:80px;" title="Максимальное время ожидания ответа от модели" /></label>
+                                            <button class="btn-delete-model" data-model-id="${m.model_id}" style="background:#dc3545; color:white; border:none; padding:6px 12px; border-radius:4px; cursor:pointer; font-size:12px;" title="Удалить модель">🗑️ Удалить</button>
                                         </div>
                                     </div>
                                 </div>`;
@@ -159,6 +212,63 @@
                     }
                     // Немедленно обновляем метрики
                     updateRagMetrics();
+                }
+            });
+        });
+
+        // Обработчики изменения timeout - обновляем локально
+        modelsList.querySelectorAll('input[data-timeout]').forEach(inp => {
+            inp.addEventListener('input', (e) => {
+                const modelId = e.target.getAttribute('data-timeout');
+                const model = models.find(m => m.model_id === modelId);
+                if (model) {
+                    let timeout = parseInt(e.target.value) || 30;
+                    // Ограничение диапазона 5-600 сек
+                    if (timeout < 5) timeout = 5;
+                    if (timeout > 600) timeout = 600;
+                    model.timeout = timeout;
+                }
+            });
+        });
+
+        // Обработчики кнопок удаления модели
+        modelsList.querySelectorAll('.btn-delete-model').forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+                const modelId = e.target.getAttribute('data-model-id');
+                const model = models.find(m => m.model_id === modelId);
+                if (!model) return;
+
+                // Проверка: нельзя удалить последнюю модель
+                if (models.length === 1) {
+                    alert('Нельзя удалить последнюю модель. Должна оставаться хотя бы одна модель.');
+                    return;
+                }
+
+                // Подтверждение удаления
+                if (!confirm(`Удалить модель "${model.display_name}"?\n\nВосстановить модель можно будет только вручную.`)) {
+                    return;
+                }
+
+                // Отправка запроса на удаление
+                try {
+                    const response = await fetch(`/ai_rag/models/${encodeURIComponent(modelId)}`, {
+                        method: 'DELETE'
+                    });
+                    const result = await response.json();
+
+                    if (!response.ok) {
+                        alert('Ошибка удаления: ' + (result.error || 'Неизвестная ошибка'));
+                        return;
+                    }
+
+                    alert('Модель успешно удалена');
+
+                    // Обновить список моделей
+                    await loadModelsConfig();
+                    renderModelsList();
+                } catch (error) {
+                    console.error('Ошибка при удалении модели:', error);
+                    alert('Ошибка при удалении модели: ' + error.message);
                 }
             });
         });
@@ -304,8 +414,13 @@
             return showMessage('Выберите файлы для анализа');
         }
 
+        // Сохраняем состояние модала перед закрытием
+        const wasModalOpen = ragModal.style.display === 'block';
         ragModal.style.display = 'none';
-        showMessage('Выполняется AI анализ...');
+        
+        // Запускаем таймер
+        startAnalysisTimer();
+        
         try {
             const res = await fetch('/ai_rag/analyze', {
                 method: 'POST',
@@ -315,22 +430,94 @@
                     prompt,
                     model_id: selectedModelId,
                     top_k: (ragDeepMode && ragDeepMode.checked) ? 8 : 5,
-                    max_output_tokens: (ragDeepMode && ragDeepMode.checked) ? 1200 : 600,
+                    max_output_tokens: (ragDeepMode && ragDeepMode.checked) ? 2500 : 1500,
                     temperature: 0.3
                 })
             });
-            const data = await res.json();
+            
+            // Проверяем Content-Type перед парсингом JSON
+            const contentType = res.headers.get('content-type');
+            let data;
+            
+            if (!contentType || !contentType.includes('application/json')) {
+                // Сервер вернул не-JSON (например, текст ошибки)
+                stopAnalysisTimer();
+                const text = await res.text();
+                showMessage('Ошибка сервера: ' + text.substring(0, 200));
+                if (wasModalOpen) {
+                    ragModal.style.display = 'block';
+                }
+                return;
+            }
+            
+            try {
+                data = await res.json();
+            } catch (jsonErr) {
+                stopAnalysisTimer();
+                const text = await res.text();
+                showMessage('Ошибка парсинга ответа: ' + text.substring(0, 200));
+                if (wasModalOpen) {
+                    ragModal.style.display = 'block';
+                }
+                return;
+            }
             if (data.success) {
-                // Преобразуем result в текст для просмотра
-                const text = typeof data.result === 'string' ? data.result : JSON.stringify(data.result, null, 2);
-                aiResultText.value = text;
+                // Рендерим результат в HTML для красивого отображения
+                const result = data.result;
+                
+                // Запрашиваем HTML версию
+                try {
+                    const htmlRes = await fetch('/ai_rag/render_html', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ result: result })
+                    });
+                    const htmlData = await htmlRes.json();
+                    
+                    if (htmlData.success && htmlData.html) {
+                        // Создаем div для HTML контента
+                        const resultDiv = document.createElement('div');
+                        resultDiv.innerHTML = htmlData.html;
+                        resultDiv.style.cssText = 'padding: 15px; max-height: 500px; overflow-y: auto; background: white; border: 1px solid #dee2e6; border-radius: 6px;';
+                        
+                        // Заменяем содержимое контейнера
+                        const container = document.getElementById('aiResultContainer');
+                        if (container) {
+                            container.innerHTML = '';
+                            container.appendChild(resultDiv);
+                        }
+                        
+                        // Сохраняем исходные данные для кнопок
+                        window._lastAnalysisResult = result;
+                    } else {
+                        // Fallback на plain text
+                        const text = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
+                        aiResultText.value = text;
+                    }
+                } catch (htmlErr) {
+                    console.error('Ошибка рендеринга HTML:', htmlErr);
+                    // Fallback на plain text
+                    const text = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
+                    aiResultText.value = text;
+                }
+                
                 aiResultModal.style.display = 'block';
-                showMessage('Анализ выполнен успешно');
+                finishAnalysisTimer(true); // Показываем успешное завершение с итоговым временем
             } else {
+                // При ошибке возвращаем модал обратно
+                stopAnalysisTimer();
                 showMessage(data.message || 'Ошибка анализа');
+                if (wasModalOpen) {
+                    ragModal.style.display = 'block';
+                }
             }
         } catch (e) {
+            // При ошибке сети возвращаем модал обратно
+            stopAnalysisTimer();
             showMessage('Ошибка сети: ' + e.message);
+            if (wasModalOpen) {
+                ragModal.style.display = 'block';
+            }
         }
     }
 
@@ -350,6 +537,9 @@
                 ragPromptText.value = lastPrompt;
             }
         } catch (_) {}
+        
+        // Загружаем курс USD/RUB из localStorage для корректного отображения рублей
+        loadUsdRubRate();
         
         updateRagMetrics();
         try { autoResize(ragPromptText, 4); autoResize(ragDocumentsText, 10); } catch (_) {}
@@ -393,35 +583,333 @@
             modelSelectModal.style.display = 'none';
         });
     }
-    // Кнопка «Обновить модели»
+    
+    // Кнопка «Обновить модели» - открывает окно выбора новых моделей
     const modelRefreshBtn = document.getElementById('modelRefreshBtn');
-    if (modelRefreshBtn) {
+    const addModelsModal = document.getElementById('addModelsModal');
+    const addModelsClose = document.getElementById('addModelsClose');
+    const addModelsCancelBtn = document.getElementById('addModelsCancelBtn');
+    const addModelsConfirmBtn = document.getElementById('addModelsConfirmBtn');
+    const newModelsList = document.getElementById('newModelsList');
+    const addModelsStatus = document.getElementById('addModelsStatus');
+    const addModelsStatusText = document.getElementById('addModelsStatusText');
+    
+    if (modelRefreshBtn && addModelsModal) {
         modelRefreshBtn.addEventListener('click', async () => {
+            // Открыть модальное окно
+            addModelsModal.style.display = 'block';
+            addModelsStatus.style.display = 'none';
+            newModelsList.innerHTML = '<p style="text-align: center; color: #777;">Загрузка списка доступных моделей...</p>';
+            
             try {
-                const res = await fetch('/ai_rag/models/refresh', { method: 'POST' });
+                // Получить список всех доступных моделей из OpenAI
+                const res = await fetch('/ai_rag/models/available', { method: 'GET' });
                 if (!res.ok) {
-                    const txt = await res.text();
-                    return showMessage('Не удалось обновить модели: ' + (txt || res.statusText));
+                    throw new Error(`HTTP ${res.status}: ${res.statusText}`);
                 }
-                const data = await res.json().catch(async () => ({ success: false, message: await res.text() }));
-                if (data && data.success) {
-                    showMessage(`Модели обновлены: добавлено ${data.added || 0}, обновлено ${data.updated || 0}.`);
-                    await loadModels();
-                    renderModelsList();
-                    updateRagMetrics();
+                const data = await res.json();
+                
+                if (!data.success) {
+                    throw new Error(data.message || 'Не удалось получить список моделей');
+                }
+                
+                const availableModels = data.models || [];
+                const currentModels = models.map(m => m.model_id);
+                
+                // Фильтруем - показываем только те, которых еще нет
+                const newModels = availableModels.filter(m => !currentModels.includes(m.model_id));
+                
+                if (newModels.length === 0) {
+                    newModelsList.innerHTML = '<p style="text-align: center; color: #777;">Все доступные модели уже добавлены</p>';
                 } else {
-                    showMessage((data && data.message) || 'Не удалось обновить список моделей');
+                    // Рендерим список с чекбоксами
+                    let html = '';
+                    newModels.forEach(m => {
+                        html += `
+                            <div style="border: 1px solid #ddd; border-radius: 6px; padding: 10px; margin-bottom: 10px;">
+                                <label style="display: flex; align-items: flex-start; gap: 10px; cursor: pointer;">
+                                    <input type="checkbox" class="new-model-checkbox" data-model-id="${m.model_id}" />
+                                    <div style="flex: 1;">
+                                        <div><strong>${m.display_name || m.model_id}</strong></div>
+                                        <div style="font-size: 12px; color: #666; margin-top: 4px;">
+                                            ID: ${m.model_id}
+                                        </div>
+                                        ${m.context_window_tokens ? `<div style="font-size: 12px; color: #666;">Контекст: ${Number(m.context_window_tokens).toLocaleString()} токенов</div>` : ''}
+                                    </div>
+                                </label>
+                            </div>
+                        `;
+                    });
+                    newModelsList.innerHTML = html;
                 }
             } catch (e) {
-                showMessage('Ошибка сети при обновлении моделей: ' + e.message);
+                console.error('Ошибка при загрузке моделей:', e);
+                newModelsList.innerHTML = `<p style="text-align: center; color: #d32f2f;">Ошибка: ${e.message}</p>`;
             }
         });
+        
+        // Закрытие окна
+        if (addModelsClose) {
+            addModelsClose.addEventListener('click', () => addModelsModal.style.display = 'none');
+        }
+        if (addModelsCancelBtn) {
+            addModelsCancelBtn.addEventListener('click', () => addModelsModal.style.display = 'none');
+        }
+        
+        // Добавление выбранных моделей
+        if (addModelsConfirmBtn) {
+            addModelsConfirmBtn.addEventListener('click', async () => {
+                const checkboxes = newModelsList.querySelectorAll('.new-model-checkbox:checked');
+                const selectedIds = Array.from(checkboxes).map(cb => cb.getAttribute('data-model-id'));
+                
+                if (selectedIds.length === 0) {
+                    alert('Выберите хотя бы одну модель');
+                    return;
+                }
+                
+                // Отправить запрос на добавление
+                try {
+                    addModelsStatus.style.display = 'block';
+                    addModelsStatusText.textContent = 'Добавление моделей...';
+                    
+                    const res = await fetch('/ai_rag/models/add', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ model_ids: selectedIds })
+                    });
+                    
+                    if (!res.ok) {
+                        throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+                    }
+                    
+                    const data = await res.json();
+                    
+                    if (!data.success) {
+                        throw new Error(data.message || 'Не удалось добавить модели');
+                    }
+                    
+                    addModelsStatusText.textContent = `Успешно добавлено моделей: ${data.added || 0}`;
+                    
+                    // Обновить список моделей
+                    await loadModelsConfig();
+                    renderModelsList();
+                    
+                    // Закрыть окно через 1.5 сек
+                    setTimeout(() => {
+                        addModelsModal.style.display = 'none';
+                    }, 1500);
+                    
+                } catch (e) {
+                    console.error('Ошибка при добавлении моделей:', e);
+                    addModelsStatusText.textContent = `Ошибка: ${e.message}`;
+                    addModelsStatus.style.background = '#ffebee';
+                }
+            });
+        }
     }
+    
     if (ragStartBtn) {
         ragStartBtn.addEventListener('click', startAnalysis);
     }
+    
+    // Обработчики кнопок модала результата
     if (aiResultClose) {
         aiResultClose.addEventListener('click', () => aiResultModal.style.display = 'none');
+    }
+    
+    const closeResultBtn = document.getElementById('closeResultBtn');
+    const copyResultBtn = document.getElementById('copyResultBtn');
+    const saveResultBtn = document.getElementById('saveResultBtn');
+    const openNewTabBtn = document.getElementById('openNewTabBtn');
+    const exportDocxBtn = document.getElementById('exportDocxBtn');
+    
+    if (closeResultBtn) {
+        closeResultBtn.addEventListener('click', () => aiResultModal.style.display = 'none');
+    }
+    
+    if (copyResultBtn) {
+        copyResultBtn.addEventListener('click', function() {
+            // Получаем текст из сохраненного результата или из textarea
+            let text = '';
+            
+            if (window._lastAnalysisResult && window._lastAnalysisResult.answer) {
+                // Используем исходный Markdown текст
+                const result = window._lastAnalysisResult;
+                text = `Модель: ${result.model}\n`;
+                text += `Стоимость: $${result.cost?.total || 0}\n`;
+                if (result.cost?.total_rub) {
+                    text += `В рублях: ₽${result.cost.total_rub} (по курсу $${result.cost.usd_to_rub_rate})\n`;
+                }
+                text += `Токены: ${result.usage?.total_tokens || 0}\n`;
+                text += `\n${'='.repeat(80)}\n\n`;
+                text += result.answer;
+            } else {
+                text = aiResultText.value;
+            }
+            
+            if (!text) {
+                showMessage('Нет текста для копирования');
+                return;
+            }
+            
+            navigator.clipboard.writeText(text)
+                .then(() => showMessage('Результат скопирован в буфер обмена'))
+                .catch(error => showMessage('Ошибка копирования: ' + error));
+        });
+    }
+    
+    if (saveResultBtn) {
+        saveResultBtn.addEventListener('click', function() {
+            // Получаем текст из сохраненного результата или из textarea
+            let text = '';
+            
+            if (window._lastAnalysisResult && window._lastAnalysisResult.answer) {
+                // Форматируем для сохранения в файл
+                const result = window._lastAnalysisResult;
+                text = `${'='.repeat(80)}\n`;
+                text += `AI АНАЛИЗ\n`;
+                text += `${'='.repeat(80)}\n`;
+                text += `Модель: ${result.model}\n`;
+                text += `Стоимость: $${result.cost?.total || 0} (вход: $${result.cost?.input || 0}, выход: $${result.cost?.output || 0})\n`;
+                if (result.cost?.total_rub) {
+                    text += `В рублях: ₽${result.cost.total_rub} (вход: ₽${result.cost.input_rub}, выход: ₽${result.cost.output_rub}) по курсу $${result.cost.usd_to_rub_rate}\n`;
+                }
+                text += `Токены: ${result.usage?.total_tokens || 0} (вход: ${result.usage?.input_tokens || 0}, выход: ${result.usage?.output_tokens || 0})\n`;
+                text += `${'='.repeat(80)}\n\n`;
+                text += result.answer;
+            } else {
+                text = aiResultText.value;
+            }
+            if (!text) {
+                showMessage('Нет текста для сохранения');
+                return;
+            }
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+            const filename = `ai_analysis_${timestamp}.txt`;
+            const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            showMessage(`Результат сохранён: ${filename}`);
+        });
+    }
+    
+    // Кнопка "Открыть в новой вкладке"
+    if (openNewTabBtn) {
+        openNewTabBtn.addEventListener('click', async function() {
+            if (!window._lastAnalysisResult || !window._lastAnalysisResult.answer) {
+                showMessage('Нет результата для отображения');
+                return;
+            }
+            
+            try {
+                // Запрашиваем HTML-версию для новой вкладки
+                const res = await fetch('/ai_rag/render_html', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ result: window._lastAnalysisResult })
+                });
+                
+                const data = await res.json();
+                
+                if (data.success && data.html) {
+                    // Открываем новое окно с полным HTML
+                    const newWindow = window.open('', '_blank');
+                    if (newWindow) {
+                        newWindow.document.write(`
+                            <!DOCTYPE html>
+                            <html lang="ru">
+                            <head>
+                                <meta charset="UTF-8">
+                                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                                <title>Результат AI анализа</title>
+                                <style>
+                                    body {
+                                        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                                        max-width: 900px;
+                                        margin: 40px auto;
+                                        padding: 20px;
+                                        background: #f5f5f5;
+                                    }
+                                    .content {
+                                        background: white;
+                                        padding: 30px;
+                                        border-radius: 8px;
+                                        box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+                                    }
+                                    @media print {
+                                        body { background: white; margin: 0; }
+                                        .content { box-shadow: none; padding: 0; }
+                                    }
+                                </style>
+                            </head>
+                            <body>
+                                <div class="content">
+                                    ${data.html}
+                                </div>
+                            </body>
+                            </html>
+                        `);
+                        newWindow.document.close();
+                        showMessage('Результат открыт в новой вкладке');
+                    } else {
+                        showMessage('Не удалось открыть новое окно. Проверьте настройки браузера.');
+                    }
+                } else {
+                    showMessage(data.message || 'Ошибка получения HTML');
+                }
+            } catch (err) {
+                showMessage('Ошибка открытия в новой вкладке: ' + err.message);
+            }
+        });
+    }
+    
+    // Кнопка "Сохранить как DOCX"
+    if (exportDocxBtn) {
+        exportDocxBtn.addEventListener('click', async function() {
+            if (!window._lastAnalysisResult || !window._lastAnalysisResult.answer) {
+                showMessage('Нет результата для экспорта');
+                return;
+            }
+            
+            try {
+                showMessage('Создание DOCX файла...');
+                
+                const res = await fetch('/ai_rag/export_docx', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ result: window._lastAnalysisResult })
+                });
+                
+                if (res.ok) {
+                    // Получаем blob для скачивания
+                    const blob = await res.blob();
+                    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+                    const filename = `ai_analysis_${timestamp}.docx`;
+                    
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = filename;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                    
+                    showMessage(`DOCX файл сохранён: ${filename}`);
+                } else {
+                    const errorText = await res.text();
+                    showMessage('Ошибка экспорта: ' + errorText.substring(0, 100));
+                }
+            } catch (err) {
+                showMessage('Ошибка экспорта DOCX: ' + err.message);
+            }
+        });
     }
 
     // Живые метрики

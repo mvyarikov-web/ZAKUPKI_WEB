@@ -59,14 +59,14 @@ if __name__ == '__main__':
     print('🚀 Сервер запускается...')
     print(f'📍 Адрес: http://{host}:{port}')
     print(f'🔧 Debug mode: {debug}')
-    print('⏱️ Таймаут запросов (WSGI): 30 секунд')
+    print('⏱️ Таймаут запросов (WSGI): 120 секунд')
     print(f'{"="*60}\n')
 
     try:
         # Используем werkzeug сервер с таймаутом
         server = make_server(host, port, app, threaded=True)
         try:
-            server.timeout = 30  # секунды
+            server.timeout = 120  # секунды (увеличено для долгих AI-анализов)
         except Exception:
             pass
 

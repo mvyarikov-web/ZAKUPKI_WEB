@@ -80,11 +80,34 @@ class ServerReloader:
         killed = []
         
         try:
-            for conn in psutil.net_connections(kind='inet'):
+            connections = psutil.net_connections(kind='inet')
+        except (psutil.AccessDenied, PermissionError) as e:
+            self.logger.warning(f"⚠️  Нет доступа к сетевым соединениям: {e}")
+            self.logger.info("🔄 Использую fallback метод...")
+            return self._free_port_fallback()
+        except Exception as e:
+            self.logger.error(f"❌ Ошибка при получении списка соединений: {e}")
+            self.logger.info("🔄 Использую fallback метод...")
+            return self._free_port_fallback()
+        
+        for conn in connections:
+            try:
+                # Проверяем порт безопасно - conn.laddr может быть недоступен
+                if not hasattr(conn, 'laddr') or not conn.laddr:
+                    continue
+                
                 if conn.laddr.port == self.port and conn.pid:
                     try:
                         proc = psutil.Process(conn.pid)
                         proc_name = proc.name()
+                        
+                        # Фильтруем системные процессы macOS
+                        if any(x in proc_name for x in ['EAUpdater', 'System', 'Xprotect', 'Apple']):
+                            self.logger.debug(
+                                f"⏭️  Пропускаю системный процесс {proc_name} (PID: {conn.pid})"
+                            )
+                            continue
+                        
                         self.logger.info(
                             f"🔪 Завершаю процесс {proc_name} (PID: {conn.pid}) на порту {self.port}"
                         )
@@ -92,29 +115,33 @@ class ServerReloader:
                         killed.append(conn.pid)
                     except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
                         self.logger.warning(f"⚠️  Не удалось завершить процесс {conn.pid}: {e}")
-            
-            # Даём время на корректное завершение
-            if killed:
-                time.sleep(0.5)
-                # Принудительное завершение если процесс ещё жив
-                for pid in killed:
-                    try:
-                        proc = psutil.Process(pid)
-                        if proc.is_running():
-                            self.logger.warning(f"⚠️  Принудительное завершение процесса {pid}")
-                            proc.kill()
-                    except psutil.NoSuchProcess:
-                        pass  # Процесс уже завершён
-                
-                self.logger.info(f"✅ Порт {self.port} освобождён (завершено процессов: {len(killed)})")
-            else:
-                self.logger.info(f"✅ Порт {self.port} свободен")
-            
-            return True
+            except (AttributeError, ValueError, TypeError) as e:
+                # Игнорируем соединения с некорректными данными
+                self.logger.debug(f"⏭️  Пропускаю соединение с ошибкой: {e}")
+                continue
+            except Exception as e:
+                # Ловим любые другие исключения при обработке соединения
+                self.logger.debug(f"⏭️  Пропускаю соединение из-за неожиданной ошибки: {e}")
+                continue
         
-        except Exception as e:
-            self.logger.error(f"❌ Ошибка при освобождении порта: {e}")
-            return False
+        # Даём время на корректное завершение
+        if killed:
+            time.sleep(0.5)
+            # Принудительное завершение если процесс ещё жив
+            for pid in killed:
+                try:
+                    proc = psutil.Process(pid)
+                    if proc.is_running():
+                        self.logger.warning(f"⚠️  Принудительное завершение процесса {pid}")
+                        proc.kill()
+                except psutil.NoSuchProcess:
+                    pass  # Процесс уже завершён
+            
+            self.logger.info(f"✅ Порт {self.port} освобождён (завершено процессов: {len(killed)})")
+        else:
+            self.logger.info(f"✅ Порт {self.port} свободен")
+        
+        return True
     
     def _free_port_fallback(self) -> bool:
         """Освобождение порта через системные команды (fallback для macOS/Linux)."""

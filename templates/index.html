@@ -172,7 +172,7 @@
                 <div style="margin: 10px 0; display:flex; align-items:center; gap:10px;">
                     <label style="display:flex; align-items:center; gap:8px; cursor:pointer; user-select:none;">
                         <input id="ragDeepMode" type="checkbox" checked>
-                        <span>Глубокий анализ (больше контекста и вывода)</span>
+                        <span>Глубокий анализ (до 2500 токенов вывода вместо 1500)</span>
                     </label>
                 </div>
             </div>
@@ -216,17 +216,56 @@
         </div>
     </div>
 
+    <!-- Модальное окно для добавления новых моделей -->
+    <div id="addModelsModal" class="modal" style="display: none;">
+        <div class="modal-content" style="max-width: 800px;">
+            <div class="modal-header">
+                <h2>Добавить новые модели</h2>
+                <span id="addModelsClose" class="close">&times;</span>
+            </div>
+            <div class="modal-body">
+                <div id="addModelsStatus" style="margin-bottom: 15px; padding: 10px; background: #e3f2fd; border-radius: 6px; display: none;">
+                    <span id="addModelsStatusText"></span>
+                </div>
+                <div id="newModelsList" style="margin-bottom: 15px; max-height: 400px; overflow-y: auto;">
+                    <!-- Список доступных моделей будет загружен динамически -->
+                    <p style="text-align: center; color: #777;">Загрузка...</p>
+                </div>
+                <div style="font-size: 12px; color: #777; margin-top: 10px;">
+                    Выберите модели галочками и нажмите «Добавить выбранные». Модели, уже добавленные в конфигурацию, не отображаются.
+                </div>
+            </div>
+            <div class="modal-footer" style="display: flex; gap: 10px; justify-content: flex-end;">
+                <button id="addModelsCancelBtn" class="btn btn-secondary">Отмена</button>
+                <button id="addModelsConfirmBtn" class="btn btn-primary">Добавить выбранные</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Модальное окно для результатов AI анализа -->
     <div id="aiResultModal" class="modal" style="display: none;">
         <div class="modal-content" style="max-width: 900px;">
             <span class="close" id="aiResultClose">&times;</span>
+            
+            <!-- Блок для отображения ошибок (сверху) -->
+            <div id="aiResultError" style="display: none; margin: 0 0 15px 0; padding: 12px; background: #f8d7da; border: 1px solid #f5c6cb; border-radius: 6px; color: #721c24;">
+                <strong>⚠️ Ошибка:</strong>
+                <span id="aiResultErrorText"></span>
+            </div>
+            
             <h2>Результат AI анализа</h2>
             
-            <div style="margin: 20px 0;">
-                <textarea id="aiResultText" rows="15" style="width: 100%; padding: 10px; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; font-size: 14px;"></textarea>
+            <div id="aiResultContainer" style="margin: 20px 0;">
+                <textarea id="aiResultText" rows="15" style="width: 100%; padding: 10px; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; font-size: 14px; display: none;"></textarea>
             </div>
             
             <div style="margin-top: 20px; display: flex; gap: 10px; justify-content: flex-end;">
+                <button id="openNewTabBtn" class="btn btn-secondary">
+                    🗗 Открыть в новой вкладке
+                </button>
+                <button id="exportDocxBtn" class="btn btn-secondary">
+                    📄 Сохранить как DOCX
+                </button>
                 <button id="copyResultBtn" class="btn btn-secondary">
                     📋 Копировать в буфер
                 </button>

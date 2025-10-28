@@ -1,8 +1,16 @@
 """Blueprint для RAG-анализа документов."""
 import os
 import json
-from flask import Blueprint, request, jsonify, current_app
+import re
+import io
+from datetime import datetime
+from flask import Blueprint, request, jsonify, current_app, send_file
 from typing import List, Dict, Any, Optional
+from docx import Document
+from docx.shared import Pt, RGBColor
+from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
+from docx.oxml.shared import OxmlElement
+from docx.oxml.ns import qn
 
 from webapp.services.rag_service import get_rag_service
 from webapp.services.chunking import TextChunker
@@ -87,6 +95,12 @@ def _load_models_config() -> Dict[str, Any]:
         if enabled is None:
             enabled = True
             migrated = True
+        
+        # Миграция timeout - если нет, устанавливаем 30 сек
+        timeout = m.get('timeout')
+        if timeout is None:
+            timeout = 30
+            migrated = True
 
         normalized_models.append({
             'model_id': model_id,
@@ -95,6 +109,7 @@ def _load_models_config() -> Dict[str, Any]:
             'price_input_per_1m': float(price_in) if price_in is not None else 0.0,
             'price_output_per_1m': float(price_out) if price_out is not None else 0.0,
             'enabled': bool(enabled),
+            'timeout': int(timeout) if isinstance(timeout, (int, float)) else 30,
         })
 
     if normalized_models != models:
@@ -150,7 +165,8 @@ def _fetch_openai_models() -> List[Dict[str, Any]]:
         api_key = current_app.config.get('OPENAI_API_KEY') or os.environ.get('OPENAI_API_KEY')
         if not api_key:
             return []
-        client = OpenAI(api_key=api_key)
+        timeout = current_app.config.get('OPENAI_TIMEOUT', 90)
+        client = OpenAI(api_key=api_key, timeout=timeout)
         models = client.models.list()
         items = []
         # Оставляем только chat/completions/omni семейство (эвристика по id)
@@ -214,6 +230,7 @@ def refresh_models():
                     'price_input_per_1m': 0.0,
                     'price_output_per_1m': 0.0,
                     'enabled': True,
+                    'timeout': 30,
                 }
                 added += 1
 
@@ -233,6 +250,104 @@ def refresh_models():
         current_app.logger.exception(f'Ошибка в /ai_rag/models/refresh: {e}')
         # Возвращаем 200 с success=false, чтобы фронтенд не падал на non-JSON/500
         return jsonify({'success': False, 'message': f'Не удалось обновить модели: {str(e)}'}), 200
+
+
+@ai_rag_bp.route('/models/available', methods=['GET'])
+def get_available_models():
+    """
+    Получить список всех доступных моделей из OpenAI API.
+    
+    Returns:
+        JSON со списком моделей
+    """
+    try:
+        available = _fetch_openai_models()
+        
+        if not available:
+            return jsonify({
+                'success': False,
+                'message': 'Не удалось получить список моделей из OpenAI API. Проверьте API ключ.'
+            }), 200
+        
+        return jsonify({
+            'success': True,
+            'models': available
+        }), 200
+    
+    except Exception as e:
+        current_app.logger.exception(f'Ошибка в /ai_rag/models/available: {e}')
+        return jsonify({
+            'success': False,
+            'message': f'Ошибка при получении списка моделей: {str(e)}'
+        }), 200
+
+
+@ai_rag_bp.route('/models/add', methods=['POST'])
+def add_selected_models():
+    """
+    Добавить выбранные модели в конфигурацию.
+    
+    Ожидает JSON:
+        {
+            "model_ids": ["gpt-4", "gpt-3.5-turbo", ...]
+        }
+    
+    Returns:
+        JSON с результатом операции
+    """
+    try:
+        data = request.get_json()
+        if not data or 'model_ids' not in data:
+            return jsonify({
+                'success': False,
+                'message': 'Требуется поле model_ids'
+            }), 400
+        
+        model_ids = data['model_ids']
+        if not isinstance(model_ids, list) or not model_ids:
+            return jsonify({
+                'success': False,
+                'message': 'model_ids должен быть непустым списком'
+            }), 400
+        
+        # Получить все доступные модели
+        available = _fetch_openai_models()
+        available_dict = {m['model_id']: m for m in available}
+        
+        # Загрузить текущую конфигурацию
+        config = _load_models_config()
+        current_models = config.get('models', [])
+        current_ids = {m['model_id'] for m in current_models}
+        
+        added = 0
+        for mid in model_ids:
+            if mid in current_ids:
+                continue  # Уже есть
+            
+            if mid in available_dict:
+                # Добавляем модель из доступных
+                new_model = available_dict[mid].copy()
+                new_model['timeout'] = 30  # Дефолтный timeout
+                current_models.append(new_model)
+                added += 1
+        
+        if added > 0:
+            config['models'] = current_models
+            _save_models_config(config)
+            current_app.logger.info(f'Добавлено моделей: {added}')
+        
+        return jsonify({
+            'success': True,
+            'added': added,
+            'total': len(current_models)
+        }), 200
+    
+    except Exception as e:
+        current_app.logger.exception(f'Ошибка в /ai_rag/models/add: {e}')
+        return jsonify({
+            'success': False,
+            'message': f'Ошибка при добавлении моделей: {str(e)}'
+        }), 500
 
 
 @ai_rag_bp.route('/models/default', methods=['PUT'])
@@ -311,6 +426,69 @@ def get_models():
         return jsonify({
             'success': False,
             'message': f'Ошибка получения моделей: {str(e)}'
+        }), 500
+
+
+@ai_rag_bp.route('/models/<model_id>', methods=['DELETE'])
+def delete_model(model_id):
+    """
+    Удалить модель из конфигурации.
+    
+    Args:
+        model_id: ID модели для удаления
+        
+    Returns:
+        JSON с результатом операции
+    """
+    try:
+        config = _load_models_config()
+        models = config.get('models', [])
+        
+        # Проверка: должна остаться хотя бы одна модель
+        if len(models) <= 1:
+            return jsonify({
+                'success': False,
+                'error': 'Нельзя удалить последнюю модель. Должна оставаться хотя бы одна модель.'
+            }), 400
+        
+        # Найти модель для удаления
+        model_to_delete = None
+        for model in models:
+            if model.get('model_id') == model_id:
+                model_to_delete = model
+                break
+        
+        if not model_to_delete:
+            return jsonify({
+                'success': False,
+                'error': f'Модель "{model_id}" не найдена'
+            }), 404
+        
+        # Удалить модель из списка
+        models = [m for m in models if m.get('model_id') != model_id]
+        config['models'] = models
+        
+        # Если удаляемая модель была default, назначить новый default
+        if config.get('default_model') == model_id:
+            config['default_model'] = models[0].get('model_id') if models else 'gpt-4o-mini'
+            current_app.logger.info(f'Default модель изменена на {config["default_model"]} после удаления {model_id}')
+        
+        # Сохранить обновленную конфигурацию
+        _save_models_config(config)
+        
+        current_app.logger.info(f'Модель {model_id} успешно удалена')
+        
+        return jsonify({
+            'success': True,
+            'message': f'Модель "{model_to_delete.get("display_name", model_id)}" успешно удалена',
+            'new_default_model': config.get('default_model')
+        }), 200
+    
+    except Exception as e:
+        current_app.logger.exception(f'Ошибка при удалении модели {model_id}: {e}')
+        return jsonify({
+            'success': False,
+            'error': f'Ошибка при удалении модели: {str(e)}'
         }), 500
 
 
@@ -595,41 +773,27 @@ def _direct_analyze_without_rag(
                 'message': 'OpenAI API ключ не настроен'
             }), 500
         
-        # Читаем тексты из файлов (используем функцию из ai_analysis)
-        from webapp.routes.ai_analysis import _extract_text_from_files
+        # Читаем тексты из индекса (используем функцию из ai_analysis)
+        from webapp.routes.ai_analysis import _extract_text_from_index_for_files
+        from webapp.services.indexing import get_index_path
         
-        combined_docs = _extract_text_from_files(file_paths, upload_folder)
+        # Получаем путь к индексу
+        index_folder = current_app.config.get('INDEX_FOLDER')
+        index_path = get_index_path(index_folder) if index_folder else None
+        
+        combined_docs = ''
+        
+        if index_path and os.path.exists(index_path):
+            # Извлекаем текст из индекса
+            combined_docs = _extract_text_from_index_for_files(file_paths, index_path)
         
         if not combined_docs or not combined_docs.strip():
             return jsonify({
                 'success': False,
-                'message': 'Не удалось извлечь текст из файлов'
+                'message': 'Не удалось извлечь текст из файлов. Постройте индекс через кнопку «Построить индекс».'
             }), 400
         
-        # Формируем запрос к OpenAI
-        client = openai.OpenAI(api_key=api_key)
-        
-        messages = [
-            {"role": "system", "content": "Вы - помощник для анализа документов. Отвечайте на русском языке."},
-            {"role": "user", "content": f"Документы:\n\n{combined_docs}\n\nЗапрос: {prompt}"}
-        ]
-        
-        response = client.chat.completions.create(
-            model=model_id,
-            messages=messages,
-            max_tokens=max_output_tokens,
-            temperature=temperature
-        )
-        
-        # Извлекаем результат
-        answer = response.choices[0].message.content
-        usage = {
-            'input_tokens': response.usage.prompt_tokens,
-            'output_tokens': response.usage.completion_tokens,
-            'total_tokens': response.usage.total_tokens
-        }
-        
-        # Вычисляем стоимость
+        # Получаем конфигурацию модели для проверки поддержки system role
         config = _load_models_config()
         model_config = None
         
@@ -638,10 +802,105 @@ def _direct_analyze_without_rag(
                 model_config = m
                 break
         
+        # Проверяем поддержку system role (o1-* модели не поддерживают)
+        supports_system = True
+        if model_config:
+            supports_system = model_config.get('supports_system_role', True)
+        
+        # Получаем timeout из модели или используем глобальный
+        if model_config and 'timeout' in model_config:
+            timeout = model_config['timeout']
+        else:
+            timeout = current_app.config.get('OPENAI_TIMEOUT', 90)
+        
+        client = openai.OpenAI(api_key=api_key, timeout=timeout)
+        
+        # Для o1-* моделей используем только user role
+        if supports_system:
+            messages = [
+                {"role": "system", "content": "Вы - помощник для анализа документов. Отвечайте на русском языке."},
+                {"role": "user", "content": f"Документы:\n\n{combined_docs}\n\nЗапрос: {prompt}"}
+            ]
+        else:
+            messages = [
+                {"role": "user", "content": f"Ты - помощник для анализа документов. Отвечай на русском языке.\n\nДокументы:\n\n{combined_docs}\n\nЗапрос: {prompt}"}
+            ]
+        
+        try:
+            response = client.chat.completions.create(
+                model=model_id,
+                messages=messages,
+                max_tokens=max_output_tokens,
+                temperature=temperature
+            )
+        except Exception as api_err:
+            error_str = str(api_err)
+            
+            # Обработка ошибки таймаута
+            if 'timed out' in error_str.lower() or 'timeout' in error_str.lower():
+                timeout_val = current_app.config.get('OPENAI_TIMEOUT', 90)
+                return jsonify({
+                    'success': False,
+                    'message': f'Запрос к OpenAI превысил время ожидания ({timeout_val} сек). Попробуйте уменьшить объём данных или увеличить OPENAI_TIMEOUT в конфигурации.'
+                }), 504
+            
+            # Обработка ошибки превышения контекста
+            if 'context_length_exceeded' in error_str or 'maximum context length' in error_str:
+                # Попытка сократить текст
+                current_app.logger.warning(f'Превышен лимит контекста для {model_id}, сокращаем текст')
+                
+                # Берем только первую половину текста
+                combined_docs_short = combined_docs[:len(combined_docs)//2]
+                
+                if supports_system:
+                    messages = [
+                        {"role": "system", "content": "Вы - помощник для анализа документов. Отвечайте на русском языке."},
+                        {"role": "user", "content": f"Документы (сокращённые):\n\n{combined_docs_short}\n\nЗапрос: {prompt}"}
+                    ]
+                else:
+                    messages = [
+                        {"role": "user", "content": f"Ты - помощник для анализа документов. Отвечай на русском языке.\n\nДокументы (сокращённые):\n\n{combined_docs_short}\n\nЗапрос: {prompt}"}
+                    ]
+                
+                try:
+                    response = client.chat.completions.create(
+                        model=model_id,
+                        messages=messages,
+                        max_tokens=max_output_tokens,
+                        temperature=temperature
+                    )
+                except Exception as retry_err:
+                    return jsonify({
+                        'success': False,
+                        'message': f'Ошибка анализа даже после сокращения текста: {str(retry_err)}'
+                    }), 500
+            else:
+                return jsonify({
+                    'success': False,
+                    'message': f'Ошибка анализа: {error_str}'
+                }), 500
+        
+        # Извлекаем результат
+        answer = response.choices[0].message.content
+        finish_reason = response.choices[0].finish_reason
+        
+        # Проверяем, был ли ответ обрезан
+        if finish_reason == 'length':
+            current_app.logger.warning(f'Ответ был обрезан из-за лимита max_tokens={max_output_tokens}')
+            answer += '\n\n⚠️ **Примечание:** Ответ был обрезан из-за ограничения длины. Увеличьте параметр max_output_tokens для получения полного ответа.'
+        
+        usage = {
+            'input_tokens': response.usage.prompt_tokens,
+            'output_tokens': response.usage.completion_tokens,
+            'total_tokens': response.usage.total_tokens
+        }
+        
+        # Вычисляем стоимость
         result = {
             'answer': answer,
             'usage': usage,
-            'model': model_id
+            'model': model_id,
+            'finish_reason': finish_reason
         }
         
         if model_config:
@@ -652,11 +911,18 @@ def _direct_analyze_without_rag(
             cost_output = (usage['output_tokens'] / 1_000_000) * price_output
             total_cost = cost_input + cost_output
             
+            # Курс доллара для конвертации в рубли
+            usd_to_rub = current_app.config.get('USD_TO_RUB_RATE', 95.0)
+            
             result['cost'] = {
-                'input': round(cost_input, 4),
-                'output': round(cost_output, 4),
-                'total': round(total_cost, 4),
-                'currency': 'USD'
+                'input': round(cost_input, 6),
+                'output': round(cost_output, 6),
+                'total': round(total_cost, 6),
+                'currency': 'USD',
+                'input_rub': round(cost_input * usd_to_rub, 2),
+                'output_rub': round(cost_output * usd_to_rub, 2),
+                'total_rub': round(total_cost * usd_to_rub, 2),
+                'usd_to_rub_rate': usd_to_rub
             }
         
         return jsonify({
@@ -670,6 +936,50 @@ def _direct_analyze_without_rag(
         return jsonify({
             'success': False,
             'message': f'Ошибка анализа: {str(e)}'
+        }), 500
+
+
+@ai_rag_bp.route('/render_html', methods=['POST'])
+def render_html():
+    """
+    Рендерит результат анализа в красиво отформатированный HTML.
+    
+    Ожидает JSON:
+    {
+        "result": {
+            "answer": "текст ответа в Markdown",
+            "cost": {...},
+            "usage": {...},
+            "model": "..."
+        }
+    }
+    
+    Returns:
+        JSON с отформатированным HTML
+    """
+    try:
+        from webapp.utils.markdown_renderer import render_analysis_result
+        
+        data = request.get_json()
+        if not data or 'result' not in data:
+            return jsonify({
+                'success': False,
+                'message': 'Не передан результат для рендеринга'
+            }), 400
+        
+        result = data['result']
+        html = render_analysis_result(result)
+        
+        return jsonify({
+            'success': True,
+            'html': html
+        }), 200
+        
+    except Exception as e:
+        current_app.logger.exception(f'Ошибка рендеринга HTML: {e}')
+        return jsonify({
+            'success': False,
+            'message': f'Ошибка рендеринга: {str(e)}'
         }), 500
 
 
@@ -763,8 +1073,9 @@ def analyze():
         
         # Если RAG вернул ошибку, тоже используем fallback
         if not success:
-            if 'эмбеддинг' in message.lower() or 'embedding' in message.lower():
-                current_app.logger.warning(f'Ошибка эмбеддинга в RAG, переключение на прямой анализ: {message}')
+            # Проверяем, нужен ли fallback
+            if any(keyword in message.lower() for keyword in ['эмбеддинг', 'embedding', 'база данных недоступна', 'database']):
+                current_app.logger.warning(f'Ошибка RAG/БД, переключение на прямой анализ: {message}')
                 return _direct_analyze_without_rag(
                     file_paths=file_paths,
                     prompt=prompt,
@@ -863,3 +1174,302 @@ def get_status():
             'success': False,
             'message': f'Ошибка получения статуса: {str(e)}'
         }), 500
+
+
+@ai_rag_bp.route('/export_docx', methods=['POST'])
+def export_docx():
+    """
+    Экспортировать результат анализа в DOCX файл.
+    
+    Ожидает JSON:
+    {
+        "result": {
+            "answer": "текст ответа с markdown",
+            "model": "gpt-4o-mini",
+            "usage": {...},
+            "cost": {...}
+        }
+    }
+    
+    Returns:
+        DOCX файл для скачивания
+    """
+    try:
+        data = request.get_json()
+        
+        if not data or 'result' not in data:
+            return jsonify({
+                'success': False,
+                'message': 'Не переданы данные результата'
+            }), 400
+        
+        result = data['result']
+        answer = result.get('answer', '')
+        model = result.get('model', 'неизвестная модель')
+        usage = result.get('usage', {})
+        cost = result.get('cost', {})
+        
+        if not answer:
+            return jsonify({
+                'success': False,
+                'message': 'Нет текста для экспорта'
+            }), 400
+        
+        # Создаём документ Word
+        doc = Document()
+        
+        # Заголовок
+        heading = doc.add_heading('Результат AI Анализа', level=1)
+        heading.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
+        
+        # Метаданные
+        doc.add_paragraph()
+        meta_para = doc.add_paragraph()
+        meta_para.add_run('Дата: ').bold = True
+        meta_para.add_run(datetime.now().strftime('%d.%m.%Y %H:%M:%S'))
+        meta_para.add_run('\n')
+        
+        meta_para.add_run('Модель: ').bold = True
+        meta_para.add_run(model)
+        meta_para.add_run('\n')
+        
+        if cost:
+            meta_para.add_run('Стоимость: ').bold = True
+            meta_para.add_run(f"${cost.get('total', 0):.6f} ")
+            meta_para.add_run(f"(вход: ${cost.get('input', 0):.6f}, выход: ${cost.get('output', 0):.6f})")
+            meta_para.add_run('\n')
+            
+            # Стоимость в рублях
+            if 'total_rub' in cost:
+                meta_para.add_run('В рублях: ').bold = True
+                meta_para.add_run(f"₽{cost.get('total_rub', 0):.2f} ")
+                meta_para.add_run(f"(вход: ₽{cost.get('input_rub', 0):.2f}, выход: ₽{cost.get('output_rub', 0):.2f}) ")
+                meta_para.add_run(f"по курсу ${cost.get('usd_to_rub_rate', 95.0):.2f}")
+                meta_para.add_run('\n')
+        
+        if usage:
+            meta_para.add_run('Токены: ').bold = True
+            meta_para.add_run(f"{usage.get('total_tokens', 0)} ")
+            meta_para.add_run(f"(вход: {usage.get('input_tokens', 0)}, выход: {usage.get('output_tokens', 0)})")
+        
+        # Разделитель
+        doc.add_paragraph('_' * 80)
+        doc.add_paragraph()
+        
+        # Обрабатываем Markdown текст и добавляем в документ
+        _add_markdown_to_docx(doc, answer)
+        
+        # Сохраняем в память
+        buffer = io.BytesIO()
+        doc.save(buffer)
+        buffer.seek(0)
+        
+        # Генерируем имя файла
+        timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+        filename = f'ai_analysis_{timestamp}.docx'
+        
+        return send_file(
+            buffer,
+            mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            as_attachment=True,
+            download_name=filename
+        )
+    
+    except Exception as e:
+        current_app.logger.exception(f'Ошибка в /ai_rag/export_docx: {e}')
+        return jsonify({
+            'success': False,
+            'message': f'Ошибка экспорта DOCX: {str(e)}'
+        }), 500
+
+
+def _add_markdown_to_docx(doc: Document, markdown_text: str) -> None:
+    """
+    Добавить Markdown текст в документ DOCX с базовым форматированием.
+    
+    Поддерживаемые элементы:
+    - Заголовки (# ## ###)
+    - Жирный текст (**text**)
+    - Курсив (*text*)
+    - Списки (- item, * item)
+    - Нумерованные списки (1. item)
+    - Код (`code`)
+    - Блоки кода (```code```)
+    """
+    lines = markdown_text.split('\n')
+    in_code_block = False
+    code_block_lines = []
+    
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        
+        # Блок кода
+        if line.strip().startswith('```'):
+            if in_code_block:
+                # Конец блока кода
+                if code_block_lines:
+                    code_para = doc.add_paragraph('\n'.join(code_block_lines))
+                    code_para.style = 'No Spacing'
+                    for run in code_para.runs:
+                        run.font.name = 'Courier New'
+                        run.font.size = Pt(9)
+                        run.font.color.rgb = RGBColor(0, 0, 0)
+                code_block_lines = []
+                in_code_block = False
+            else:
+                in_code_block = True
+            i += 1
+            continue
+        
+        if in_code_block:
+            code_block_lines.append(line)
+            i += 1
+            continue
+        
+        # Пустая строка
+        if not line.strip():
+            doc.add_paragraph()
+            i += 1
+            continue
+        
+        # Заголовки
+        if line.startswith('# '):
+            doc.add_heading(line[2:].strip(), level=1)
+            i += 1
+            continue
+        elif line.startswith('## '):
+            doc.add_heading(line[3:].strip(), level=2)
+            i += 1
+            continue
+        elif line.startswith('### '):
+            doc.add_heading(line[4:].strip(), level=3)
+            i += 1
+            continue
+        
+        # Списки
+        if line.strip().startswith(('- ', '* ')):
+            para = doc.add_paragraph(style='List Bullet')
+            _add_formatted_text(para, line.strip()[2:])
+            i += 1
+            continue
+        
+        # Нумерованные списки
+        if re.match(r'^\d+\.\s', line.strip()):
+            text = re.sub(r'^\d+\.\s+', '', line.strip())
+            para = doc.add_paragraph(style='List Number')
+            _add_formatted_text(para, text)
+            i += 1
+            continue
+        
+        # Обычный параграф
+        para = doc.add_paragraph()
+        _add_formatted_text(para, line)
+        i += 1
+
+
+def _add_formatted_text(paragraph, text: str) -> None:
+    """
+    Добавить текст с форматированием (жирный, курсив, код, ссылки) в параграф.
+    """
+    # Сначала обрабатываем ссылки [text](url)
+    link_pattern = r'\[([^\]]+)\]\(([^\)]+)\)'
+    parts = re.split(f'({link_pattern})', text)
+    
+    i = 0
+    while i < len(parts):
+        part = parts[i]
+        
+        # Проверяем, является ли это ссылкой
+        link_match = re.match(link_pattern, part)
+        if link_match:
+            link_text = link_match.group(1)
+            link_url = link_match.group(2)
+            _add_hyperlink(paragraph, link_url, link_text)
+            i += 1
+            continue
+        
+        # Обрабатываем инлайн-код `code`
+        code_parts = re.split(r'(`[^`]+`)', part)
+        
+        for code_part in code_parts:
+            if code_part.startswith('`') and code_part.endswith('`'):
+                # Инлайн-код
+                run = paragraph.add_run(code_part[1:-1])
+                run.font.name = 'Courier New'
+                run.font.size = Pt(10)
+                run.font.color.rgb = RGBColor(200, 0, 0)
+            else:
+                # Обрабатываем жирный текст и курсив
+                _add_bold_italic_text(paragraph, code_part)
+        
+        i += 1
+
+
+def _add_hyperlink(paragraph, url: str, text: str) -> None:
+    """
+    Добавить кликабельную гиперссылку в параграф.
+    
+    Args:
+        paragraph: Параграф документа DOCX
+        url: URL ссылки
+        text: Текст ссылки
+    """
+    # Создаём элемент гиперссылки
+    part = paragraph.part
+    r_id = part.relate_to(url, 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink', is_external=True)
+    
+    # Создаём XML элемент гиперссылки
+    hyperlink = OxmlElement('w:hyperlink')
+    hyperlink.set(qn('r:id'), r_id)
+    
+    # Создаём новый run для текста ссылки
+    new_run = OxmlElement('w:r')
+    
+    # Добавляем свойства run (цвет и подчёркивание для ссылки)
+    rPr = OxmlElement('w:rPr')
+    
+    # Цвет ссылки (синий)
+    color = OxmlElement('w:color')
+    color.set(qn('w:val'), '0563C1')
+    rPr.append(color)
+    
+    # Подчёркивание
+    u = OxmlElement('w:u')
+    u.set(qn('w:val'), 'single')
+    rPr.append(u)
+    
+    new_run.append(rPr)
+    
+    # Добавляем текст
+    text_elem = OxmlElement('w:t')
+    text_elem.text = text
+    new_run.append(text_elem)
+    
+    hyperlink.append(new_run)
+    paragraph._p.append(hyperlink)
+
+
+def _add_bold_italic_text(paragraph, text: str) -> None:
+    """
+    Добавить текст с жирным и курсивом в параграф.
+    """
+    # Сначала обрабатываем жирный текст **text**
+    bold_parts = re.split(r'(\*\*[^*]+\*\*)', text)
+    
+    for bold_part in bold_parts:
+        if bold_part.startswith('**') and bold_part.endswith('**'):
+            # Жирный текст
+            run = paragraph.add_run(bold_part[2:-2])
+            run.bold = True
+        else:
+            # Обрабатываем курсив *text*
+            italic_parts = re.split(r'(\*[^*]+\*)', bold_part)
+            for italic_part in italic_parts:
+                if italic_part.startswith('*') and italic_part.endswith('*') and not italic_part.startswith('**'):
+                    run = paragraph.add_run(italic_part[1:-1])
+                    run.italic = True
+                else:
+                    # Обычный текст
+                    if italic_part:
+                        paragraph.add_run(italic_part)

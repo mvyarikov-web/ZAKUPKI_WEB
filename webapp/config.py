@@ -50,10 +50,14 @@ class Config:
     
     # OpenAI GPT API Configuration
     OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY', '')  # API ключ для GPT
+    OPENAI_TIMEOUT = int(os.environ.get('OPENAI_TIMEOUT', '90'))  # Таймаут запросов к OpenAI (секунды)
     GPT_MODEL = 'gpt-3.5-turbo'  # Модель GPT
     GPT_MAX_TOKENS = 150  # Максимум токенов в ответе
     GPT_TEMPERATURE = 0.7  # Температура генерации (0-1)
     GPT_MAX_REQUEST_SIZE = 4096  # Максимальный размер запроса (символы)
+    
+    # Курс валют
+    USD_TO_RUB_RATE = float(os.environ.get('USD_TO_RUB_RATE', '95.0'))  # Курс доллара к рублю
     
     # RAG Configuration
     RAG_ENABLED = os.environ.get('RAG_ENABLED', 'true').lower() in ('true', '1', 'yes')
@@ -63,7 +67,7 @@ class Config:
     RAG_MIN_SIMILARITY = float(os.environ.get('RAG_MIN_SIMILARITY', '0.7'))  # Порог релевантности
     RAG_EMBEDDING_MODEL = os.environ.get('RAG_EMBEDDING_MODEL', 'text-embedding-3-small')
     RAG_DEFAULT_MODEL = os.environ.get('RAG_DEFAULT_MODEL', 'gpt-4o-mini')
-    RAG_MAX_OUTPUT_TOKENS = int(os.environ.get('RAG_MAX_OUTPUT_TOKENS', '600'))
+    RAG_MAX_OUTPUT_TOKENS = int(os.environ.get('RAG_MAX_OUTPUT_TOKENS', '1500'))  # Увеличено для полных ответов
     RAG_TEMPERATURE = float(os.environ.get('RAG_TEMPERATURE', '0.3'))  # Более детерминированный
     RAG_MODELS_FILE = os.path.join(BASE_DIR, 'index', 'models.json')
     RAG_HYBRID_SEARCH = True  # Семантика + ключевые слова
