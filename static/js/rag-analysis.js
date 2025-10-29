@@ -170,23 +170,77 @@
         let html = '';
         models.forEach(m => {
             const checked = m.model_id === selectedModelId ? 'checked' : '';
-                            const status = (m.enabled === false) ? '<span style="color:#d32f2f; font-size:12px;">не активна</span>' : '<span style="color:#2e7d32; font-size:12px;">активна</span>';
-                            html += `
-                                <div style="border:1px solid #ddd; border-radius:6px; padding:10px; margin-bottom:10px;">
-                                    <div style="display:flex; gap:10px; align-items:center;">
-                                        <input type="radio" name="rag-model" value="${m.model_id}" ${checked} />
-                                        <div style="flex:1;">
-                                            <div><strong>${m.display_name}</strong> <span style="color:#777; font-size:12px;">(${m.model_id})</span> · ${status}</div>
-                                            <div style="color:#666; font-size:12px;">Контекст: ${Number(m.context_window_tokens || 0).toLocaleString()} токенов</div>
-                                        </div>
-                                        <div style="display:flex; gap:8px; align-items:center;">
-                                            <label style="font-size:12px; color:#555;">Вход (за 1М): <input type="number" step="0.0001" min="0" data-price-in="${m.model_id}" value="${m.price_input_per_1m || 0}" style="width:120px;" /></label>
-                                            <label style="font-size:12px; color:#555;">Выход (за 1М): <input type="number" step="0.0001" min="0" data-price-out="${m.model_id}" value="${m.price_output_per_1m || 0}" style="width:120px;" /></label>
-                                            <label style="font-size:12px; color:#555;">Таймаут (сек): <input type="number" step="1" min="5" max="600" data-timeout="${m.model_id}" value="${m.timeout || 30}" style="width:80px;" title="Максимальное время ожидания ответа от модели" /></label>
-                                            <button class="btn-delete-model" data-model-id="${m.model_id}" style="background:#dc3545; color:white; border:none; padding:6px 12px; border-radius:4px; cursor:pointer; font-size:12px;" title="Удалить модель">🗑️ Удалить</button>
-                                        </div>
-                                    </div>
-                                </div>`;
+            const status = (m.enabled === false) ? '<span style="color:#d32f2f; font-size:12px;">не активна</span>' : '<span style="color:#2e7d32; font-size:12px;">активна</span>';
+            const description = m.description ? m.description : 'Описание отсутствует';
+            const contextInfo = `${Number(m.context_window_tokens || 0).toLocaleString()} токенов`;
+            
+            html += `
+                <div style="border:1px solid #ddd; border-radius:8px; padding:16px; margin-bottom:16px; background:#fafafa;">
+                    <!-- Полоса 1: Радиокнопка и название модели -->
+                    <div style="display:flex; align-items:center; gap:12px; margin-bottom:12px;">
+                        <input type="radio" name="rag-model" value="${m.model_id}" ${checked} />
+                        <div style="flex:1;">
+                            <strong style="font-size:15px;">${m.display_name}</strong> 
+                            <span style="color:#777; font-size:12px;">(${m.model_id})</span> 
+                            · ${status}
+                            <span style="color:#666; font-size:11px; margin-left:8px;">Контекст: ${contextInfo}</span>
+                        </div>
+                    </div>
+                    
+                    <!-- Полоса 2: Описание модели -->
+                    <div style="margin-bottom:14px; padding:10px; background:#fff; border-left:3px solid #2196f3; border-radius:4px;">
+                        <div style="color:#555; font-size:13px; line-height:1.5;">
+                            ${description}
+                        </div>
+                    </div>
+                    
+                    <!-- Полоса 3: Параметры (вертикально) -->
+                    <div style="display:flex; flex-direction:column; gap:10px; margin-bottom:14px;">
+                        <div style="display:flex; align-items:center; gap:10px;">
+                            <input type="number" 
+                                   step="0.0001" 
+                                   min="0" 
+                                   data-price-in="${m.model_id}" 
+                                   value="${m.price_input_per_1m || 0}" 
+                                   style="width:150px; padding:6px; border:1px solid #ccc; border-radius:4px; font-size:13px;" />
+                            <label style="font-size:13px; color:#555; flex:1;">Стоимость входа (за 1М токенов)</label>
+                        </div>
+                        
+                        <div style="display:flex; align-items:center; gap:10px;">
+                            <input type="number" 
+                                   step="0.0001" 
+                                   min="0" 
+                                   data-price-out="${m.model_id}" 
+                                   value="${m.price_output_per_1m || 0}" 
+                                   style="width:150px; padding:6px; border:1px solid #ccc; border-radius:4px; font-size:13px;" />
+                            <label style="font-size:13px; color:#555; flex:1;">Стоимость выхода (за 1М токенов)</label>
+                        </div>
+                        
+                        <div style="display:flex; align-items:center; gap:10px;">
+                            <input type="number" 
+                                   step="1" 
+                                   min="5" 
+                                   max="600" 
+                                   data-timeout="${m.model_id}" 
+                                   value="${m.timeout || 30}" 
+                                   style="width:150px; padding:6px; border:1px solid #ccc; border-radius:4px; font-size:13px;" 
+                                   title="Максимальное время ожидания ответа от модели" />
+                            <label style="font-size:13px; color:#555; flex:1;">Таймаут (секунд)</label>
+                        </div>
+                    </div>
+                    
+                    <!-- Кнопка удаления -->
+                    <div style="text-align:right;">
+                        <button class="btn-delete-model" 
+                                data-model-id="${m.model_id}" 
+                                style="background:#dc3545; color:white; border:none; padding:8px 16px; border-radius:4px; cursor:pointer; font-size:13px; transition:background 0.2s;" 
+                                onmouseover="this.style.background='#c82333'" 
+                                onmouseout="this.style.background='#dc3545'"
+                                title="Удалить модель">
+                            🗑️ Удалить модель
+                        </button>
+                    </div>
+                </div>`;
         });
         modelsList.innerHTML = html;
 

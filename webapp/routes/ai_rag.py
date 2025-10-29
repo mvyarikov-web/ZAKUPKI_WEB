@@ -101,15 +101,23 @@ def _load_models_config() -> Dict[str, Any]:
         if timeout is None:
             timeout = 30
             migrated = True
+        
+        # Сохраняем описание, если оно есть
+        description = m.get('description', '')
+        
+        # Сохраняем supports_system_role (для o-моделей)
+        supports_system_role = m.get('supports_system_role', True)
 
         normalized_models.append({
             'model_id': model_id,
             'display_name': display_name,
+            'description': description,
             'context_window_tokens': int(context_window) if isinstance(context_window, (int, float)) else 0,
             'price_input_per_1m': float(price_in) if price_in is not None else 0.0,
             'price_output_per_1m': float(price_out) if price_out is not None else 0.0,
             'enabled': bool(enabled),
             'timeout': int(timeout) if isinstance(timeout, (int, float)) else 30,
+            'supports_system_role': bool(supports_system_role),
         })
 
     if normalized_models != models:
