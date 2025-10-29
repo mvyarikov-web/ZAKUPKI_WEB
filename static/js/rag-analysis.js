@@ -341,6 +341,7 @@
         // Собираем значения из инпутов
         const inputsIn = modelsList.querySelectorAll('input[data-price-in]');
         const inputsOut = modelsList.querySelectorAll('input[data-price-out]');
+        const inputsTimeout = modelsList.querySelectorAll('input[data-timeout]');
         const toSave = [];
 
         inputsIn.forEach(inp => {
@@ -348,7 +349,14 @@
             const valIn = parseFloat(inp.value) || 0;
             const outInp = modelsList.querySelector(`input[data-price-out="${id}"]`);
             const valOut = outInp ? (parseFloat(outInp.value) || 0) : 0;
-            toSave.push({ model_id: id, price_input_per_1m: valIn, price_output_per_1m: valOut });
+            const timeoutInp = modelsList.querySelector(`input[data-timeout="${id}"]`);
+            const timeout = timeoutInp ? (parseInt(timeoutInp.value) || 30) : 30;
+            toSave.push({ 
+                model_id: id, 
+                price_input_per_1m: valIn, 
+                price_output_per_1m: valOut,
+                timeout: timeout
+            });
         });
 
         // Отправляем по одному (минимальная правка бэка)
@@ -430,7 +438,15 @@
             const totalChars = promptChars + docsChars;
             const inputTokens = estimateTokens(totalChars);
             const deep = !!(ragDeepMode && ragDeepMode.checked);
-            const expectedOutput = deep ? 1200 : 600; // увеличиваем оценку вывода в глубокий режим
+            
+            // Для моделей o1 увеличиваем оценку выходных токенов (длинные рассуждения)
+            let expectedOutput;
+            if (selectedModelId && selectedModelId.startsWith('o1')) {
+                expectedOutput = deep ? 4000 : 2000;
+            } else {
+                expectedOutput = deep ? 1200 : 600;
+            }
+            
             const totalTokens = inputTokens + expectedOutput;
 
             const { inPrice, outPrice, name } = getSelectedModelPrices();
@@ -477,6 +493,17 @@
         // Запускаем таймер
         startAnalysisTimer();
         
+        // Определяем max_output_tokens в зависимости от модели
+        let maxTokens;
+        const isDeepMode = ragDeepMode && ragDeepMode.checked;
+        
+        // Для моделей o1-серии увеличиваем лимит, так как они генерируют длинные рассуждения
+        if (selectedModelId && selectedModelId.startsWith('o1')) {
+            maxTokens = isDeepMode ? 8000 : 4000;
+        } else {
+            maxTokens = isDeepMode ? 2500 : 1500;
+        }
+        
         try {
             const res = await fetch('/ai_rag/analyze', {
                 method: 'POST',
@@ -485,8 +512,8 @@
                     file_paths: files,
                     prompt,
                     model_id: selectedModelId,
-                    top_k: (ragDeepMode && ragDeepMode.checked) ? 8 : 5,
-                    max_output_tokens: (ragDeepMode && ragDeepMode.checked) ? 2500 : 1500,
+                    top_k: isDeepMode ? 8 : 5,
+                    max_output_tokens: maxTokens,
                     temperature: 0.3
                 })
             });
@@ -770,7 +797,11 @@
     
     // Обработчики кнопок модала результата
     if (aiResultClose) {
-        aiResultClose.addEventListener('click', () => aiResultModal.style.display = 'none');
+        aiResultClose.addEventListener('click', () => {
+            aiResultModal.style.display = 'none';
+            // Возвращаемся к модалу RAG
+            if (ragModal) ragModal.style.display = 'block';
+        });
     }
     
     const closeResultBtn = document.getElementById('closeResultBtn');
@@ -780,7 +811,11 @@
     const exportDocxBtn = document.getElementById('exportDocxBtn');
     
     if (closeResultBtn) {
-        closeResultBtn.addEventListener('click', () => aiResultModal.style.display = 'none');
+        closeResultBtn.addEventListener('click', () => {
+            aiResultModal.style.display = 'none';
+            // Возвращаемся к модалу RAG
+            if (ragModal) ragModal.style.display = 'block';
+        });
     }
     
     if (copyResultBtn) {

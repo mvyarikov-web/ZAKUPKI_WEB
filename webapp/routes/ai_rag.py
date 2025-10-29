@@ -503,13 +503,14 @@ def delete_model(model_id):
 @ai_rag_bp.route('/models', methods=['POST'])
 def update_model_prices():
     """
-    Обновить цены для модели.
+    Обновить цены и параметры для модели.
     
     Ожидает JSON:
     {
         "model_id": "gpt-4o-mini",
         "price_input_per_1m": 0.15,
-        "price_output_per_1m": 0.60
+        "price_output_per_1m": 0.60,
+        "timeout": 30
     }
     
     Returns:
@@ -527,11 +528,12 @@ def update_model_prices():
         model_id = data['model_id']
         price_input = data.get('price_input_per_1m')
         price_output = data.get('price_output_per_1m')
+        timeout = data.get('timeout')
         
         # Загружаем конфигурацию
         config = _load_models_config()
         
-        # Находим модель и обновляем цены
+        # Находим модель и обновляем параметры
         found = False
         for model in config.get('models', []):
             if model['model_id'] == model_id:
@@ -539,6 +541,8 @@ def update_model_prices():
                     model['price_input_per_1m'] = float(price_input)
                 if price_output is not None:
                     model['price_output_per_1m'] = float(price_output)
+                if timeout is not None:
+                    model['timeout'] = int(timeout)
                 found = True
                 break
         
@@ -553,7 +557,7 @@ def update_model_prices():
         
         return jsonify({
             'success': True,
-            'message': 'Цены обновлены'
+            'message': 'Настройки модели обновлены'
         }), 200
     
     except Exception as e:
@@ -834,22 +838,32 @@ def _direct_analyze_without_rag(
                 {"role": "user", "content": f"Ты - помощник для анализа документов. Отвечай на русском языке.\n\nДокументы:\n\n{combined_docs}\n\nЗапрос: {prompt}"}
             ]
         
+        # Определяем параметры для новых семейств (o1, o3, o4, gpt-4.1, gpt-5)
+        is_new_family = model_id.startswith(('o1', 'o3', 'o4', 'gpt-4.1', 'gpt-5'))
+        
         try:
-            response = client.chat.completions.create(
-                model=model_id,
-                messages=messages,
-                max_tokens=max_output_tokens,
-                temperature=temperature
-            )
+            # Новые модели используют max_completion_tokens и не принимают temperature
+            if is_new_family:
+                response = client.chat.completions.create(
+                    model=model_id,
+                    messages=messages,
+                    max_completion_tokens=max_output_tokens
+                )
+            else:
+                response = client.chat.completions.create(
+                    model=model_id,
+                    messages=messages,
+                    max_tokens=max_output_tokens,
+                    temperature=temperature
+                )
         except Exception as api_err:
             error_str = str(api_err)
             
             # Обработка ошибки таймаута
             if 'timed out' in error_str.lower() or 'timeout' in error_str.lower():
-                timeout_val = current_app.config.get('OPENAI_TIMEOUT', 90)
                 return jsonify({
                     'success': False,
-                    'message': f'Запрос к OpenAI превысил время ожидания ({timeout_val} сек). Попробуйте уменьшить объём данных или увеличить OPENAI_TIMEOUT в конфигурации.'
+                    'message': f'Запрос превышает лимит времени {timeout} сек. Попробуйте позже.'
                 }), 504
             
             # Обработка ошибки превышения контекста
@@ -871,12 +885,20 @@ def _direct_analyze_without_rag(
                     ]
                 
                 try:
-                    response = client.chat.completions.create(
-                        model=model_id,
-                        messages=messages,
-                        max_tokens=max_output_tokens,
-                        temperature=temperature
-                    )
+                    # Используем те же правила для ретрая
+                    if is_new_family:
+                        response = client.chat.completions.create(
+                            model=model_id,
+                            messages=messages,
+                            max_completion_tokens=max_output_tokens
+                        )
+                    else:
+                        response = client.chat.completions.create(
+                            model=model_id,
+                            messages=messages,
+                            max_tokens=max_output_tokens,
+                            temperature=temperature
+                        )
                 except Exception as retry_err:
                     return jsonify({
                         'success': False,

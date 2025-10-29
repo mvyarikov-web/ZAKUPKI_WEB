@@ -36,10 +36,18 @@ def render_analysis_result(result_dict: dict) -> str:
         ],
         attributes={
             '*': ['class', 'id'],
-            'a': ['href', 'title', 'target'],
+            'a': ['href', 'title', 'target', 'rel'],
             'table': ['border', 'cellpadding', 'cellspacing']
         },
         strip=True
+    )
+    
+    # Добавляем target="_blank" и rel="noopener" для всех ссылок
+    import re
+    safe_html = re.sub(
+        r'<a\s+([^>]*href=["\'][^"\']*["\'][^>]*)>',
+        r'<a \1 target="_blank" rel="noopener noreferrer">',
+        safe_html
     )
     
     # Формируем метаинформацию

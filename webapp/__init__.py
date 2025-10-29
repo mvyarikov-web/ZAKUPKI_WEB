@@ -85,6 +85,8 @@ def create_app(config_name=None):
         skip_paths=[
             '/static/',          # статика не ограничивается
             '/download/',        # скачивания
+            '/ai_rag/analyze',   # AI-анализ с собственным таймаутом модели
+            '/build_index',      # индексация может быть долгой
         ]
     )
     
