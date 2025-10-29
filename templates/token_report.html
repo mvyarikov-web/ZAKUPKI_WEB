@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Отчёт по токенам</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+    <style>
+        .token-report-container {
+            max-width: 1200px;
+            margin: 20px auto;
+            padding: 20px;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .report-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid #e5e7eb;
+        }
+        
+        .report-header h1 {
+            margin: 0;
+            color: #1f2937;
+        }
+        
+        .period-selector {
+            display: flex;
+            gap: 15px;
+            align-items: center;
+            margin-bottom: 20px;
+            padding: 15px;
+            background: #f9fafb;
+            border-radius: 6px;
+        }
+        
+        .period-selector label {
+            font-weight: 600;
+            color: #374151;
+        }
+        
+        .period-selector select,
+        .period-selector input {
+            padding: 8px 12px;
+            border: 1px solid #d1d5db;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        
+        .period-selector button {
+            padding: 8px 16px;
+            background: #3b82f6;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: 500;
+        }
+        
+        .period-selector button:hover {
+            background: #2563eb;
+        }
+        
+        .stats-summary {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 30px;
+        }
+        
+        .stat-card {
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-radius: 8px;
+            text-align: center;
+        }
+        
+        .stat-card.green {
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+        }
+        
+        .stat-card.blue {
+            background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+        }
+        
+        .stat-card h3 {
+            margin: 0 0 10px 0;
+            font-size: 14px;
+            opacity: 0.9;
+        }
+        
+        .stat-card .value {
+            font-size: 32px;
+            font-weight: bold;
+            margin: 0;
+        }
+        
+        .tokens-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        
+        .tokens-table th,
+        .tokens-table td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #e5e7eb;
+        }
+        
+        .tokens-table th {
+            background: #f9fafb;
+            font-weight: 600;
+            color: #374151;
+            position: sticky;
+            top: 0;
+        }
+        
+        .tokens-table tr:hover {
+            background: #f9fafb;
+        }
+        
+        .tokens-table td {
+            color: #6b7280;
+        }
+        
+        .model-name {
+            font-weight: 600;
+            color: #1f2937;
+        }
+        
+        .token-count {
+            font-family: 'Courier New', monospace;
+            font-weight: 600;
+        }
+        
+        .no-data {
+            text-align: center;
+            padding: 40px;
+            color: #9ca3af;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #6b7280;
+        }
+        
+        .custom-period {
+            display: none;
+            gap: 10px;
+            align-items: center;
+        }
+        
+        .custom-period.active {
+            display: flex;
+        }
+    </style>
+</head>
+<body>
+    <div class="token-report-container">
+        <div class="report-header">
+            <h1>📊 Отчёт по использованию токенов</h1>
+            <a href="/" class="btn btn-secondary">← Назад</a>
+        </div>
+        
+        <div class="period-selector">
+            <label>Период:</label>
+            <select id="periodType">
+                <option value="all_time">Всё время</option>
+                <option value="current_month">Текущий месяц</option>
+                <option value="custom">Выбрать период</option>
+            </select>
+            
+            <div id="customPeriod" class="custom-period">
+                <label>С:</label>
+                <input type="date" id="startDate">
+                <label>По:</label>
+                <input type="date" id="endDate">
+            </div>
+            
+            <button onclick="loadStats()">Обновить</button>
+        </div>
+        
+        <div class="stats-summary" id="statsSummary">
+            <div class="stat-card">
+                <h3>Всего запросов</h3>
+                <div class="value" id="totalRequests">—</div>
+            </div>
+            <div class="stat-card green">
+                <h3>Всего токенов</h3>
+                <div class="value" id="totalTokens">—</div>
+            </div>
+            <div class="stat-card blue">
+                <h3>Моделей использовано</h3>
+                <div class="value" id="totalModels">—</div>
+            </div>
+        </div>
+        
+        <div id="tableContainer">
+            <div class="loading">Загрузка данных...</div>
+        </div>
+    </div>
+    
+    <script>
+        // Инициализация
+        document.addEventListener('DOMContentLoaded', () => {
+            loadStats();
+            
+            // Обработчик смены типа периода
+            document.getElementById('periodType').addEventListener('change', (e) => {
+                const customPeriod = document.getElementById('customPeriod');
+                if (e.target.value === 'custom') {
+                    customPeriod.classList.add('active');
+                } else {
+                    customPeriod.classList.remove('active');
+                }
+            });
+        });
+        
+        async function loadStats() {
+            const periodType = document.getElementById('periodType').value;
+            const startDate = document.getElementById('startDate').value;
+            const endDate = document.getElementById('endDate').value;
+            
+            // Формируем URL с параметрами
+            let url = '/ai_rag/token_stats?';
+            if (periodType === 'custom') {
+                if (startDate) url += `start_date=${startDate}&`;
+                if (endDate) url += `end_date=${endDate}&`;
+            } else {
+                url += `period=${periodType}`;
+            }
+            
+            try {
+                const response = await fetch(url);
+                const data = await response.json();
+                
+                if (data.success) {
+                    renderStats(data);
+                } else {
+                    document.getElementById('tableContainer').innerHTML = 
+                        `<div class="no-data">Ошибка: ${data.error}</div>`;
+                }
+            } catch (error) {
+                console.error('Ошибка загрузки статистики:', error);
+                document.getElementById('tableContainer').innerHTML = 
+                    '<div class="no-data">Ошибка загрузки данных</div>';
+            }
+        }
+        
+        function renderStats(data) {
+            const models = data.models || [];
+            
+            // Подсчитываем общую статистику
+            let totalRequests = 0;
+            let totalTokens = 0;
+            
+            models.forEach(model => {
+                totalRequests += model.total_requests || 0;
+                totalTokens += model.total_tokens || 0;
+            });
+            
+            // Обновляем карточки
+            document.getElementById('totalRequests').textContent = totalRequests.toLocaleString('ru-RU');
+            document.getElementById('totalTokens').textContent = totalTokens.toLocaleString('ru-RU');
+            document.getElementById('totalModels').textContent = models.length;
+            
+            // Рендерим таблицу
+            if (models.length === 0) {
+                document.getElementById('tableContainer').innerHTML = 
+                    '<div class="no-data">Нет данных за выбранный период</div>';
+                return;
+            }
+            
+            let tableHtml = `
+                <table class="tokens-table">
+                    <thead>
+                        <tr>
+                            <th>Модель</th>
+                            <th>Запросов</th>
+                            <th>Входные токены</th>
+                            <th>Выходные токены</th>
+                            <th>Всего токенов</th>
+                            <th>Первое использование</th>
+                            <th>Последнее использование</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+            `;
+            
+            models.forEach(model => {
+                const firstUsed = new Date(model.first_used).toLocaleString('ru-RU');
+                const lastUsed = new Date(model.last_used).toLocaleString('ru-RU');
+                
+                tableHtml += `
+                    <tr>
+                        <td class="model-name">${escapeHtml(model.model_id)}</td>
+                        <td>${model.total_requests.toLocaleString('ru-RU')}</td>
+                        <td class="token-count">${model.prompt_tokens.toLocaleString('ru-RU')}</td>
+                        <td class="token-count">${model.completion_tokens.toLocaleString('ru-RU')}</td>
+                        <td class="token-count"><strong>${model.total_tokens.toLocaleString('ru-RU')}</strong></td>
+                        <td>${firstUsed}</td>
+                        <td>${lastUsed}</td>
+                    </tr>
+                `;
+            });
+            
+            tableHtml += `
+                    </tbody>
+                </table>
+            `;
+            
+            document.getElementById('tableContainer').innerHTML = tableHtml;
+        }
+        
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+    </script>
+</body>
+</html>

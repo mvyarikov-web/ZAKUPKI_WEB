@@ -4,7 +4,7 @@ import json
 import re
 import io
 from datetime import datetime
-from flask import Blueprint, request, jsonify, current_app, send_file
+from flask import Blueprint, request, jsonify, current_app, send_file, render_template
 from typing import List, Dict, Any, Optional
 from docx import Document
 from docx.shared import Pt, RGBColor
@@ -14,6 +14,7 @@ from docx.oxml.ns import qn
 
 from webapp.services.rag_service import get_rag_service
 from webapp.services.chunking import TextChunker
+from utils.token_tracker import log_token_usage, get_token_stats, get_current_month_stats, get_all_time_stats
 
 
 ai_rag_bp = Blueprint('ai_rag', __name__, url_prefix='/ai_rag')
@@ -925,6 +926,19 @@ def _direct_analyze_without_rag(
             'total_tokens': response.usage.total_tokens
         }
         
+        # Логируем использование токенов
+        log_token_usage(
+            model_id=model_id,
+            prompt_tokens=usage['input_tokens'],
+            completion_tokens=usage['output_tokens'],
+            total_tokens=usage['total_tokens'],
+            metadata={
+                'file_count': len(file_paths),
+                'prompt_length': len(prompt),
+                'mode': 'direct_without_rag'
+            }
+        )
+        
         # Вычисляем стоимость
         result = {
             'answer': answer,
@@ -1120,6 +1134,21 @@ def analyze():
         if success:
             current_app.logger.info(f'RAG анализ выполнен успешно: {result["usage"]}')
             
+            # Логируем использование токенов
+            usage = result.get('usage', {})
+            if usage:
+                log_token_usage(
+                    model_id=model_id,
+                    prompt_tokens=usage.get('input_tokens', 0),
+                    completion_tokens=usage.get('output_tokens', 0),
+                    total_tokens=usage.get('total_tokens', 0),
+                    metadata={
+                        'file_count': len(file_paths),
+                        'top_k': top_k,
+                        'prompt_length': len(prompt)
+                    }
+                )
+            
             # Вычисляем стоимость
             config = _load_models_config()
             model_config = None
@@ -1130,7 +1159,6 @@ def analyze():
                     break
             
             if model_config:
-                usage = result['usage']
                 price_input = model_config.get('price_input_per_1m', 0.0)
                 price_output = model_config.get('price_output_per_1m', 0.0)
                 
@@ -1503,3 +1531,56 @@ def _add_bold_italic_text(paragraph, text: str) -> None:
                     # Обычный текст
                     if italic_part:
                         paragraph.add_run(italic_part)
+
+
+# ============================================================================
+# РОУТЫ ДЛЯ УЧЁТА ТОКЕНОВ
+# ============================================================================
+
+@ai_rag_bp.route('/token_report')
+def token_report():
+    """Страница с отчётом по использованию токенов"""
+    return render_template('token_report.html')
+
+
+@ai_rag_bp.route('/token_stats', methods=['GET'])
+def token_stats():
+    """
+    Получить статистику использования токенов.
+    
+    Query параметры:
+        start_date: Начальная дата (YYYY-MM-DD)
+        end_date: Конечная дата (YYYY-MM-DD)
+        model_id: Фильтр по модели
+        period: Предустановленный период ('current_month', 'all_time')
+    
+    Returns:
+        JSON со статистикой по моделям
+    """
+    try:
+        period = request.args.get('period', 'all_time')
+        start_date = request.args.get('start_date')
+        end_date = request.args.get('end_date')
+        model_id = request.args.get('model_id')
+        
+        # Предустановленные периоды
+        if period == 'current_month':
+            stats = get_current_month_stats()
+        elif period == 'all_time':
+            stats = get_all_time_stats()
+        else:
+            # Пользовательский период
+            stats = get_token_stats(
+                start_date=start_date,
+                end_date=end_date,
+                model_id=model_id
+            )
+        
+        return jsonify(stats), 200
+        
+    except Exception as e:
+        current_app.logger.exception(f'Ошибка получения статистики токенов: {e}')
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
