@@ -10,9 +10,6 @@ const fileCount = document.getElementById('fileCount');
 const searchInput = document.getElementById('searchInput');
 const searchBtn = document.getElementById('searchBtn');
 const deleteFilesBtn = document.getElementById('deleteFilesBtn');
-const messageModal = document.getElementById('messageModal');
-const modalMessage = document.getElementById('modalMessage');
-const closeModal = document.querySelector('.close');
 const indexStatus = document.getElementById('indexStatus');
 
 // --- Folder Select ---
@@ -117,7 +114,7 @@ function handleFiles(e) {
     })
     .then(() => { uploadProgress.style.display = 'none'; })
     .catch((err) => {
-        showMessage(err && err.message ? err.message : 'Ошибка загрузки файлов');
+        MessageManager.error(err && err.message ? err.message : 'Ошибка загрузки файлов');
         uploadProgress.style.display = 'none';
     });
 }
@@ -517,15 +514,15 @@ if (deleteFilesBtn) {
                 // Показываем ошибки, если они есть
                 if (data.errors && data.errors.length > 0) {
                     const errorList = data.errors.map(e => `  - ${e.path}: ${e.error}`).join('\n');
-                    showMessage(`При удалении возникли ошибки:\n${errorList}`);
+                    MessageManager.warning(`При удалении возникли ошибки:\n${errorList}`, 'main', 10000);
                 }
             } else {
-                showMessage('Ошибка при очистке: ' + (data.error || 'Неизвестная ошибка'));
+                MessageManager.error('Ошибка при очистке: ' + (data.error || 'Неизвестная ошибка'));
             }
         })
         .catch(error => {
             console.error('Ошибка при очистке:', error);
-            showMessage('Ошибка при очистке данных');
+            MessageManager.error('Ошибка при очистке данных');
         });
     });
 }
@@ -844,13 +841,8 @@ function highlightSnippets(terms) {
     });
 }
 
-// --- Modal ---
-function showMessage(msg) {
-    modalMessage.textContent = msg;
-    messageModal.style.display = 'flex';
-}
-// Экспортируем в глобальный контекст для использования в модулях
-window.showMessage = showMessage;
+// --- Старая функция showMessage удалена, используется MessageManager ---
+// Обратная совместимость через message-manager.js: window.showMessage
 
 // Функция получения выбранных файлов (используется в ai-analysis.js и rag-analysis.js)
 function getSelectedFiles() {
@@ -858,11 +850,6 @@ function getSelectedFiles() {
     return Array.from(checkboxes).map(cb => cb.dataset.filePath);
 }
 window.getSelectedFiles = getSelectedFiles;
-
-closeModal.addEventListener('click', () => messageModal.style.display = 'none');
-window.addEventListener('click', (e) => {
-    if (e.target === messageModal) messageModal.style.display = 'none';
-});
 
 // --- Folder Toggle ---
 function toggleFolder(folderName) {

@@ -65,11 +65,18 @@
 
     // Открытие модального окна промпта
     if (aiAnalysisBtn) {
-        aiAnalysisBtn.addEventListener('click', function() {
+        aiAnalysisBtn.addEventListener('click', function(event) {
+            // Если модальное окно промпта отсутствует (перенос в RAG-модал), выходим,
+            // чтобы не создавать неожиданных побочных эффектов
+            if (!aiPromptModal) {
+                event.preventDefault && event.preventDefault();
+                event.stopPropagation && event.stopPropagation();
+                return;
+            }
             const selectedFiles = getSelectedFiles();
             
             if (selectedFiles.length === 0) {
-                showMessage('Пожалуйста, выберите файлы для анализа (установите галочки)', 'error');
+                MessageManager.warning('Пожалуйста, выберите файлы для анализа (установите галочки)', 'main');
                 return;
             }
             
@@ -223,7 +230,7 @@
             const promptText = aiPromptText.value.trim();
             
             if (!promptText) {
-                showMessage('Промпт пуст', 'error');
+                MessageManager.warning('Промпт пуст', 'main');
                 return;
             }
             
@@ -246,13 +253,13 @@
             .then(response => response.json())
             .then(data => {
                 if (data.success) {
-                    showMessage(data.message, 'success');
+                    MessageManager.success(data.message, 'main');
                 } else {
-                    showMessage(data.message, 'error');
+                    MessageManager.error(data.message, 'main', 10000);
                 }
             })
             .catch(error => {
-                showMessage('Ошибка сохранения промпта: ' + error, 'error');
+                MessageManager.error('Ошибка сохранения промпта: ' + error, 'main', 10000);
             });
         });
     }
@@ -267,11 +274,11 @@
                     if (data.success && data.prompts && data.prompts.length > 0) {
                         showPromptList(data.prompts);
                     } else {
-                        showMessage('Нет сохранённых промптов', 'info');
+                        MessageManager.info('Нет сохранённых промптов', 'main');
                     }
                 })
                 .catch(error => {
-                    showMessage('Ошибка загрузки списка промптов: ' + error, 'error');
+                    MessageManager.error('Ошибка загрузки списка промптов: ' + error, 'main', 10000);
                 });
         });
     }
@@ -311,13 +318,13 @@
             .then(data => {
                 if (data.success && data.prompt) {
                     aiPromptText.value = data.prompt;
-                    showMessage('Промпт загружен', 'success');
+                    MessageManager.success('Промпт загружен', 'main');
                 } else {
-                    showMessage(data.message, 'error');
+                    MessageManager.error(data.message, 'main', 10000);
                 }
             })
             .catch(error => {
-                showMessage('Ошибка загрузки промпта: ' + error, 'error');
+                MessageManager.error('Ошибка загрузки промпта: ' + error, 'main', 10000);
             });
     }
 
@@ -330,7 +337,7 @@
             optInfo.textContent = selectedFiles.length === 0 ? 'Файлы не выбраны. Отметьте галочками документы слева.' : 'Загрузка текстов выбранных документов...';
 
             if (selectedFiles.length === 0) {
-                showMessage('Не выбраны файлы для оптимизации', 'error');
+                MessageManager.warning('Не выбраны файлы для оптимизации', 'main');
                 return;
             }
 
@@ -343,14 +350,14 @@
                 const data = await res.json();
                 if (!data.success) {
                     optInfo.textContent = data.message || 'Не удалось получить тексты';
-                    showMessage(data.message || 'Не удалось получить тексты', 'error');
+                    MessageManager.error(data.message || 'Не удалось получить тексты', 'main', 10000);
                     return;
                 }
                 renderDocsForOptimize(data.docs || []);
                 updateOptimizeInfo();
             } catch (e) {
                 optInfo.textContent = 'Ошибка загрузки текстов';
-                showMessage('Ошибка загрузки текстов: ' + e, 'error');
+                MessageManager.error('Ошибка загрузки текстов: ' + e, 'main', 10000);
             }
         });
     }
@@ -447,7 +454,7 @@
         optDeleteBtn.addEventListener('click', () => {
             const count = optDocsContainer.querySelectorAll('.opt-block.'+DELETE_CLASS).length;
             if (count === 0) {
-                showMessage('Нет подсвеченных фрагментов для удаления', 'info');
+                MessageManager.info('Нет подсвеченных фрагментов для удаления', 'main');
                 return;
             }
             if (!confirm(`Будет удалено фрагментов: ${count}. Подтвердить?`)) return;
@@ -475,9 +482,9 @@
             });
             const data = await res.json();
             if (data.success) {
-                showMessage('Воркспейс сохранён', 'success');
+                MessageManager.success('Воркспейс сохранён', 'main');
             } else {
-                showMessage(data.message || 'Ошибка сохранения воркспейса', 'error');
+                MessageManager.error(data.message || 'Ошибка сохранения воркспейса', 'main', 10000);
             }
         });
     }
@@ -530,7 +537,7 @@
             const selectedFiles = getSelectedFiles();
             const prompt = optPromptText.value.trim();
             const overrideText = collectOptimizedPlainText();
-            if (!prompt) { showMessage('Промпт не может быть пустым', 'error'); return; }
+            if (!prompt) { MessageManager.warning('Промпт не может быть пустым', 'main'); return; }
 
             aiOptimizeModal.style.display = 'none';
             aiProgressModal.style.display = 'block';
@@ -548,12 +555,12 @@
                     aiResultModal.style.display = 'block';
                 } else {
                     aiPromptModal.style.display = 'block';
-                    showMessage(data.message || 'Ошибка анализа', 'error');
+                    MessageManager.error(data.message || 'Ошибка анализа', 'main', 10000);
                 }
             } catch (e) {
                 aiProgressModal.style.display = 'none';
                 aiPromptModal.style.display = 'block';
-                showMessage('Ошибка AI анализа: ' + e, 'error');
+                MessageManager.error('Ошибка AI анализа: ' + e, 'main', 10000);
             }
         });
     }
@@ -580,16 +587,16 @@
             const text = aiResultText.value;
             
             if (!text) {
-                showMessage('Нет текста для копирования', 'error');
+                MessageManager.warning('Нет текста для копирования', 'main');
                 return;
             }
             
             navigator.clipboard.writeText(text)
                 .then(() => {
-                    showMessage('Результат скопирован в буфер обмена', 'success');
+                    MessageManager.success('Результат скопирован в буфер обмена', 'main');
                 })
                 .catch(error => {
-                    showMessage('Ошибка копирования: ' + error, 'error');
+                    MessageManager.error('Ошибка копирования: ' + error, 'main');
                 });
         });
     }
@@ -600,7 +607,7 @@
             const text = aiResultText.value;
             
             if (!text) {
-                showMessage('Нет текста для сохранения', 'error');
+                MessageManager.warning('Нет текста для сохранения', 'main');
                 return;
             }
             
@@ -617,17 +624,11 @@
             document.body.removeChild(a);
             URL.revokeObjectURL(url);
             
-            showMessage(`Результат сохранён в файл: ${filename}`, 'success');
+            MessageManager.success(`Результат сохранён в файл: ${filename}`, 'main');
         });
     }
 
     // Используем глобальную функцию showMessage из script.js
-    function showMessage(message, type) {
-        if (window.showMessage) {
-            window.showMessage(message);
-        } else {
-            alert(message);
-        }
-    }
+    // Удалена локальная функция showMessage - используется MessageManager
 
 })();

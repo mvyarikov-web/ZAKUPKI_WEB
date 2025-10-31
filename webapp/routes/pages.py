@@ -1,6 +1,6 @@
 """Blueprint для страниц (index, view)."""
 import os
-from flask import Blueprint, render_template, jsonify, request, current_app
+from flask import Blueprint, render_template, jsonify, request, current_app, send_from_directory
 from markupsafe import Markup
 from webapp.services.files import allowed_file
 from webapp.services.state import FilesState
@@ -284,3 +284,17 @@ def _extract_text_from_index(index_path: str, target_path: str) -> str:
 def test_models():
     """Тестовая страница для проверки загрузки моделей."""
     return render_template('test_models.html')
+
+
+@pages_bp.route('/test_messages')
+def test_messages():
+    """Тестовая страница для проверки системы сообщений MessageManager."""
+    # Отдаём HTML файл напрямую из корневой директории проекта
+    from pathlib import Path
+    project_root = Path(current_app.root_path).parent
+    test_file = project_root / 'test_messages.html'
+    
+    if test_file.exists():
+        return send_from_directory(str(project_root), 'test_messages.html')
+    else:
+        return 'Тестовый файл не найден', 404

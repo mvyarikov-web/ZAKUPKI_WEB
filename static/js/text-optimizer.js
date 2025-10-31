@@ -199,7 +199,7 @@
     if (btnApplyOptimization) {
         btnApplyOptimization.addEventListener('click', function() {
             if (!optimizationResult) {
-                showMessage('Нет данных оптимизации', 'error');
+                showModalMessage('Нет данных оптимизации', 'error');
                 return;
             }
             
@@ -226,9 +226,9 @@
             const reduction = optimizationResult.chars_before - optimizationResult.chars_after;
             const message = `Оптимизировано: −${reduction.toLocaleString('ru-RU')} символов (−${optimizationResult.reduction_pct.toFixed(1)}%)`;
             
-            // Используем глобальную функцию showMessage если есть
-            if (window.showMessage) {
-                window.showMessage(message);
+            // Показываем success сообщение в RAG модалке
+            if (window.MessageManager) {
+                MessageManager.success(message, 'ragModal');
             } else {
                 console.log('[TextOptimizer]', message);
             }

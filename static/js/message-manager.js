@@ -31,8 +31,8 @@
         
         if (!messageArea) {
             console.error('[MessageManager] Не найдена область для сообщений:', context);
-            // Fallback на alert
-            alert(text);
+            console.error('[MessageManager] Сообщение:', text);
+            // НЕ показываем fallback, только логируем ошибку
             return;
         }
 

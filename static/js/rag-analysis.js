@@ -49,28 +49,62 @@
     let analysisTimerInterval = null;
     let analysisStartTime = null;
 
+    // Элементы прогресс-бара
+    const ragProgressBar = document.getElementById('ragAnalysisProgress');
+    const ragProgressFill = document.getElementById('ragAnalysisFill');
+    const ragProgressTime = document.getElementById('ragAnalysisTime');
+    const ragProgressStatus = document.getElementById('ragAnalysisStatus');
+
     function getSelectedFiles() {
         return window.getSelectedFiles ? window.getSelectedFiles() : [];
     }
 
-    function showMessage(message) {
-        if (window.showMessage) return window.showMessage(message);
-        alert(message);
+    // Удалена локальная функция showMessage - используем MessageManager
+    // Все сообщения показываются в контексте ragModal
+    
+    // Функция форматирования времени
+    function formatElapsedTime(seconds) {
+        const minutes = Math.floor(seconds / 60);
+        const secs = seconds % 60;
+        if (minutes > 0) {
+            return `${minutes} мин ${secs} сек`;
+        }
+        return `${secs} сек`;
     }
     
-    // Функция для запуска таймера анализа
+    // Функция для запуска таймера и прогресс-бара анализа
     function startAnalysisTimer() {
         stopAnalysisTimer(); // Останавливаем предыдущий таймер, если есть
         analysisStartTime = Date.now();
         
+        // Показываем прогресс-бар
+        if (ragProgressBar) {
+            ragProgressBar.style.display = 'block';
+            ragProgressBar.style.visibility = 'visible';
+        }
+        
+        // Устанавливаем начальное состояние (10% - начало)
+        if (ragProgressFill) {
+            ragProgressFill.style.width = '10%';
+            ragProgressFill.classList.remove('completed');
+        }
+        
+        if (ragProgressStatus) {
+            ragProgressStatus.textContent = '⏳ Выполняется AI анализ...';
+        }
+        
         const updateTimer = () => {
             const elapsed = Math.floor((Date.now() - analysisStartTime) / 1000);
-            const minutes = Math.floor(elapsed / 60);
-            const seconds = elapsed % 60;
-            const timeStr = minutes > 0 
-                ? `${minutes}:${seconds.toString().padStart(2, '0')}`
-                : `${seconds} сек`;
-            showMessage(`Выполняется AI анализ... (${timeStr})`);
+            if (ragProgressTime) {
+                ragProgressTime.textContent = formatElapsedTime(elapsed);
+            }
+            
+            // Плавно увеличиваем прогресс от 10% до 90% (оставляем 10% на финализацию)
+            // За каждые 5 секунд +10%
+            const progress = Math.min(90, 10 + Math.floor(elapsed / 5) * 10);
+            if (ragProgressFill) {
+                ragProgressFill.style.width = `${progress}%`;
+            }
         };
         
         // Обновляем сразу и затем каждую секунду
@@ -91,17 +125,32 @@
     function finishAnalysisTimer(success = true) {
         if (analysisStartTime) {
             const elapsed = Math.floor((Date.now() - analysisStartTime) / 1000);
-            const minutes = Math.floor(elapsed / 60);
-            const seconds = elapsed % 60;
-            const timeStr = minutes > 0 
-                ? `${minutes} мин ${seconds} сек`
-                : `${seconds} сек`;
+            const timeStr = formatElapsedTime(elapsed);
             
             stopAnalysisTimer();
             
-            if (success) {
-                showMessage(`Анализ выполнен успешно за ${timeStr}`);
+            // Устанавливаем прогресс на 100% и показываем финальный статус
+            if (ragProgressFill) {
+                ragProgressFill.style.width = '100%';
+                ragProgressFill.classList.add('completed');
             }
+            
+            if (ragProgressTime) {
+                ragProgressTime.textContent = timeStr;
+            }
+            
+            if (ragProgressStatus) {
+                if (success) {
+                    ragProgressStatus.textContent = '✅ Анализ выполнен успешно';
+                    ragProgressStatus.style.color = '#4CAF50';
+                } else {
+                    ragProgressStatus.textContent = '❌ Анализ завершен с ошибкой';
+                    ragProgressStatus.style.color = '#f44336';
+                }
+            }
+            
+            // Скрываем сообщение с таймером (оно больше не нужно - есть прогресс-бар)
+            MessageManager.hide('ragModal');
         }
     }
     
@@ -296,7 +345,7 @@
 
                 // Проверка: нельзя удалить последнюю модель
                 if (models.length === 1) {
-                    alert('Нельзя удалить последнюю модель. Должна оставаться хотя бы одна модель.');
+                    MessageManager.warning('Нельзя удалить последнюю модель. Должна оставаться хотя бы одна модель.', 'ragModal', 0);
                     return;
                 }
 
@@ -313,18 +362,18 @@
                     const result = await response.json();
 
                     if (!response.ok) {
-                        alert('Ошибка удаления: ' + (result.error || 'Неизвестная ошибка'));
+                        MessageManager.error('Ошибка удаления: ' + (result.error || 'Неизвестная ошибка'), 'ragModal');
                         return;
                     }
 
-                    alert('Модель успешно удалена');
+                    MessageManager.success('Модель успешно удалена', 'ragModal');
 
                     // Обновить список моделей
                     await loadModels();
                     renderModelsList();
                 } catch (error) {
                     console.error('Ошибка при удалении модели:', error);
-                    alert('Ошибка при удалении модели: ' + error.message);
+                    MessageManager.error('Ошибка при удалении модели: ' + error.message, 'ragModal');
                 }
             });
         });
@@ -380,7 +429,7 @@
         // Сохраняем курс USD/RUB
         saveUsdRubRate();
 
-        showMessage('Настройки сохранены');
+        MessageManager.success('Настройки сохранены', 'ragModal');
         await loadModels();
         renderModelsList();
         updateRagMetrics();
@@ -480,15 +529,14 @@
         const files = getSelectedFiles();
         const prompt = (ragPromptText.value || '').trim();
         if (!prompt) {
-            return showMessage('Введите промпт');
+            return MessageManager.warning('Введите промпт', 'ragModal');
         }
         if (!files || files.length === 0) {
-            return showMessage('Выберите файлы для анализа');
+            return MessageManager.warning('Выберите файлы для анализа', 'ragModal');
         }
 
-        // Сохраняем состояние модала перед закрытием
-        const wasModalOpen = ragModal.style.display === 'block';
-        ragModal.style.display = 'none';
+    // Сохраняем состояние модала; модал оставляем открытым, чтобы показывать прогресс
+    const wasModalOpen = ragModal.style.display === 'block';
         
         // Запускаем таймер
         startAnalysisTimer();
@@ -524,9 +572,9 @@
             
             if (!contentType || !contentType.includes('application/json')) {
                 // Сервер вернул не-JSON (например, текст ошибки)
-                stopAnalysisTimer();
+                finishAnalysisTimer(false); // Показываем ошибку в прогресс-баре
                 const text = await res.text();
-                showMessage('Ошибка сервера: ' + text.substring(0, 200));
+                MessageManager.error('Ошибка сервера: ' + text.substring(0, 200), 'ragModal', 10000);
                 if (wasModalOpen) {
                     ragModal.style.display = 'block';
                 }
@@ -536,9 +584,9 @@
             try {
                 data = await res.json();
             } catch (jsonErr) {
-                stopAnalysisTimer();
+                finishAnalysisTimer(false); // Показываем ошибку в прогресс-баре
                 const text = await res.text();
-                showMessage('Ошибка парсинга ответа: ' + text.substring(0, 200));
+                MessageManager.error('Ошибка парсинга ответа: ' + text.substring(0, 200), 'ragModal', 10000);
                 if (wasModalOpen) {
                     ragModal.style.display = 'block';
                 }
@@ -588,16 +636,16 @@
                 finishAnalysisTimer(true); // Показываем успешное завершение с итоговым временем
             } else {
                 // При ошибке возвращаем модал обратно
-                stopAnalysisTimer();
-                showMessage(data.message || 'Ошибка анализа');
+                finishAnalysisTimer(false); // Показываем ошибку в прогресс-баре
+                MessageManager.error(data.message || 'Ошибка анализа', 'ragModal', 10000);
                 if (wasModalOpen) {
                     ragModal.style.display = 'block';
                 }
             }
         } catch (e) {
             // При ошибке сети возвращаем модал обратно
-            stopAnalysisTimer();
-            showMessage('Ошибка сети: ' + e.message);
+            finishAnalysisTimer(false); // Показываем ошибку в прогресс-баре
+            MessageManager.error('Ошибка сети: ' + e.message, 'ragModal', 10000);
             if (wasModalOpen) {
                 ragModal.style.display = 'block';
             }
@@ -608,7 +656,7 @@
     async function openRag() {
         const files = getSelectedFiles();
         if (!files || files.length === 0) {
-            return showMessage('Выберите файлы для анализа (галочки слева от файлов)');
+            return MessageManager.warning('Выберите файлы для анализа (галочки слева от файлов)', 'ragModal');
         }
         await loadModels();
         await fillDocumentsText();
@@ -643,7 +691,7 @@
                 const res = await fetch('/ai_rag/status');
                 const st = await res.json();
                 if (st && st.success) {
-                    showMessage(st.api_key_configured ? 'API-ключ настроен' : 'API-ключ не найден');
+                    MessageManager.info(st.api_key_configured ? 'API-ключ настроен' : 'API-ключ не найден', 'ragModal');
                 }
             } catch (_) {}
             await loadModels();
@@ -746,7 +794,7 @@
                 const selectedIds = Array.from(checkboxes).map(cb => cb.getAttribute('data-model-id'));
                 
                 if (selectedIds.length === 0) {
-                    alert('Выберите хотя бы одну модель');
+                    MessageManager.warning('Выберите хотя бы одну модель', 'ragModal', 0);
                     return;
                 }
                 
@@ -839,13 +887,13 @@
             }
             
             if (!text) {
-                showMessage('Нет текста для копирования');
+                MessageManager.warning('Нет текста для копирования', 'ragModal');
                 return;
             }
             
             navigator.clipboard.writeText(text)
-                .then(() => showMessage('Результат скопирован в буфер обмена'))
-                .catch(error => showMessage('Ошибка копирования: ' + error));
+                .then(() => MessageManager.success('Результат скопирован в буфер обмена', 'ragModal'))
+                .catch(error => MessageManager.error('Ошибка копирования: ' + error, 'ragModal'));
         });
     }
     
@@ -872,7 +920,7 @@
                 text = aiResultText.value;
             }
             if (!text) {
-                showMessage('Нет текста для сохранения');
+                MessageManager.warning('Нет текста для сохранения', 'ragModal');
                 return;
             }
             const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
@@ -886,7 +934,7 @@
             a.click();
             document.body.removeChild(a);
             URL.revokeObjectURL(url);
-            showMessage(`Результат сохранён: ${filename}`);
+            MessageManager.success(`Результат сохранён: ${filename}`, 'ragModal');
         });
     }
     
@@ -894,7 +942,7 @@
     if (openNewTabBtn) {
         openNewTabBtn.addEventListener('click', async function() {
             if (!window._lastAnalysisResult || !window._lastAnalysisResult.answer) {
-                showMessage('Нет результата для отображения');
+                MessageManager.warning('Нет результата для отображения', 'ragModal');
                 return;
             }
             
@@ -947,15 +995,15 @@
                             </html>
                         `);
                         newWindow.document.close();
-                        showMessage('Результат открыт в новой вкладке');
+                        MessageManager.success('Результат открыт в новой вкладке', 'ragModal');
                     } else {
-                        showMessage('Не удалось открыть новое окно. Проверьте настройки браузера.');
+                        MessageManager.warning('Не удалось открыть новое окно. Проверьте настройки браузера.', 'ragModal', 7000);
                     }
                 } else {
-                    showMessage(data.message || 'Ошибка получения HTML');
+                    MessageManager.error(data.message || 'Ошибка получения HTML', 'ragModal');
                 }
             } catch (err) {
-                showMessage('Ошибка открытия в новой вкладке: ' + err.message);
+                MessageManager.error('Ошибка открытия в новой вкладке: ' + err.message, 'ragModal');
             }
         });
     }
@@ -964,12 +1012,12 @@
     if (exportDocxBtn) {
         exportDocxBtn.addEventListener('click', async function() {
             if (!window._lastAnalysisResult || !window._lastAnalysisResult.answer) {
-                showMessage('Нет результата для экспорта');
+                MessageManager.warning('Нет результата для экспорта', 'ragModal');
                 return;
             }
             
             try {
-                showMessage('Создание DOCX файла...');
+                MessageManager.info('Создание DOCX файла...', 'ragModal', 0);
                 
                 const res = await fetch('/ai_rag/export_docx', {
                     method: 'POST',
@@ -992,13 +1040,13 @@
                     document.body.removeChild(a);
                     URL.revokeObjectURL(url);
                     
-                    showMessage(`DOCX файл сохранён: ${filename}`);
+                    MessageManager.success(`DOCX файл сохранён: ${filename}`, 'ragModal');
                 } else {
                     const errorText = await res.text();
-                    showMessage('Ошибка экспорта: ' + errorText.substring(0, 100));
+                    MessageManager.error('Ошибка экспорта: ' + errorText.substring(0, 100), 'ragModal', 10000);
                 }
             } catch (err) {
-                showMessage('Ошибка экспорта DOCX: ' + err.message);
+                MessageManager.error('Ошибка экспорта DOCX: ' + err.message, 'ragModal');
             }
         });
     }
@@ -1021,14 +1069,14 @@
         if (ragSavePromptBtn) {
             ragSavePromptBtn.addEventListener('click', async () => {
                 const prompt = (ragPromptText.value || '').trim();
-                if (!prompt) return showMessage('Промпт пуст');
+                if (!prompt) return MessageManager.warning('Промпт пуст', 'ragModal');
                 const filename = window.prompt('Введите имя файла (без расширения):');
                 if (!filename) return;
                 try {
                     const res = await fetch('/ai_analysis/prompts/save', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ prompt, filename }) });
                     const data = await res.json();
-                    showMessage(data.message || (data.success ? 'Промпт сохранён' : 'Не удалось сохранить промпт'));
-                } catch (e) { showMessage('Ошибка сохранения: ' + e.message); }
+                    MessageManager.show(data.message || (data.success ? 'Промпт сохранён' : 'Не удалось сохранить промпт'), data.success ? 'success' : 'error', 'ragModal');
+                } catch (e) { MessageManager.error('Ошибка сохранения: ' + e.message, 'ragModal'); }
             });
         }
         if (ragLoadPromptBtn) {
@@ -1037,7 +1085,7 @@
                     const res = await fetch('/ai_analysis/prompts/list');
                     const data = await res.json();
                     if (!data.success || !Array.isArray(data.prompts) || data.prompts.length === 0) {
-                        return showMessage('Нет сохранённых промптов');
+                        return MessageManager.info('Нет сохранённых промптов', 'ragModal');
                     }
                     // Очистить и наполнить список кликабельными пунктами с превью
                     if (!promptList || !promptListModal) return;
@@ -1080,14 +1128,14 @@
                                     autoResize(ragPromptText, 4);
                                     promptListModal.style.display = 'none';
                                 } else {
-                                    showMessage(ld.message || 'Не удалось загрузить промпт');
+                                    MessageManager.error(ld.message || 'Не удалось загрузить промпт', 'ragModal');
                                 }
-                            } catch (e) { showMessage('Ошибка загрузки: ' + e.message); }
+                            } catch (e) { MessageManager.error('Ошибка загрузки: ' + e.message, 'ragModal'); }
                         });
                         promptList.appendChild(item);
                     }
                     promptListModal.style.display = 'block';
-                } catch (e) { showMessage('Ошибка загрузки списка промптов: ' + e.message); }
+                } catch (e) { MessageManager.error('Ошибка загрузки списка промптов: ' + e.message, 'ragModal'); }
             });
         }
 

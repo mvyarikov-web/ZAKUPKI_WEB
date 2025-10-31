@@ -33,7 +33,7 @@
                     <a id="viewIndexBtn" class="btn btn-secondary" href="/view_index" target="_blank">
                         <i class="icon">📜</i> Просмотр индекса
                     </a>
-                    <button id="aiAnalysisBtn" class="btn btn-primary">
+                    <button type="button" id="aiAnalysisBtn" class="btn btn-primary">
                         <i class="icon">🤖</i> Анализ AI
                     </button>
                 </div>
@@ -128,13 +128,7 @@
         </main>
     </div>
 
-    <!-- Модальное окно для сообщений -->
-    <div id="messageModal" class="modal" style="display: none;">
-        <div class="modal-content">
-            <span class="close">&times;</span>
-            <div id="modalMessage"></div>
-        </div>
-    </div>
+    <!-- Старое модальное окно messageModal удалено - используется MessageManager -->
 
     <!-- Удален промежуточный экран «Настройка AI анализа» -->
 
@@ -183,6 +177,21 @@
                     <span id="ragMetrics">Загрузка...</span>
                 </div>
 
+                <!-- Прогресс AI анализа -->
+                <div id="ragAnalysisProgress" class="progress-container" style="display: none; margin: 15px 0;">
+                    <div class="progress-bar">
+                        <div id="ragAnalysisFill" class="progress-fill"></div>
+                    </div>
+                    <!-- Таймер сразу за полоской прогресса -->
+                    <div style="width: 100%; margin-top: 5px;">
+                        <span id="ragAnalysisTime" style="color: #666; font-size: 13px;"></span>
+                    </div>
+                    <!-- Статус ниже таймера -->
+                    <div style="width: 100%; margin-top: 2px;">
+                        <span id="ragAnalysisStatus" style="color: #888; font-size: 12px;"></span>
+                    </div>
+                </div>
+
                 <div style="margin: 10px 0; display:flex; align-items:center; gap:10px;">
                     <label style="display:flex; align-items:center; gap:8px; cursor:pointer; user-select:none;">
                         <input id="ragDeepMode" type="checkbox" checked>
@@ -191,8 +200,8 @@
                 </div>
             </div>
             <div class="modal-footer" style="display: flex; gap: 10px; justify-content: flex-end;">
-                <button id="ragCancelBtn" class="btn btn-secondary">Отмена</button>
-                <button id="ragStartBtn" class="btn btn-primary">🚀 Начать AI анализ</button>
+                <button type="button" id="ragCancelBtn" class="btn btn-secondary">Отмена</button>
+                <button type="button" id="ragStartBtn" class="btn btn-primary">🚀 Начать AI анализ</button>
             </div>
         </div>
     </div>
@@ -371,6 +380,7 @@
 
     <script src="{{ url_for('static', filename='js/message-manager.js') }}"></script>
     <script src="{{ url_for('static', filename='js/script.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/ai-analysis.js') }}"></script>
     <script src="{{ url_for('static', filename='js/rag-analysis.js') }}"></script>
     <script src="{{ url_for('static', filename='js/text-optimizer.js') }}"></script>
 </body>
