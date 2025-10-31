@@ -38,6 +38,11 @@ class TextOptimizer:
             'long_dash': re.compile(r'[—–]'),
             'nbsp': re.compile(r'\u00a0'),
             'bullet_points': re.compile(r'^[\s]*[•*\-–]\s+', re.MULTILINE),
+            # Паттерн для обнаружения битого текста (кракозябры из-за неправильной кодировки)
+            # Ищем специфические символы mojibake, которые НЕ являются нормальной кириллицей
+            'mojibake': re.compile(r'[–∂—ë–a—ã–μ–æ–ø–μ—Ä–∞—Ü–∏–∏—Ç–æ–a—å–∫–æ–Ω–∞—ç—Ç–∞–ø–μ–∏–Ω–¥–μ–∫—Å–∞—Ü–∏–∏–Ω–μ–≤–ú–∏–Ω–∏–o–∞–a—å–Ω—ã–μ–∏–∑–o–μ–Ω–μ–Ω–∏—è–ü—É–±–a–∏—á–Ω—ã]{8,}'),
+            # Строки с высокой плотностью специфических символов битого текста (минимум 8 подряд)
+            'garbage_line': re.compile(r'[–]{2,}[∂—ë]+[–]{2,}|[–∂—ë–a—ã–μ–æ–ø]{10,}', re.MULTILINE),
         }
     
     def optimize(self, text: str) -> OptimizationResult:
@@ -59,13 +64,15 @@ class TextOptimizer:
                 reduction_pct=0.0
             )
         
+        # Сначала применяем базовую нормализацию (не считается оптимизацией)
+        text, _ = self._normalize_whitespace(text)
+        
+        # Теперь считаем исходный размер ПОСЛЕ нормализации
         original_text = text
         chars_before = len(text)
         change_spans: List[ChangeSpan] = []
         
         # Применяем правила оптимизации последовательно
-        text, spans1 = self._normalize_whitespace(text)
-        change_spans.extend(spans1)
         
         text, spans2 = self._remove_decorative_noise(text, original_text)
         change_spans.extend(spans2)
@@ -137,6 +144,20 @@ class TextOptimizer:
                     start=pos,
                     end=pos + line_len,
                     reason="Удалён номер страницы"
+                ))
+            # Проверяем битый текст (кракозябры)
+            elif self.patterns['mojibake'].search(line):
+                spans.append(ChangeSpan(
+                    start=pos,
+                    end=pos + line_len,
+                    reason="Удалена строка с битым текстом (неправильная кодировка)"
+                ))
+            # Проверяем строки с высокой плотностью мусорных символов
+            elif self.patterns['garbage_line'].search(line):
+                spans.append(ChangeSpan(
+                    start=pos,
+                    end=pos + line_len,
+                    reason="Удалена строка с нечитаемыми символами"
                 ))
             else:
                 new_lines.append(line)

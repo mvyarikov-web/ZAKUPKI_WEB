@@ -16,7 +16,8 @@
     const ragInfo = document.getElementById('ragInfo');
     const ragMetrics = document.getElementById('ragMetrics');
     const ragStartBtn = document.getElementById('ragStartBtn');
-    const ragDeepMode = document.getElementById('ragDeepMode');
+    // Глубокий анализ теперь всегда включён (чекбокс удалён)
+    const ragDeepMode = null;
     const ragCancelBtn = document.getElementById('ragCancelBtn');
         const ragSavePromptBtn = document.getElementById('ragSavePromptBtn');
         const ragLoadPromptBtn = document.getElementById('ragLoadPromptBtn');
@@ -476,6 +477,15 @@
         };
     }
 
+    // Функция для проверки наличия битых символов (кракозябр)
+    function detectMojibake(text) {
+        // Паттерны для обнаружения битого текста (неправильная кодировка)
+        const mojibakePattern = /[–∂—ë–a—ã–μ–æ–ø–μ—Ä–∞—Ü–∏–∏—Ç–æ–a—å–∫–æ–Ω–∞—ç—Ç–∞–ø–μ–∏–Ω–¥–μ–∫—Å–∞—Ü–∏–∏–Ω–μ–≤–ú–∏–Ω–∏–o–∞–a—å–Ω—ã–μ–∏–∑–o–μ–Ω–μ–Ω–∏—è–ü—É–±–a–∏—á–Ω—ã]{8,}/;
+        const garbagePattern = /[–]{2,}[∂—ë]+[–]{2,}|[–∂—ë–a—ã–μ–æ–ø]{10,}/;
+        
+        return mojibakePattern.test(text) || garbagePattern.test(text);
+    }
+    
     function updateRagMetrics() {
         clearTimeout(debounceTimer);
         debounceTimer = setTimeout(() => {
@@ -486,14 +496,15 @@
             const docsChars = docs.length;
             const totalChars = promptChars + docsChars;
             const inputTokens = estimateTokens(totalChars);
-            const deep = !!(ragDeepMode && ragDeepMode.checked);
+            // Глубокий анализ всегда включён
+            const deep = true;
             
-            // Для моделей o1 увеличиваем оценку выходных токенов (длинные рассуждения)
+            // Для моделей o1 и deepseek-reasoner увеличиваем оценку выходных токенов (длинные рассуждения)
             let expectedOutput;
-            if (selectedModelId && selectedModelId.startsWith('o1')) {
-                expectedOutput = deep ? 4000 : 2000;
+            if (selectedModelId && (selectedModelId.startsWith('o1') || selectedModelId === 'deepseek-reasoner')) {
+                expectedOutput = 8000;
             } else {
-                expectedOutput = deep ? 1200 : 600;
+                expectedOutput = 2500;
             }
             
             const totalTokens = inputTokens + expectedOutput;
@@ -520,7 +531,16 @@
                 info += ' Стоимость не рассчитана: укажите цены в таблице моделей.';
             }
 
-            ragMetrics.textContent = info;
+            // Проверяем наличие битых символов
+            const fullText = prompt + '\n\n' + docs;
+            const hasMojibake = detectMojibake(fullText);
+            
+            if (hasMojibake) {
+                // Добавляем предупреждение жёлтым цветом
+                ragMetrics.innerHTML = info + '<br><span style="color: #f57c00; font-weight: 600; background: #fff3e0; padding: 4px 8px; border-radius: 4px; display: inline-block; margin-top: 8px;">⚠️ Много битых символов, рекомендуется оптимизация!</span>';
+            } else {
+                ragMetrics.textContent = info;
+            }
         }, 250);
     }
 
@@ -542,14 +562,14 @@
         startAnalysisTimer();
         
         // Определяем max_output_tokens в зависимости от модели
+        // Глубокий анализ всегда включён
         let maxTokens;
-        const isDeepMode = ragDeepMode && ragDeepMode.checked;
         
-        // Для моделей o1-серии увеличиваем лимит, так как они генерируют длинные рассуждения
-        if (selectedModelId && selectedModelId.startsWith('o1')) {
-            maxTokens = isDeepMode ? 8000 : 4000;
+        // Для моделей o1-серии и deepseek-reasoner увеличиваем лимит, так как они генерируют длинные рассуждения
+        if (selectedModelId && (selectedModelId.startsWith('o1') || selectedModelId === 'deepseek-reasoner')) {
+            maxTokens = 16000;
         } else {
-            maxTokens = isDeepMode ? 2500 : 1500;
+            maxTokens = 2500;
         }
         
         try {

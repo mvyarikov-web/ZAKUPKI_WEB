@@ -499,8 +499,9 @@ class RAGService:
         """
         api_keys_mgr = get_api_keys_manager()
         
-        # Проверяем, является ли это моделью DeepSeek
-        if model.startswith('deepseek-'):
+        # Проверяем, является ли это моделью DeepSeek (только конкретные ID)
+        deepseek_models = ['deepseek-chat', 'deepseek-reasoner']
+        if model in deepseek_models:
             # Получаем API ключ DeepSeek из менеджера
             deepseek_key = api_keys_mgr.get_key('deepseek')
             if not deepseek_key:
