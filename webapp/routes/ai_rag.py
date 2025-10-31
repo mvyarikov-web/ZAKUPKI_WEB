@@ -15,6 +15,7 @@ from docx.oxml.ns import qn
 from webapp.services.rag_service import get_rag_service
 from webapp.services.chunking import TextChunker
 from utils.token_tracker import log_token_usage, get_token_stats, get_current_month_stats, get_all_time_stats
+from utils.api_keys_manager import get_api_keys_manager
 
 
 ai_rag_bp = Blueprint('ai_rag', __name__, url_prefix='/ai_rag')
@@ -766,6 +767,50 @@ def index_documents():
         }), 500
 
 
+def _get_api_client(model_id: str, api_key: str, timeout: int = 90):
+    """
+    Создать OpenAI-совместимый клиент для указанной модели.
+    
+    Args:
+        model_id: ID модели (например, 'gpt-4o-mini' или 'deepseek-chat')
+        api_key: API ключ (по умолчанию для OpenAI, используется как fallback)
+        timeout: Таймаут запроса в секундах
+        
+    Returns:
+        Настроенный клиент OpenAI
+    """
+    import openai
+    
+    api_keys_mgr = get_api_keys_manager()
+    
+    # Проверяем, является ли это моделью DeepSeek
+    if model_id.startswith('deepseek-'):
+        # Получаем API ключ DeepSeek из менеджера
+        deepseek_key = api_keys_mgr.get_key('deepseek')
+        if not deepseek_key:
+            # Fallback на переменные окружения
+            deepseek_key = os.environ.get('DEEPSEEK_API_KEY')
+            if not deepseek_key:
+                # Последний fallback на переданный ключ
+                current_app.logger.warning('DEEPSEEK_API_KEY не найден, используется OPENAI_API_KEY')
+                deepseek_key = api_key
+        
+        # Создаём клиент для DeepSeek API
+        return openai.OpenAI(
+            api_key=deepseek_key,
+            base_url="https://api.deepseek.com",
+            timeout=timeout
+        )
+    else:
+        # Для моделей OpenAI получаем ключ из менеджера
+        openai_key = api_keys_mgr.get_key('openai')
+        if not openai_key:
+            # Fallback на переданный ключ (из переменных окружения)
+            openai_key = api_key
+        
+        return openai.OpenAI(api_key=openai_key, timeout=timeout)
+
+
 def _direct_analyze_without_rag(
     file_paths: List[str],
     prompt: str,
@@ -826,7 +871,8 @@ def _direct_analyze_without_rag(
         else:
             timeout = current_app.config.get('OPENAI_TIMEOUT', 90)
         
-        client = openai.OpenAI(api_key=api_key, timeout=timeout)
+        # Создаём клиент с учётом провайдера (OpenAI или DeepSeek)
+        client = _get_api_client(model_id, api_key, timeout)
         
         # Для o1-* моделей используем только user role
         if supports_system:

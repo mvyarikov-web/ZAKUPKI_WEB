@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Управление API ключами</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+    <style>
+        .keys-manager-container {
+            max-width: 900px;
+            margin: 20px auto;
+            padding: 20px;
+        }
+        
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid #e5e7eb;
+        }
+        
+        .header h1 {
+            margin: 0;
+            color: #1f2937;
+        }
+        
+        .provider-card {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 15px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            border-left: 4px solid #3b82f6;
+        }
+        
+        .provider-card.has-key {
+            border-left-color: #10b981;
+        }
+        
+        .provider-card.invalid {
+            border-left-color: #ef4444;
+        }
+        
+        .provider-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+        
+        .provider-name {
+            font-size: 20px;
+            font-weight: 600;
+            color: #1f2937;
+        }
+        
+        .status-badge {
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        
+        .status-badge.valid {
+            background: #d1fae5;
+            color: #065f46;
+        }
+        
+        .status-badge.invalid {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+        
+        .status-badge.no_key {
+            background: #e5e7eb;
+            color: #6b7280;
+        }
+        
+        .key-input-group {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+        
+        .key-input {
+            flex: 1;
+            padding: 10px;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            font-family: 'Courier New', monospace;
+        }
+        
+        .btn-group {
+            display: flex;
+            gap: 10px;
+        }
+        
+        .models-list {
+            margin-top: 15px;
+            padding: 15px;
+            background: #f9fafb;
+            border-radius: 6px;
+            display: none;
+        }
+        
+        .models-list.show {
+            display: block;
+        }
+        
+        .models-list h4 {
+            margin: 0 0 10px 0;
+            font-size: 14px;
+            color: #6b7280;
+        }
+        
+        .model-tag {
+            display: inline-block;
+            padding: 4px 8px;
+            margin: 2px;
+            background: white;
+            border: 1px solid #d1d5db;
+            border-radius: 4px;
+            font-size: 12px;
+            font-family: 'Courier New', monospace;
+        }
+        
+        .validation-message {
+            margin-top: 10px;
+            padding: 10px;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+        
+        .validation-message.success {
+            background: #d1fae5;
+            color: #065f46;
+        }
+        
+        .validation-message.error {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+        
+        .loading {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid #f3f4f6;
+            border-top-color: #3b82f6;
+            border-radius: 50%;
+            animation: spin 0.6s linear infinite;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="keys-manager-container">
+        <div class="header">
+            <h1>🔑 Управление API ключами</h1>
+            <a href="/" class="btn btn-secondary">← Назад</a>
+        </div>
+        
+        <div id="providersContainer">
+            <div style="text-align: center; padding: 40px; color: #6b7280;">
+                Загрузка...
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        // Загрузка списка провайдеров при открытии страницы
+        document.addEventListener('DOMContentLoaded', () => {
+            loadProviders();
+        });
+        
+        async function loadProviders() {
+            try {
+                const response = await fetch('/api_keys/list');
+                const data = await response.json();
+                
+                if (data.success) {
+                    renderProviders(data.providers);
+                } else {
+                    document.getElementById('providersContainer').innerHTML = 
+                        `<div class="validation-message error">Ошибка: ${data.error}</div>`;
+                }
+            } catch (error) {
+                console.error('Ошибка загрузки провайдеров:', error);
+                document.getElementById('providersContainer').innerHTML = 
+                    '<div class="validation-message error">Ошибка загрузки данных</div>';
+            }
+        }
+        
+        function renderProviders(providers) {
+            const container = document.getElementById('providersContainer');
+            
+            if (!providers || providers.length === 0) {
+                container.innerHTML = '<div style="text-align: center; color: #6b7280;">Нет доступных провайдеров</div>';
+                return;
+            }
+            
+            container.innerHTML = '';
+            
+            providers.forEach(provider => {
+                const card = createProviderCard(provider);
+                container.appendChild(card);
+            });
+        }
+        
+        function createProviderCard(provider) {
+            const card = document.createElement('div');
+            card.className = `provider-card ${provider.has_key ? 'has-key' : ''} ${provider.status === 'invalid' ? 'invalid' : ''}`;
+            card.id = `provider-${provider.provider}`;
+            
+            const statusText = {
+                'valid': 'Валиден',
+                'invalid': 'Невалиден',
+                'not_validated': 'Не проверен',
+                'no_key': 'Не настроен'
+            };
+            
+            card.innerHTML = `
+                <div class="provider-header">
+                    <div class="provider-name">${provider.name}</div>
+                    <span class="status-badge ${provider.status}">${statusText[provider.status] || provider.status}</span>
+                </div>
+                
+                ${provider.has_key ? `
+                    <div style="margin-bottom: 10px; font-size: 14px; color: #6b7280; font-family: 'Courier New', monospace;">
+                        Текущий ключ: ${provider.key_masked}
+                    </div>
+                ` : ''}
+                
+                <div class="key-input-group">
+                    <input 
+                        type="password" 
+                        class="key-input" 
+                        id="key-${provider.provider}" 
+                        placeholder="Введите API ключ..."
+                        value="${provider.has_key && !provider.key_masked.includes('*') ? provider.key_masked : ''}"
+                    >
+                    <button class="btn btn-secondary" onclick="toggleKeyVisibility('${provider.provider}')">👁️</button>
+                </div>
+                
+                <div class="btn-group">
+                    <button class="btn btn-primary" onclick="configureKey('${provider.provider}')">
+                        Настроить ключ
+                    </button>
+                    ${provider.has_key ? `
+                        <button class="btn btn-danger" onclick="deleteKey('${provider.provider}')">
+                            Удалить
+                        </button>
+                    ` : ''}
+                </div>
+                
+                <div id="models-${provider.provider}" class="models-list"></div>
+                <div id="message-${provider.provider}"></div>
+            `;
+            
+            return card;
+        }
+        
+        function toggleKeyVisibility(provider) {
+            const input = document.getElementById(`key-${provider}`);
+            input.type = input.type === 'password' ? 'text' : 'password';
+        }
+        
+        async function configureKey(provider) {
+            const input = document.getElementById(`key-${provider}`);
+            const messageDiv = document.getElementById(`message-${provider}`);
+            const modelsDiv = document.getElementById(`models-${provider}`);
+            
+            const apiKey = input.value.trim();
+            
+            console.log(`[configureKey] Начало настройки ключа для ${provider}`);
+            
+            if (!apiKey) {
+                showMessage(messageDiv, 'Введите API ключ', 'error');
+                return;
+            }
+            
+            // Шаг 1: Проверка ключа
+            messageDiv.innerHTML = '<div class="loading"></div> Проверка ключа...';
+            modelsDiv.classList.remove('show');
+            modelsDiv.innerHTML = '';
+            
+            try {
+                // Валидация
+                console.log(`[configureKey] Отправка запроса на валидацию...`);
+                const validateResponse = await fetch('/api_keys/validate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        provider: provider,
+                        api_key: apiKey
+                    })
+                });
+                
+                console.log(`[configureKey] Ответ валидации получен, статус: ${validateResponse.status}`);
+                const validateData = await validateResponse.json();
+                console.log(`[configureKey] Данные валидации:`, validateData);
+                
+                if (!validateData.success) {
+                    showMessage(messageDiv, `❌ ${validateData.error || 'Ошибка валидации'}`, 'error');
+                    return;
+                }
+                
+                // Показываем доступные модели
+                if (validateData.models && validateData.models.length > 0) {
+                    modelsDiv.innerHTML = `
+                        <h4>Доступные модели (${validateData.models.length}):</h4>
+                        ${validateData.models.map(m => `<span class="model-tag">${m}</span>`).join('')}
+                    `;
+                    modelsDiv.classList.add('show');
+                }
+                
+                // Шаг 2: Автоматическое сохранение
+                messageDiv.innerHTML = '<div class="loading"></div> Сохранение ключа...';
+                
+                console.log(`[configureKey] Отправка запроса на сохранение...`);
+                const saveResponse = await fetch('/api_keys/save', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        provider: provider,
+                        api_key: apiKey
+                    })
+                });
+                
+                console.log(`[configureKey] Ответ сохранения получен, статус: ${saveResponse.status}`);
+                const saveData = await saveResponse.json();
+                console.log(`[configureKey] Данные сохранения:`, saveData);
+                
+                if (saveData.success) {
+                    showMessage(messageDiv, 
+                        `✅ Ключ настроен успешно! Найдено моделей: ${validateData.models ? validateData.models.length : 0}`, 
+                        'success'
+                    );
+                    
+                    // Обновляем список провайдеров через 1 секунду
+                    setTimeout(() => loadProviders(), 1000);
+                } else {
+                    showMessage(messageDiv, `❌ ${saveData.error || 'Ошибка сохранения'}`, 'error');
+                }
+                
+            } catch (error) {
+                console.error('Ошибка настройки ключа:', error);
+                showMessage(messageDiv, `❌ Ошибка: ${error.message}`, 'error');
+            }
+        }
+        
+        async function validateKey(provider) {
+            const input = document.getElementById(`key-${provider}`);
+            const messageDiv = document.getElementById(`message-${provider}`);
+            const modelsDiv = document.getElementById(`models-${provider}`);
+            
+            const apiKey = input.value.trim();
+            
+            if (!apiKey) {
+                showMessage(messageDiv, 'Введите API ключ', 'error');
+                return;
+            }
+            
+            messageDiv.innerHTML = '<div class="loading"></div> Проверка ключа...';
+            modelsDiv.classList.remove('show');
+            
+            try {
+                const response = await fetch('/api_keys/validate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        provider: provider,
+                        api_key: apiKey
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    showMessage(messageDiv, `✅ ${data.message}`, 'success');
+                    
+                    if (data.models && data.models.length > 0) {
+                        modelsDiv.innerHTML = `
+                            <h4>Доступные модели (${data.models.length}):</h4>
+                            ${data.models.map(m => `<span class="model-tag">${m}</span>`).join('')}
+                        `;
+                        modelsDiv.classList.add('show');
+                    }
+                    
+                    // Обновляем статус
+                    loadProviders();
+                } else {
+                    showMessage(messageDiv, `❌ ${data.error || 'Ошибка валидации'}`, 'error');
+                }
+            } catch (error) {
+                showMessage(messageDiv, `❌ Ошибка: ${error.message}`, 'error');
+            }
+        }
+        
+        async function saveKey(provider) {
+            const input = document.getElementById(`key-${provider}`);
+            const messageDiv = document.getElementById(`message-${provider}`);
+            
+            const apiKey = input.value.trim();
+            
+            if (!apiKey) {
+                showMessage(messageDiv, 'Введите API ключ', 'error');
+                return;
+            }
+            
+            messageDiv.innerHTML = '<div class="loading"></div> Сохранение...';
+            
+            try {
+                const response = await fetch('/api_keys/save', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        provider: provider,
+                        api_key: apiKey
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    showMessage(messageDiv, `✅ ${data.message}`, 'success');
+                    setTimeout(() => loadProviders(), 1000);
+                } else {
+                    showMessage(messageDiv, `❌ ${data.error || 'Ошибка сохранения'}`, 'error');
+                }
+            } catch (error) {
+                showMessage(messageDiv, `❌ Ошибка: ${error.message}`, 'error');
+            }
+        }
+        
+        async function deleteKey(provider) {
+            if (!confirm(`Удалить API ключ для ${provider}?`)) {
+                return;
+            }
+            
+            const messageDiv = document.getElementById(`message-${provider}`);
+            messageDiv.innerHTML = '<div class="loading"></div> Удаление...';
+            
+            try {
+                const response = await fetch(`/api_keys/delete/${provider}`, {
+                    method: 'DELETE'
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    showMessage(messageDiv, `✅ ${data.message}`, 'success');
+                    setTimeout(() => loadProviders(), 1000);
+                } else {
+                    showMessage(messageDiv, `❌ ${data.error || 'Ошибка удаления'}`, 'error');
+                }
+            } catch (error) {
+                showMessage(messageDiv, `❌ Ошибка: ${error.message}`, 'error');
+            }
+        }
+        
+        function showMessage(div, text, type) {
+            div.innerHTML = `<div class="validation-message ${type}">${text}</div>`;
+            setTimeout(() => {
+                div.innerHTML = '';
+            }, 5000);
+        }
+    </script>
+</body>
+</html>

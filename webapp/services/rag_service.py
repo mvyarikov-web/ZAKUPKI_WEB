@@ -13,6 +13,7 @@ from webapp.models.rag_models import RAGDatabase
 from webapp.services.chunking import chunk_document, TextChunker
 from webapp.services.embeddings import get_embeddings_service
 from document_processor.core import DocumentProcessor
+from utils.api_keys_manager import get_api_keys_manager
 
 
 class RAGService:
@@ -271,8 +272,8 @@ class RAGService:
             chunker = TextChunker()
             input_tokens = chunker.count_tokens(system_prompt + user_prompt)
             
-            # Отправляем запрос к GPT
-            client = openai.OpenAI(api_key=self.api_key)
+            # Отправляем запрос к модели (OpenAI или DeepSeek)
+            client = self._get_client_for_model(model)
             
             response = client.chat.completions.create(
                 model=model,
@@ -485,6 +486,47 @@ class RAGService:
             return self.db.get_stats()
         except Exception:
             return None
+    
+    def _get_client_for_model(self, model: str) -> openai.OpenAI:
+        """
+        Получить OpenAI-совместимый клиент для указанной модели.
+        
+        Args:
+            model: ID модели (например, 'gpt-4o-mini' или 'deepseek-chat')
+            
+        Returns:
+            Настроенный клиент OpenAI
+        """
+        api_keys_mgr = get_api_keys_manager()
+        
+        # Проверяем, является ли это моделью DeepSeek
+        if model.startswith('deepseek-'):
+            # Получаем API ключ DeepSeek из менеджера
+            deepseek_key = api_keys_mgr.get_key('deepseek')
+            if not deepseek_key:
+                # Fallback на переменные окружения
+                deepseek_key = os.environ.get('DEEPSEEK_API_KEY')
+                if not deepseek_key:
+                    # Последний fallback на OpenAI ключ
+                    try:
+                        current_app.logger.warning('DEEPSEEK_API_KEY не найден, используется OPENAI_API_KEY')
+                    except Exception:
+                        pass
+                    deepseek_key = self.api_key
+            
+            # Создаём клиент для DeepSeek API
+            return openai.OpenAI(
+                api_key=deepseek_key,
+                base_url="https://api.deepseek.com"
+            )
+        else:
+            # Для моделей OpenAI получаем ключ из менеджера
+            openai_key = api_keys_mgr.get_key('openai')
+            if not openai_key:
+                # Fallback на self.api_key (из переменных окружения или конфига)
+                openai_key = self.api_key
+            
+            return openai.OpenAI(api_key=openai_key)
 
 
 def get_rag_service(
