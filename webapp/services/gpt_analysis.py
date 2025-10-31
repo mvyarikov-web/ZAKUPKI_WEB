@@ -198,38 +198,6 @@ class GPTAnalysisService:
             except Exception:
                 pass
             return False, error_msg, None
-    
-    def optimize_text(self, text: str, target_size: int) -> str:
-        """
-        Оптимизировать текст для уменьшения размера.
-        
-        Args:
-            text: Исходный текст
-            target_size: Целевой размер в символах
-            
-        Returns:
-            Оптимизированный текст
-        """
-        if len(text) <= target_size:
-            return text
-        
-        # Удаляем лишние пробелы и переносы строк
-        lines = text.split('\n')
-        optimized_lines = []
-        
-        for line in lines:
-            # Удаляем лишние пробелы
-            cleaned = ' '.join(line.split())
-            if cleaned:
-                optimized_lines.append(cleaned)
-        
-        optimized_text = '\n'.join(optimized_lines)
-        
-        # Если всё ещё слишком длинный, обрезаем
-        if len(optimized_text) > target_size:
-            optimized_text = optimized_text[:target_size]
-        
-        return optimized_text
 
 
 class PromptManager:

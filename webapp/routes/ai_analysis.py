@@ -1,6 +1,6 @@
 """Blueprint для модуля AI анализа через GPT."""
 import os
-from flask import Blueprint, request, jsonify, current_app
+from flask import Blueprint, request, jsonify, current_app, render_template
 from webapp.services.gpt_analysis import GPTAnalysisService, PromptManager
 from webapp.services.indexing import get_index_path
 from webapp.services.state import FilesState
@@ -329,49 +329,10 @@ def _extract_single_from_index(index_content: str, rel_path: str) -> str:
         return ''
 
 
-@ai_analysis_bp.route('/optimize_text', methods=['POST'])
-def optimize_text():
-    """
-    Оптимизировать текст для уменьшения размера.
-    
-    Ожидает JSON:
-    {
-        "text": "исходный текст",
-        "target_size": 3000
-    }
-    
-    Returns:
-        JSON с оптимизированным текстом
-    """
-    try:
-        data = request.get_json()
-        
-        if not data or 'text' not in data:
-            return jsonify({
-                'success': False,
-                'message': 'Не передан текст'
-            }), 400
-        
-        text = data['text']
-        target_size = data.get('target_size', 3000)
-        
-        gpt_service = GPTAnalysisService()
-        optimized_text = gpt_service.optimize_text(text, target_size)
-        
-        return jsonify({
-            'success': True,
-            'optimized_text': optimized_text,
-            'original_size': len(text),
-            'optimized_size': len(optimized_text),
-            'reduction': len(text) - len(optimized_text)
-        }), 200
-        
-    except Exception as e:
-        current_app.logger.exception(f'Ошибка в /ai_analysis/optimize_text: {e}')
-        return jsonify({
-            'success': False,
-            'message': f'Ошибка оптимизации: {str(e)}'
-        }), 500
+@ai_analysis_bp.route('/test_models', methods=['GET'])
+def test_models():
+    """Страница для тестирования моделей."""
+    return render_template('test_models.html')
 
 
 @ai_analysis_bp.route('/prompts/save', methods=['POST'])
@@ -616,3 +577,78 @@ def _extract_text_from_index_for_files(file_paths, index_path: str) -> str:
     except Exception:
         current_app.logger.exception('Сбой извлечения текста из индекса для AI-анализа')
         return ''
+
+
+@ai_analysis_bp.route('/optimize/preview', methods=['POST'])
+def optimize_preview():
+    """
+    Предпросмотр оптимизации текста.
+    
+    Ожидает JSON:
+    {
+        "text": "<исходный_текст>"
+    }
+    
+    Returns:
+        JSON с оптимизированным текстом и метриками
+    """
+    try:
+        from webapp.services.text_optimizer import get_text_optimizer
+        
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({
+                'success': False,
+                'message': 'Не переданы данные'
+            }), 400
+        
+        text = data.get('text', '')
+        
+        if not text or not text.strip():
+            return jsonify({
+                'success': False,
+                'message': 'Нет текста для оптимизации'
+            }), 400
+        
+        # Проверка размера текста (max 1MB)
+        if len(text) > 1_000_000:
+            return jsonify({
+                'success': False,
+                'message': 'Текст слишком большой для оптимизации (максимум 1MB)'
+            }), 400
+        
+        # Выполняем оптимизацию
+        optimizer = get_text_optimizer()
+        result = optimizer.optimize(text)
+        
+        # Если изменений нет или они минимальны
+        if result.reduction_pct < 1.0:
+            return jsonify({
+                'success': False,
+                'message': 'Текст уже оптимален, изменения не требуются'
+            }), 200
+        
+        # Формируем ответ
+        return jsonify({
+            'success': True,
+            'optimized_text': result.optimized_text,
+            'change_spans': [
+                {
+                    'start': span.start,
+                    'end': span.end,
+                    'reason': span.reason
+                }
+                for span in result.change_spans
+            ],
+            'chars_before': result.chars_before,
+            'chars_after': result.chars_after,
+            'reduction_pct': result.reduction_pct
+        }), 200
+        
+    except Exception as e:
+        current_app.logger.exception(f'Ошибка оптимизации текста: {e}')
+        return jsonify({
+            'success': False,
+            'message': f'Ошибка оптимизации: {str(e)}'
+        }), 500
