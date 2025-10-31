@@ -12,6 +12,45 @@ body {
     background-color: #f5f5f5;
 }
 
+/* Область для сообщений на главном экране */
+#main-message-area {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 9999;
+    padding: 15px 20px;
+    font-size: 14px;
+    line-height: 1.4;
+    text-align: center;
+    animation: slideDown 0.3s ease-out;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+}
+
+#main-message-area.info {
+    background-color: #e3f2fd;
+    color: #1976d2;
+    border-bottom: 3px solid #2196f3;
+}
+
+#main-message-area.success {
+    background-color: #e8f5e9;
+    color: #388e3c;
+    border-bottom: 3px solid #4caf50;
+}
+
+#main-message-area.warning {
+    background-color: #fff3e0;
+    color: #f57c00;
+    border-bottom: 3px solid #ff9800;
+}
+
+#main-message-area.error {
+    background-color: #ffebee;
+    color: #d32f2f;
+    border-bottom: 3px solid #f44336;
+}
+
 .container {
     max-width: 1200px;
     margin: 0 auto;

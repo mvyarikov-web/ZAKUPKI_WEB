@@ -7,6 +7,9 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
 </head>
 <body>
+    <!-- Область для сообщений на главном экране -->
+    <div id="main-message-area" class="message-area" style="display: none;"></div>
+    
     <div class="container">
         <header>
             <h1>Пакетный анализ документов</h1>
@@ -366,6 +369,7 @@
         </div>
     </div>
 
+    <script src="{{ url_for('static', filename='js/message-manager.js') }}"></script>
     <script src="{{ url_for('static', filename='js/script.js') }}"></script>
     <script src="{{ url_for('static', filename='js/rag-analysis.js') }}"></script>
     <script src="{{ url_for('static', filename='js/text-optimizer.js') }}"></script>

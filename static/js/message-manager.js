@@ -1,0 +1,165 @@
+/**
+ * Централизованный модуль управления сообщениями
+ * Показывает сообщения в специальных областях на главном экране и в модальных окнах
+ */
+(function() {
+    'use strict';
+
+    // Типы сообщений
+    const MessageType = {
+        INFO: 'info',
+        SUCCESS: 'success',
+        WARNING: 'warning',
+        ERROR: 'error'
+    };
+
+    // Контексты отображения
+    const Context = {
+        MAIN: 'main',        // Главный экран
+        MODAL: 'modal'       // Модальное окно
+    };
+
+    /**
+     * Показать сообщение
+     * @param {string} text - Текст сообщения
+     * @param {string} type - Тип сообщения (info, success, warning, error)
+     * @param {string|Element} context - Контекст: 'main' для главного экрана или ID/элемент модалки
+     * @param {number} duration - Длительность показа в мс (0 = не скрывать автоматически)
+     */
+    function show(text, type = MessageType.INFO, context = Context.MAIN, duration = 5000) {
+        const messageArea = getMessageArea(context);
+        
+        if (!messageArea) {
+            console.error('[MessageManager] Не найдена область для сообщений:', context);
+            // Fallback на alert
+            alert(text);
+            return;
+        }
+
+        // Устанавливаем текст и стиль
+        messageArea.textContent = text;
+        messageArea.className = 'message-area ' + type;
+        messageArea.style.display = 'block';
+
+        // Логируем
+        console.log(`[MessageManager] [${type.toUpperCase()}] ${text} (context: ${context})`);
+
+        // Автоматическое скрытие
+        if (duration > 0) {
+            setTimeout(() => {
+                hide(context);
+            }, duration);
+        }
+    }
+
+    /**
+     * Скрыть сообщение
+     * @param {string|Element} context - Контекст сообщения
+     */
+    function hide(context = Context.MAIN) {
+        const messageArea = getMessageArea(context);
+        
+        if (messageArea) {
+            messageArea.style.display = 'none';
+            messageArea.textContent = '';
+            messageArea.className = 'message-area';
+        }
+    }
+
+    /**
+     * Получить элемент области сообщений
+     * @param {string|Element} context - Контекст: 'main', ID модалки или элемент
+     * @returns {Element|null}
+     */
+    function getMessageArea(context) {
+        // Если передан элемент
+        if (context instanceof Element) {
+            return context.querySelector('.message-area');
+        }
+
+        // Если это главный экран
+        if (context === Context.MAIN || context === 'main') {
+            return document.getElementById('main-message-area');
+        }
+
+        // Если это ID модального окна
+        const modalElement = document.getElementById(context);
+        if (modalElement) {
+            return modalElement.querySelector('.message-area');
+        }
+
+        // Пробуем найти через data-атрибут
+        const messageArea = document.querySelector(`[data-context="${context}"]`);
+        if (messageArea) {
+            return messageArea;
+        }
+
+        return null;
+    }
+
+    /**
+     * Удобные методы для разных типов сообщений
+     */
+    const MessageManager = {
+        // Показать сообщение
+        show: show,
+        
+        // Скрыть сообщение
+        hide: hide,
+        
+        // Показать информационное сообщение
+        info: (text, context = Context.MAIN, duration = 5000) => {
+            show(text, MessageType.INFO, context, duration);
+        },
+        
+        // Показать сообщение об успехе
+        success: (text, context = Context.MAIN, duration = 5000) => {
+            show(text, MessageType.SUCCESS, context, duration);
+        },
+        
+        // Показать предупреждение
+        warning: (text, context = Context.MAIN, duration = 7000) => {
+            show(text, MessageType.WARNING, context, duration);
+        },
+        
+        // Показать ошибку
+        error: (text, context = Context.MAIN, duration = 10000) => {
+            show(text, MessageType.ERROR, context, duration);
+        },
+        
+        // Показать на главном экране
+        showMain: (text, type = MessageType.INFO, duration = 5000) => {
+            show(text, type, Context.MAIN, duration);
+        },
+        
+        // Показать в модалке
+        showModal: (modalId, text, type = MessageType.INFO, duration = 5000) => {
+            show(text, type, modalId, duration);
+        },
+        
+        // Скрыть на главном экране
+        hideMain: () => {
+            hide(Context.MAIN);
+        },
+        
+        // Скрыть в модалке
+        hideModal: (modalId) => {
+            hide(modalId);
+        },
+        
+        // Константы
+        Type: MessageType,
+        Context: Context
+    };
+
+    // Экспортируем глобально
+    window.MessageManager = MessageManager;
+    
+    // Обратная совместимость: глобальная функция showMessage
+    window.showMessage = (text, type = 'info') => {
+        MessageManager.show(text, type, Context.MAIN);
+    };
+
+    console.log('[MessageManager] Модуль загружен и готов к работе');
+
+})();
