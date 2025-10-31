@@ -2,6 +2,32 @@
 (function() {
     'use strict';
 
+    // Вспомогательная функция для показа сообщений в модалке
+    function showModalMessage(message, type) {
+        console.log('[TextOptimizer]', type, message);
+        const messageArea = document.getElementById('optimize-message-area');
+        if (messageArea) {
+            messageArea.textContent = message;
+            messageArea.className = 'modal-message-area ' + (type || 'info');
+            messageArea.style.display = 'block';
+        }
+    }
+    
+    // Функция для скрытия сообщения
+    function hideModalMessage() {
+        const messageArea = document.getElementById('optimize-message-area');
+        if (messageArea) {
+            messageArea.style.display = 'none';
+        }
+    }
+
+    // Вспомогательная функция для экранирования HTML
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
     // Элементы DOM
     const btnOptimizeText = document.getElementById('btn-optimize-text');
     const modalOptimizePreview = document.getElementById('modal-optimize-preview');
@@ -15,28 +41,49 @@
     const ragPromptText = document.getElementById('ragPromptText');
     const ragDocumentsText = document.getElementById('ragDocumentsText');
     
+    console.log('[TextOptimizer] Инициализация модуля');
+    console.log('[TextOptimizer] Кнопка найдена:', !!btnOptimizeText);
+    console.log('[TextOptimizer] Модалка найдена:', !!modalOptimizePreview);
+    console.log('[TextOptimizer] ragPromptText найден:', !!ragPromptText);
+    console.log('[TextOptimizer] ragDocumentsText найден:', !!ragDocumentsText);
+    
     // Состояние
     let optimizationResult = null;
     
     // Открытие модалки оптимизации
     if (btnOptimizeText) {
-        btnOptimizeText.addEventListener('click', async function() {
+        console.log('[TextOptimizer] Добавлен обработчик на кнопку');
+        btnOptimizeText.addEventListener('click', async function(e) {
+            console.log('[TextOptimizer] Клик по кнопке оптимизации');
+            e.preventDefault();
+            e.stopPropagation();
+            
             // Собираем текст для оптимизации
             const promptText = ragPromptText ? ragPromptText.value : '';
             const docsText = ragDocumentsText ? ragDocumentsText.value : '';
             const fullText = `${promptText}\n\n${docsText}`.trim();
             
+            console.log('[TextOptimizer] Длина текста:', fullText.length);
+            
             if (!fullText) {
-                showMessage('Нет текста для оптимизации', 'error');
+                // Показываем модалку с сообщением об ошибке
+                modalOptimizePreview.style.display = 'block';
+                hideModalMessage();
+                showModalMessage('Нет текста для оптимизации. Пожалуйста, добавьте текст в поля промпта или документов.', 'error');
+                optimizeMetrics.innerHTML = '<div style="color: #999;">Нет данных</div>';
+                optimizeTextPreview.textContent = '';
                 return;
             }
             
             // Показываем модалку с загрузкой
+            console.log('[TextOptimizer] Открываем модалку');
             modalOptimizePreview.style.display = 'block';
+            hideModalMessage();
             optimizeMetrics.textContent = 'Анализ текста...';
             optimizeTextPreview.textContent = 'Подождите, выполняется оптимизация...';
             
             try {
+                console.log('[TextOptimizer] Отправка запроса на сервер');
                 // Отправляем запрос на оптимизацию
                 const response = await fetch('/ai_analysis/optimize/preview', {
                     method: 'POST',
@@ -46,16 +93,28 @@
                     body: JSON.stringify({ text: fullText })
                 });
                 
+                console.log('[TextOptimizer] Ответ получен, статус:', response.status);
                 const data = await response.json();
+                console.log('[TextOptimizer] Данные:', data);
                 
                 if (!data.success) {
-                    showMessage(data.message || 'Ошибка оптимизации', 'error');
-                    modalOptimizePreview.style.display = 'none';
+                    console.warn('[TextOptimizer] Оптимизация неуспешна:', data.message);
+                    showModalMessage(data.message || 'Ошибка оптимизации', 'error');
+                    optimizeMetrics.innerHTML = '<div style="color: #999;">Нет данных</div>';
+                    optimizeTextPreview.textContent = '';
                     return;
                 }
                 
                 // Сохраняем результат
                 optimizationResult = data;
+                console.log('[TextOptimizer] Результат сохранён, change_spans:', data.change_spans?.length);
+                
+                // Если есть информационное сообщение (например, "текст уже оптимален")
+                if (data.info_message) {
+                    showModalMessage(data.info_message, 'info');
+                } else {
+                    hideModalMessage();
+                }
                 
                 // Отображаем метрики
                 const reduction = data.chars_before - data.chars_after;
@@ -63,17 +122,20 @@
                     <div style="display: flex; gap: 20px; flex-wrap: wrap;">
                         <div><strong>Символов до:</strong> ${data.chars_before.toLocaleString('ru-RU')}</div>
                         <div><strong>Символов после:</strong> ${data.chars_after.toLocaleString('ru-RU')}</div>
-                        <div style="color: #2e7d32;"><strong>Экономия:</strong> ${reduction.toLocaleString('ru-RU')} (${data.reduction_pct.toFixed(1)}%)</div>
+                        <div style="color: ${reduction > 0 ? '#2e7d32' : '#999'};"><strong>Экономия:</strong> ${reduction.toLocaleString('ru-RU')} (${data.reduction_pct.toFixed(1)}%)</div>
                     </div>
                 `;
                 
-                // Отображаем текст с подсветкой
+                console.log('[TextOptimizer] Метрики отображены, вызываем renderHighlightedText');
+                // Отображаем текст с подсветкой (даже если изменений нет)
                 renderHighlightedText(fullText, data.change_spans || []);
+                console.log('[TextOptimizer] Модалка готова к показу');
                 
             } catch (error) {
-                console.error('Ошибка оптимизации:', error);
-                showMessage('Не удалось выполнить оптимизацию. Повторите позже', 'error');
-                modalOptimizePreview.style.display = 'none';
+                console.error('[TextOptimizer] Ошибка оптимизации:', error);
+                showModalMessage('Не удалось выполнить оптимизацию. Повторите позже', 'error');
+                optimizeMetrics.innerHTML = '<div style="color: #999;">Ошибка</div>';
+                optimizeTextPreview.textContent = '';
             }
         });
     }
@@ -162,11 +224,19 @@
             
             // Показываем уведомление
             const reduction = optimizationResult.chars_before - optimizationResult.chars_after;
-            showMessage(`Оптимизировано: −${reduction.toLocaleString('ru-RU')} символов (−${optimizationResult.reduction_pct.toFixed(1)}%)`, 'success');
+            const message = `Оптимизировано: −${reduction.toLocaleString('ru-RU')} символов (−${optimizationResult.reduction_pct.toFixed(1)}%)`;
+            
+            // Используем глобальную функцию showMessage если есть
+            if (window.showMessage) {
+                window.showMessage(message);
+            } else {
+                console.log('[TextOptimizer]', message);
+            }
             
             // Закрываем модалку
             modalOptimizePreview.style.display = 'none';
             optimizationResult = null;
+            hideModalMessage();
         });
     }
     
@@ -175,6 +245,7 @@
         btnCancelOptimization.addEventListener('click', function() {
             modalOptimizePreview.style.display = 'none';
             optimizationResult = null;
+            hideModalMessage();
         });
     }
     
@@ -183,6 +254,7 @@
         optimizePreviewClose.addEventListener('click', function() {
             modalOptimizePreview.style.display = 'none';
             optimizationResult = null;
+            hideModalMessage();
         });
     }
     
@@ -192,26 +264,11 @@
             if (e.target === modalOptimizePreview) {
                 modalOptimizePreview.style.display = 'none';
                 optimizationResult = null;
+                hideModalMessage();
             }
         });
     }
     
-    // Вспомогательная функция для экранирования HTML
-    function escapeHtml(text) {
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
-    }
-    
-    // Вспомогательная функция для показа сообщений
-    function showMessage(message, type) {
-        if (window.showMessage) {
-            window.showMessage(message);
-        } else if (window.alert) {
-            alert(message);
-        } else {
-            console.log(message);
-        }
-    }
+    console.log('[TextOptimizer] Модуль загружен и готов к работе');
     
 })();

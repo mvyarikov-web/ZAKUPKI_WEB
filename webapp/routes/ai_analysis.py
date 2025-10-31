@@ -622,15 +622,8 @@ def optimize_preview():
         optimizer = get_text_optimizer()
         result = optimizer.optimize(text)
         
-        # Если изменений нет или они минимальны
-        if result.reduction_pct < 1.0:
-            return jsonify({
-                'success': False,
-                'message': 'Текст уже оптимален, изменения не требуются'
-            }), 200
-        
-        # Формируем ответ
-        return jsonify({
+        # Формируем ответ (всегда success=True, показываем модалку)
+        response_data = {
             'success': True,
             'optimized_text': result.optimized_text,
             'change_spans': [
@@ -644,7 +637,13 @@ def optimize_preview():
             'chars_before': result.chars_before,
             'chars_after': result.chars_after,
             'reduction_pct': result.reduction_pct
-        }), 200
+        }
+        
+        # Если изменений нет или они минимальны, добавляем информационное сообщение
+        if result.reduction_pct < 1.0:
+            response_data['info_message'] = 'Текст уже оптимален, изменения не требуются'
+        
+        return jsonify(response_data), 200
         
     except Exception as e:
         current_app.logger.exception(f'Ошибка оптимизации текста: {e}')

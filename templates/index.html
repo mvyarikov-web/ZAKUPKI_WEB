@@ -142,14 +142,18 @@
                 <h2>AI анализ</h2>
                 <span id="ragModalClose" class="close">&times;</span>
             </div>
+            
+            <!-- Область для сообщений -->
+            <div id="rag-message-area" class="modal-message-area" style="display: none;"></div>
+            
             <div class="modal-body">
                 <div style="margin-bottom: 15px;">
                     <label for="ragPromptText"><strong>Промпт (редактируемый):</strong></label>
                     <textarea id="ragPromptText" rows="4" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; resize: none;"></textarea>
                     <div style="margin-top: 8px; display:flex; gap:10px; flex-wrap:wrap;">
-                        <button id="ragSavePromptBtn" class="btn btn-secondary">💾 Сохранить промпт</button>
-                        <button id="ragLoadPromptBtn" class="btn btn-secondary">📂 Загрузить промпт</button>
-                        <button id="btn-optimize-text" class="btn btn-secondary">⚡ Оптимизировать текст</button>
+                        <button type="button" id="ragSavePromptBtn" class="btn btn-secondary">💾 Сохранить промпт</button>
+                        <button type="button" id="ragLoadPromptBtn" class="btn btn-secondary">📂 Загрузить промпт</button>
+                        <button type="button" id="btn-optimize-text" class="btn btn-secondary">⚡ Оптимизировать текст</button>
                     </div>
                 </div>
                 
@@ -314,6 +318,10 @@
                 <h2>Предпросмотр оптимизации текста</h2>
                 <span class="close" id="optimize-preview-close">&times;</span>
             </div>
+            
+            <!-- Область для сообщений -->
+            <div id="optimize-message-area" class="modal-message-area" style="display: none;"></div>
+            
             <div class="modal-body">
                 <div style="margin-bottom: 15px; padding: 10px; background: #f0f8ff; border-radius: 6px; border-left: 4px solid #2196f3;">
                     <div style="font-size: 14px; color: #1976d2;">
