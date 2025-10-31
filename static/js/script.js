@@ -844,7 +844,7 @@ function highlightSnippets(terms) {
 // --- Старая функция showMessage удалена, используется MessageManager ---
 // Обратная совместимость через message-manager.js: window.showMessage
 
-// Функция получения выбранных файлов (используется в ai-analysis.js и rag-analysis.js)
+// Функция получения выбранных файлов (используется в rag-analysis.js)
 function getSelectedFiles() {
     const checkboxes = document.querySelectorAll('.file-checkbox:checked');
     return Array.from(checkboxes).map(cb => cb.dataset.filePath);

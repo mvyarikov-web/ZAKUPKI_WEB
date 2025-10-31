@@ -700,8 +700,7 @@
             modelSelectModal.style.display = 'block';
         });
     }
-        if (ragAnalysisBtn) ragAnalysisBtn.addEventListener('click', openRag);
-        if (aiAnalysisBtn) aiAnalysisBtn.addEventListener('click', openRag);
+    // обработчики открытия уже привязаны выше
     if (modelSelectClose) {
         modelSelectClose.addEventListener('click', () => modelSelectModal.style.display = 'none');
     }
