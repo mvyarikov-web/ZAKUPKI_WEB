@@ -656,7 +656,7 @@
     async function openRag() {
         const files = getSelectedFiles();
         if (!files || files.length === 0) {
-            return MessageManager.warning('Выберите файлы для анализа (галочки слева от файлов)', 'ragModal');
+            return MessageManager.warning('Выберите файлы для анализа (галочки слева от файлов)', 'main');
         }
         await loadModels();
         await fillDocumentsText();
