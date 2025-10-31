@@ -201,6 +201,11 @@
                 <h3>Моделей использовано</h3>
                 <div class="value" id="totalModels">—</div>
             </div>
+            <div class="stat-card" style="background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);">
+                <h3>Общая стоимость</h3>
+                <div class="value" id="totalCost">—</div>
+                <div style="font-size: 14px; opacity: 0.9; margin-top: 5px;" id="totalCostUSD">—</div>
+            </div>
         </div>
         
         <div id="tableContainer">
@@ -261,16 +266,22 @@
             // Подсчитываем общую статистику
             let totalRequests = 0;
             let totalTokens = 0;
+            let totalCostRub = 0;
+            let totalCostUsd = 0;
             
             models.forEach(model => {
                 totalRequests += model.total_requests || 0;
                 totalTokens += model.total_tokens || 0;
+                totalCostRub += model.total_cost_rub || 0;
+                totalCostUsd += model.total_cost_usd || 0;
             });
             
             // Обновляем карточки
             document.getElementById('totalRequests').textContent = totalRequests.toLocaleString('ru-RU');
             document.getElementById('totalTokens').textContent = totalTokens.toLocaleString('ru-RU');
             document.getElementById('totalModels').textContent = models.length;
+            document.getElementById('totalCost').textContent = totalCostRub.toFixed(2) + ' ₽';
+            document.getElementById('totalCostUSD').textContent = '$' + totalCostUsd.toFixed(4);
             
             // Рендерим таблицу
             if (models.length === 0) {
@@ -288,6 +299,9 @@
                             <th>Входные токены</th>
                             <th>Выходные токены</th>
                             <th>Всего токенов</th>
+                            <th>Стоимость ₽</th>
+                            <th>Средняя ₽</th>
+                            <th>Ср. время (сек)</th>
                             <th>Первое использование</th>
                             <th>Последнее использование</th>
                         </tr>
@@ -298,6 +312,9 @@
             models.forEach(model => {
                 const firstUsed = new Date(model.first_used).toLocaleString('ru-RU');
                 const lastUsed = new Date(model.last_used).toLocaleString('ru-RU');
+                const costRub = (model.total_cost_rub || 0).toFixed(2);
+                const avgCostRub = (model.avg_cost_rub || 0).toFixed(4);
+                const avgDuration = (model.avg_duration_seconds || 0).toFixed(2);
                 
                 tableHtml += `
                     <tr>
@@ -306,6 +323,9 @@
                         <td class="token-count">${model.prompt_tokens.toLocaleString('ru-RU')}</td>
                         <td class="token-count">${model.completion_tokens.toLocaleString('ru-RU')}</td>
                         <td class="token-count"><strong>${model.total_tokens.toLocaleString('ru-RU')}</strong></td>
+                        <td style="color: #d97706; font-weight: 600;">${costRub} ₽</td>
+                        <td style="color: #059669;">${avgCostRub} ₽</td>
+                        <td style="color: #2563eb;">${avgDuration}s</td>
                         <td>${firstUsed}</td>
                         <td>${lastUsed}</td>
                     </tr>

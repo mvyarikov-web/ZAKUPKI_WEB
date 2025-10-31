@@ -320,7 +320,7 @@
                     alert('Модель успешно удалена');
 
                     // Обновить список моделей
-                    await loadModelsConfig();
+                    await loadModels();
                     renderModelsList();
                 } catch (error) {
                     console.error('Ошибка при удалении модели:', error);
@@ -774,7 +774,7 @@
                     addModelsStatusText.textContent = `Успешно добавлено моделей: ${data.added || 0}`;
                     
                     // Обновить список моделей
-                    await loadModelsConfig();
+                    await loadModels();
                     renderModelsList();
                     
                     // Закрыть окно через 1.5 сек

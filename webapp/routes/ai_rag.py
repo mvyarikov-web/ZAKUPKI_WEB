@@ -820,6 +820,9 @@ def _direct_analyze_without_rag(
     upload_folder: str
 ):
     """Прямой анализ без RAG - просто читаем тексты и отправляем в OpenAI."""
+    import time
+    start_time = time.time()
+    
     try:
         import openai
         
@@ -972,12 +975,16 @@ def _direct_analyze_without_rag(
             'total_tokens': response.usage.total_tokens
         }
         
+        # Вычисляем время выполнения
+        duration_seconds = time.time() - start_time
+        
         # Логируем использование токенов
         log_token_usage(
             model_id=model_id,
             prompt_tokens=usage['input_tokens'],
             completion_tokens=usage['output_tokens'],
             total_tokens=usage['total_tokens'],
+            duration_seconds=duration_seconds,
             metadata={
                 'file_count': len(file_paths),
                 'prompt_length': len(prompt),
@@ -1091,6 +1098,9 @@ def analyze():
     Returns:
         JSON с результатом анализа
     """
+    import time
+    start_time = time.time()
+    
     try:
         data = request.get_json()
         
@@ -1180,6 +1190,9 @@ def analyze():
         if success:
             current_app.logger.info(f'RAG анализ выполнен успешно: {result["usage"]}')
             
+            # Вычисляем время выполнения
+            duration_seconds = time.time() - start_time
+            
             # Логируем использование токенов
             usage = result.get('usage', {})
             if usage:
@@ -1188,6 +1201,7 @@ def analyze():
                     prompt_tokens=usage.get('input_tokens', 0),
                     completion_tokens=usage.get('output_tokens', 0),
                     total_tokens=usage.get('total_tokens', 0),
+                    duration_seconds=duration_seconds,
                     metadata={
                         'file_count': len(file_paths),
                         'top_k': top_k,
