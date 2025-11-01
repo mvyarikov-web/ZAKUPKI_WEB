@@ -15,7 +15,7 @@ from docx.oxml.ns import qn
 from webapp.services.rag_service import get_rag_service
 from webapp.services.chunking import TextChunker
 from utils.token_tracker import log_token_usage, get_token_stats, get_current_month_stats, get_all_time_stats
-from utils.api_keys_manager import get_api_keys_manager
+from utils.api_keys_manager_multiple import get_api_keys_manager_multiple
 
 
 ai_rag_bp = Blueprint('ai_rag', __name__, url_prefix='/ai_rag')
@@ -109,8 +109,12 @@ def _load_models_config() -> Dict[str, Any]:
         
         # Сохраняем supports_system_role (для o-моделей)
         supports_system_role = m.get('supports_system_role', True)
+        
+        # Сохраняем provider и base_url для DeepSeek моделей
+        provider = m.get('provider', 'openai')  # По умолчанию openai
+        base_url = m.get('base_url')  # Опционально для DeepSeek
 
-        normalized_models.append({
+        model_dict = {
             'model_id': model_id,
             'display_name': display_name,
             'description': description,
@@ -120,7 +124,14 @@ def _load_models_config() -> Dict[str, Any]:
             'enabled': bool(enabled),
             'timeout': int(timeout) if isinstance(timeout, (int, float)) else 30,
             'supports_system_role': bool(supports_system_role),
-        })
+            'provider': provider,
+        }
+        
+        # Добавляем base_url только если он указан
+        if base_url:
+            model_dict['base_url'] = base_url
+        
+        normalized_models.append(model_dict)
 
     if normalized_models != models:
         config['models'] = normalized_models
@@ -781,35 +792,26 @@ def _get_api_client(model_id: str, api_key: str, timeout: int = 90):
     """
     import openai
     
-    api_keys_mgr = get_api_keys_manager()
+    api_keys_mgr = get_api_keys_manager_multiple()
     
     # Проверяем, является ли это моделью DeepSeek
     if model_id.startswith('deepseek-'):
-        # Получаем API ключ DeepSeek из менеджера
         deepseek_key = api_keys_mgr.get_key('deepseek')
         if not deepseek_key:
-            # Fallback на переменные окружения
             deepseek_key = os.environ.get('DEEPSEEK_API_KEY')
             if not deepseek_key:
-                # Последний fallback на переданный ключ
                 current_app.logger.warning(f'DEEPSEEK_API_KEY не найден для {model_id}, используется OPENAI_API_KEY')
                 deepseek_key = api_key
-        
         current_app.logger.info(f'Используется DeepSeek API для модели {model_id}, ключ: {"присутствует" if deepseek_key and len(deepseek_key) > 10 else "ОТСУТСТВУЕТ!"}')
-        
-        # Создаём клиент для DeepSeek API
         return openai.OpenAI(
             api_key=deepseek_key,
             base_url="https://api.deepseek.com",
             timeout=timeout
         )
     else:
-        # Для моделей OpenAI получаем ключ из менеджера
         openai_key = api_keys_mgr.get_key('openai')
         if not openai_key:
-            # Fallback на переданный ключ (из переменных окружения)
             openai_key = api_key
-        
         return openai.OpenAI(api_key=openai_key, timeout=timeout)
 
 
@@ -828,8 +830,11 @@ def _direct_analyze_without_rag(
     try:
         import openai
         
-        # Получаем API ключ
-        api_key = current_app.config.get('OPENAI_API_KEY') or os.environ.get('OPENAI_API_KEY')
+        # Получаем API ключ через менеджер
+        api_keys_mgr = get_api_keys_manager_multiple()
+        api_key = api_keys_mgr.get_key('openai')
+        if not api_key:
+            api_key = current_app.config.get('OPENAI_API_KEY') or os.environ.get('OPENAI_API_KEY')
         if not api_key:
             return jsonify({
                 'success': False,

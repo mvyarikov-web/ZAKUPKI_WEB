@@ -1,0 +1,649 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Управление API ключами</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+    <style>
+        .keys-manager-container {
+            max-width: 1200px;
+            margin: 20px auto;
+            padding: 20px;
+        }
+        
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid #e5e7eb;
+        }
+        
+        .header h1 {
+            margin: 0;
+            color: #1f2937;
+        }
+        
+        /* Форма добавления ключа */
+        .add-key-form {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 30px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .form-row {
+            display: flex;
+            gap: 15px;
+            align-items: flex-end;
+        }
+        
+        .form-group {
+            flex: 1;
+        }
+        
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 600;
+            color: #374151;
+            font-size: 14px;
+        }
+        
+        .form-group select,
+        .form-group input {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+        
+        .form-group input[type="text"] {
+            font-family: 'Courier New', monospace;
+        }
+        
+        /* Таблица ключей */
+        .keys-table-container {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .table-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+        
+        .table-header h2 {
+            margin: 0;
+            color: #1f2937;
+            font-size: 18px;
+        }
+        
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        
+        th {
+            text-align: left;
+            padding: 12px;
+            background: #f9fafb;
+            border-bottom: 2px solid #e5e7eb;
+            font-weight: 600;
+            color: #374151;
+            font-size: 13px;
+        }
+        
+        td {
+            padding: 12px;
+            border-bottom: 1px solid #e5e7eb;
+            font-size: 14px;
+        }
+        
+        tbody tr:hover {
+            background: #f9fafb;
+        }
+        
+        .key-cell {
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+        }
+        
+        .status-badge {
+            padding: 4px 8px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 600;
+            display: inline-block;
+        }
+        
+        .status-badge.valid {
+            background: #d1fae5;
+            color: #065f46;
+        }
+        
+        .status-badge.invalid {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+        
+        .status-badge.not_validated {
+            background: #fef3c7;
+            color: #92400e;
+        }
+        
+        .primary-radio {
+            cursor: pointer;
+        }
+        
+        .loading {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid #f3f4f6;
+            border-top-color: #3b82f6;
+            border-radius: 50%;
+            animation: spin 0.6s linear infinite;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        .message {
+            padding: 12px;
+            border-radius: 6px;
+            margin-top: 15px;
+            font-size: 14px;
+        }
+        
+        .message.success {
+            background: #d1fae5;
+            color: #065f46;
+        }
+        
+        .message.error {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+        
+        .empty-state {
+            text-align: center;
+            padding: 40px;
+            color: #6b7280;
+        }
+    </style>
+</head>
+<body>
+    <div class="keys-manager-container">
+        <div class="header">
+            <h1>🔑 Управление API ключами</h1>
+            <button onclick="window.close()" class="btn btn-secondary">← Назад</button>
+        </div>
+        
+        <!-- Форма добавления нового ключа -->
+        <div class="add-key-form">
+            <h2 style="margin: 0 0 15px 0; font-size: 18px; color: #1f2937;">Добавить новый ключ</h2>
+            
+            <div class="form-row">
+                <div class="form-group" style="flex: 0 0 200px;">
+                    <label for="providerSelect">Провайдер</label>
+                    <select id="providerSelect">
+                        <option value="openai">OpenAI (GPT)</option>
+                        <option value="deepseek">DeepSeek</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label for="apiKeyInput">API Ключ</label>
+                    <input 
+                        type="text" 
+                        id="apiKeyInput" 
+                        placeholder="sk-..."
+                        autocomplete="off"
+                    >
+                </div>
+                
+                <div style="flex: 0 0 auto;">
+                    <button class="btn btn-primary" onclick="addKey()" style="margin: 0;">
+                        ➕ Добавить ключ
+                    </button>
+                </div>
+            </div>
+            
+            <div id="addKeyMessage"></div>
+        </div>
+        
+        <!-- Таблица ключей -->
+        <div class="keys-table-container">
+            <div id="refreshMessage" style="margin-bottom: 15px;"></div>
+            
+            <div class="table-header">
+                <h2>Список ключей</h2>
+                <div style="display: flex; gap: 10px;">
+                    <button class="btn btn-primary" onclick="refreshAllKeys()" id="refreshKeysBtn">
+                        🔄 Актуализация ключей
+                    </button>
+                    <button class="btn btn-secondary" onclick="toggleAllKeysVisibility()" id="toggleKeysBtn">
+                        👁️ Показать все ключи
+                    </button>
+                </div>
+            </div>
+            
+            <div id="keysTableContainer">
+                <div class="empty-state">
+                    <div class="loading"></div>
+                    <div style="margin-top: 10px;">Загрузка...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        let allKeys = [];
+        let showFullKeys = false;
+        let usedModels = [];
+        let expandedModelsRows = new Set();
+        
+        // Загрузка при открытии страницы
+        document.addEventListener('DOMContentLoaded', () => {
+            loadUsedModels();
+            loadKeys();
+            
+            // Автообновление каждые 30 секунд
+            setInterval(loadKeys, 30000);
+        });
+        
+        async function loadUsedModels() {
+            try {
+                const response = await fetch('/api_keys/used_models');
+                const data = await response.json();
+                if (data.success) {
+                    usedModels = data.models || [];
+                }
+            } catch (error) {
+                console.error('Ошибка загрузки используемых моделей:', error);
+            }
+        }
+        
+        async function loadKeys() {
+            try {
+                const response = await fetch('/api_keys/list_all');
+                const data = await response.json();
+                
+                if (data.success) {
+                    allKeys = data.keys || [];
+                    renderKeysTable();
+                } else {
+                    showTableError(data.error || 'Ошибка загрузки ключей');
+                }
+            } catch (error) {
+                console.error('Ошибка загрузки ключей:', error);
+                showTableError('Ошибка соединения с сервером');
+            }
+        }
+        
+        function renderKeysTable() {
+            const container = document.getElementById('keysTableContainer');
+            
+            if (allKeys.length === 0) {
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <div style="font-size: 48px;">🔑</div>
+                        <div style="margin-top: 10px;">Нет добавленных ключей</div>
+                        <div style="margin-top: 5px; font-size: 12px;">Добавьте первый ключ с помощью формы выше</div>
+                    </div>
+                `;
+                return;
+            }
+            
+            let html = `
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Провайдер</th>
+                            <th>API Ключ</th>
+                            <th>Статус</th>
+                            <th>Модели</th>
+                            <th style="text-align: center;">Основной</th>
+                            <th style="text-align: center;">Действия</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+            `;
+            
+            allKeys.forEach((key, index) => {
+                const displayKey = showFullKeys ? key.api_key : maskKey(key.api_key);
+                const providerName = key.provider === 'openai' ? 'OpenAI' : 'DeepSeek';
+                const rowId = `key-row-${index}`;
+                const isExpanded = expandedModelsRows.has(rowId);
+                
+                // Форматирование списка моделей
+                let modelsDisplay = '';
+                if (key.available_models && key.available_models.length > 0) {
+                    // Фильтруем используемые модели
+                    const used = key.available_models.filter(m => usedModels.includes(m));
+                    const notUsed = key.available_models.filter(m => !usedModels.includes(m));
+                    
+                    if (used.length > 0) {
+                        modelsDisplay = `<strong>${used.join(', ')}</strong>`;
+                        if (notUsed.length > 0) {
+                            modelsDisplay += ` <span style="color: #3b82f6; cursor: pointer; font-weight: bold;" onclick="toggleModelsExpand('${rowId}')">+${notUsed.length}</span>`;
+                        }
+                    } else {
+                        // Если используемых нет, показываем первые 3
+                        const firstThree = key.available_models.slice(0, 3).join(', ');
+                        const remaining = key.available_models.length - 3;
+                        modelsDisplay = firstThree;
+                        if (remaining > 0) {
+                            modelsDisplay += ` <span style="color: #3b82f6; cursor: pointer; font-weight: bold;" onclick="toggleModelsExpand('${rowId}')">+${remaining}</span>`;
+                        }
+                    }
+                } else {
+                    modelsDisplay = key.models_count ? `${key.models_count} моделей` : '—';
+                }
+                
+                const statusText = {
+                    'valid': 'Валиден',
+                    'invalid': 'Невалиден',
+                    'not_validated': 'Не проверен'
+                };
+                
+                html += `
+                    <tr id="${rowId}">
+                        <td><strong>${providerName}</strong></td>
+                        <td class="key-cell">${displayKey}</td>
+                        <td><span class="status-badge ${key.status}">${statusText[key.status] || key.status}</span></td>
+                        <td style="font-size: 11px;">${modelsDisplay}</td>
+                        <td style="text-align: center;">
+                            <input 
+                                type="radio" 
+                                name="primary_${key.provider}" 
+                                class="primary-radio"
+                                ${key.is_primary ? 'checked' : ''}
+                                onchange="setPrimaryKey('${key.provider}', '${key.key_id}')"
+                            >
+                        </td>
+                        <td style="text-align: center;">
+                            <button 
+                                class="btn btn-danger" 
+                                onclick="deleteKey('${key.provider}', '${key.key_id}')"
+                                style="padding: 4px 12px; font-size: 12px;"
+                            >
+                                🗑️ Удалить
+                            </button>
+                        </td>
+                    </tr>
+                `;
+                
+                // Добавляем раскрывающийся ряд с полным списком моделей
+                if (isExpanded && key.available_models && key.available_models.length > 0) {
+                    html += `
+                        <tr id="${rowId}-expanded" style="background: #f9fafb;">
+                            <td colspan="6" style="padding: 15px;">
+                                <div style="font-size: 12px;">
+                                    <strong>Все доступные модели (${key.available_models.length}):</strong>
+                                    <div style="margin-top: 8px; display: flex; flex-wrap: wrap; gap: 4px;">
+                                        ${key.available_models.map(m => {
+                                            const isUsed = usedModels.includes(m);
+                                            return `<span class="model-tag" style="background: ${isUsed ? '#dbeafe' : 'white'}; border-color: ${isUsed ? '#3b82f6' : '#d1d5db'}; font-weight: ${isUsed ? '600' : 'normal'};">${m}</span>`;
+                                        }).join('')}
+                                    </div>
+                                    <div style="margin-top: 8px; font-size: 11px; color: #6b7280;">
+                                        💡 Синим выделены модели, используемые в программе
+                                    </div>
+                                </div>
+                            </td>
+                        </tr>
+                    `;
+                }
+            });
+            
+            html += `
+                    </tbody>
+                </table>
+            `;
+            
+            container.innerHTML = html;
+        }
+        
+        function maskKey(key) {
+            if (!key || key.length < 10) return '***';
+            return key.substring(0, 5) + '***' + key.substring(key.length - 4);
+        }
+        
+        function toggleModelsExpand(rowId) {
+            if (expandedModelsRows.has(rowId)) {
+                expandedModelsRows.delete(rowId);
+            } else {
+                expandedModelsRows.add(rowId);
+            }
+            renderKeysTable();
+        }
+        
+        function toggleAllKeysVisibility() {
+            showFullKeys = !showFullKeys;
+            const btn = document.getElementById('toggleKeysBtn');
+            btn.textContent = showFullKeys ? '🙈 Скрыть ключи' : '👁️ Показать все ключи';
+            renderKeysTable();
+        }
+        
+        async function addKey() {
+            const provider = document.getElementById('providerSelect').value;
+            const apiKey = document.getElementById('apiKeyInput').value.trim();
+            const messageDiv = document.getElementById('addKeyMessage');
+            
+            if (!apiKey) {
+                showMessage(messageDiv, 'Введите API ключ', 'error');
+                return;
+            }
+            
+            messageDiv.innerHTML = '<div class="loading"></div> Проверка и добавление ключа...';
+            
+            try {
+                // Сначала валидируем
+                const validateResponse = await fetch('/api_keys/validate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ provider, api_key: apiKey })
+                });
+                
+                const validateData = await validateResponse.json();
+                
+                if (!validateData.success) {
+                    showMessage(messageDiv, `❌ Ошибка валидации: ${validateData.error}`, 'error');
+                    return;
+                }
+                
+                // Затем сохраняем
+                const saveResponse = await fetch('/api_keys/add', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        provider, 
+                        api_key: apiKey,
+                        models_count: validateData.models ? validateData.models.length : 0,
+                        available_models: validateData.models || []
+                    })
+                });
+                
+                const saveData = await saveResponse.json();
+                
+                if (saveData.success) {
+                    showMessage(messageDiv, `✅ Ключ успешно добавлен! Найдено моделей: ${validateData.models ? validateData.models.length : 0}`, 'success');
+                    
+                    // Очищаем поле ввода
+                    document.getElementById('apiKeyInput').value = '';
+                    
+                    // Обновляем таблицу
+                    setTimeout(() => {
+                        loadKeys();
+                        messageDiv.innerHTML = '';
+                    }, 2000);
+                } else {
+                    showMessage(messageDiv, `❌ ${saveData.error}`, 'error');
+                }
+                
+            } catch (error) {
+                console.error('Ошибка добавления ключа:', error);
+                showMessage(messageDiv, `❌ Ошибка: ${error.message}`, 'error');
+            }
+        }
+        
+        async function setPrimaryKey(provider, keyId) {
+            try {
+                const response = await fetch('/api_keys/set_primary', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ provider, key_id: keyId })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    console.log('Основной ключ обновлён');
+                    loadKeys();
+                } else {
+                    alert(`Ошибка: ${data.error}`);
+                    loadKeys(); // Восстанавливаем состояние
+                }
+            } catch (error) {
+                console.error('Ошибка установки основного ключа:', error);
+                alert(`Ошибка: ${error.message}`);
+                loadKeys();
+            }
+        }
+        
+        async function deleteKey(provider, keyId) {
+            if (!confirm('Удалить этот API ключ?')) {
+                return;
+            }
+            
+            try {
+                const response = await fetch(`/api_keys/delete/${provider}/${keyId}`, {
+                    method: 'DELETE'
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    loadKeys();
+                } else {
+                    alert(`Ошибка удаления: ${data.error}`);
+                }
+            } catch (error) {
+                console.error('Ошибка удаления ключа:', error);
+                alert(`Ошибка: ${error.message}`);
+            }
+        }
+        
+        async function refreshAllKeys() {
+            const btn = document.getElementById('refreshKeysBtn');
+            const messageDiv = document.getElementById('refreshMessage');
+            const originalText = btn.innerHTML;
+            btn.disabled = true;
+            btn.innerHTML = '<div class="loading" style="display: inline-block; margin-right: 5px;"></div> Актуализация...';
+            messageDiv.innerHTML = '';
+            
+            try {
+                const response = await fetch('/api_keys/refresh_all', {
+                    method: 'POST'
+                });
+                
+                const data = await response.json();
+                
+                await loadKeys();
+                
+                if (data.success && data.invalid_count === 0) {
+                    // Все ключи валидны
+                    const successMsg = `
+                        <div class="message success" style="display: flex; justify-content: space-between; align-items: start;">
+                            <div>
+                                <strong>✅ Актуализация успешно завершена</strong><br>
+                                Обновлено: ${data.updated_count} ключей<br>
+                                Валидных: ${data.valid_count} | Невалидных: ${data.invalid_count}
+                            </div>
+                            <button onclick="document.getElementById('refreshMessage').innerHTML=''" style="background: none; border: none; cursor: pointer; font-size: 18px; opacity: 0.7;">×</button>
+                        </div>
+                    `;
+                    messageDiv.innerHTML = successMsg;
+                    
+                    // Автоскрытие через 5 секунд
+                    setTimeout(() => {
+                        messageDiv.innerHTML = '';
+                    }, 5000);
+                    
+                    btn.innerHTML = '✅ Обновлено';
+                    setTimeout(() => {
+                        btn.innerHTML = originalText;
+                        btn.disabled = false;
+                    }, 2000);
+                } else {
+                    // Есть ошибки
+                    let errorsHtml = '';
+                    if (data.errors && data.errors.length > 0) {
+                        errorsHtml = '<ul style="margin: 10px 0; padding-left: 20px;">';
+                        data.errors.forEach(err => {
+                            errorsHtml += `<li><strong>${err.provider}</strong> (${err.key}): ${err.error}</li>`;
+                        });
+                        errorsHtml += '</ul>';
+                    }
+                    
+                    const errorMsg = `
+                        <div class="message error" style="display: flex; justify-content: space-between; align-items: start;">
+                            <div style="flex: 1;">
+                                <strong>⚠️ Обнаружены проблемы при актуализации</strong><br>
+                                Всего ключей: ${data.total_count} | Валидных: ${data.valid_count} | Невалидных: ${data.invalid_count}
+                                ${errorsHtml}
+                                <small style="color: #6b7280; display: block; margin-top: 8px;">
+                                    💡 Совет: Проверьте ключи на https://platform.openai.com/api-keys или https://platform.deepseek.com/api_keys
+                                </small>
+                            </div>
+                            <button onclick="document.getElementById('refreshMessage').innerHTML=''" style="background: none; border: none; cursor: pointer; font-size: 18px; opacity: 0.7; margin-left: 10px;">×</button>
+                        </div>
+                    `;
+                    messageDiv.innerHTML = errorMsg;
+                    
+                    // Ошибки не скрываются автоматически - нужно время на копирование
+                    
+                    btn.innerHTML = originalText;
+                    btn.disabled = false;
+                }
+                
+            } catch (error) {
+                console.error('Ошибка актуализации ключей:', error);
+                const errorMsg = `
+                    <div class="message error">
+                        <strong>❌ Критическая ошибка</strong><br>
+                        ${error.message}
+                    </div>
+                `;
+                messageDiv.innerHTML = errorMsg;
+                btn.innerHTML = originalText;
+                btn.disabled = false;
+            }
+        }
+        
+        function showMessage(div, text, type) {
+            div.innerHTML = `<div class="message ${type}">${text}</div>`;
+        }
+        
+        function showTableError(error) {
+            document.getElementById('keysTableContainer').innerHTML = `
+                <div class="empty-state">
+                    <div style="font-size: 48px;">⚠️</div>
+                    <div style="margin-top: 10px; color: #ef4444;">${error}</div>
+                </div>
+            `;
+        }
+    </script>
+</body>
+</html>

@@ -103,7 +103,7 @@ def create_app(config_name=None):
     from webapp.routes.health import health_bp
     from webapp.routes.ai_analysis import ai_analysis_bp
     from webapp.routes.ai_rag import ai_rag_bp
-    from webapp.routes.api_keys import api_keys_bp
+    from webapp.routes.api_keys_new import api_keys_new_bp
     
     app.register_blueprint(pages_bp)
     app.register_blueprint(files_bp)
@@ -111,7 +111,7 @@ def create_app(config_name=None):
     app.register_blueprint(health_bp)
     app.register_blueprint(ai_analysis_bp)
     app.register_blueprint(ai_rag_bp)
-    app.register_blueprint(api_keys_bp)
+    app.register_blueprint(api_keys_new_bp)
     
     # Настраиваем хуки для логирования запросов
     from webapp.utils.logging import generate_request_id
