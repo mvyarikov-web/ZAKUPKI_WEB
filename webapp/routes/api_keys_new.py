@@ -34,7 +34,7 @@ def add_key():
     
     Ожидает JSON:
     {
-        "provider": "openai" или "deepseek",
+        "provider": "openai" | "deepseek" | "perplexity",
         "api_key": "sk-...",
         "models_count": 68 (опционально)
     }
@@ -148,8 +148,8 @@ def validate_key():
     
     Ожидает JSON:
     {
-        "provider": "openai" или "deepseek",
-        "api_key": "sk-..."
+        "provider": "openai" | "deepseek" | "perplexity",
+        "api_key": "sk-..." | "pplx-..."
     }
     """
     try:

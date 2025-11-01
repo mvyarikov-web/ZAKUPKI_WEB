@@ -196,9 +196,10 @@
             <div class="form-row">
                 <div class="form-group" style="flex: 0 0 200px;">
                     <label for="providerSelect">Провайдер</label>
-                    <select id="providerSelect">
-                        <option value="openai">OpenAI (GPT)</option>
-                        <option value="deepseek">DeepSeek</option>
+                        <select id="providerSelect" class="form-select">
+                            <option value="openai">OpenAI</option>
+                            <option value="deepseek">DeepSeek</option>
+                            <option value="perplexity">Perplexity</option>
                     </select>
                 </div>
                 
@@ -207,8 +208,9 @@
                     <input 
                         type="text" 
                         id="apiKeyInput" 
-                        placeholder="sk-..."
+                        placeholder="sk-... или pplx-..."
                         autocomplete="off"
+                        oninput="autoDetectProvider()"
                     >
                 </div>
                 
@@ -252,6 +254,22 @@
         let showFullKeys = false;
         let usedModels = [];
         let expandedModelsRows = new Set();
+        
+        // Автоопределение провайдера по префиксу ключа
+        function autoDetectProvider() {
+            const apiKey = document.getElementById('apiKeyInput').value.trim();
+            const providerSelect = document.getElementById('providerSelect');
+            
+            if (apiKey.startsWith('pplx-')) {
+                providerSelect.value = 'perplexity';
+            } else if (apiKey.startsWith('sk-')) {
+                // sk- может быть как OpenAI, так и DeepSeek, оставляем текущий выбор
+                // или по умолчанию OpenAI если не был выбран
+                if (providerSelect.value !== 'deepseek') {
+                    providerSelect.value = 'openai';
+                }
+            }
+        }
         
         // Загрузка при открытии страницы
         document.addEventListener('DOMContentLoaded', () => {
@@ -322,7 +340,12 @@
             
             allKeys.forEach((key, index) => {
                 const displayKey = showFullKeys ? key.api_key : maskKey(key.api_key);
-                const providerName = key.provider === 'openai' ? 'OpenAI' : 'DeepSeek';
+                const providerNames = {
+                    'openai': 'OpenAI',
+                    'deepseek': 'DeepSeek',
+                    'perplexity': 'Perplexity'
+                };
+                const providerName = providerNames[key.provider] || key.provider.charAt(0).toUpperCase() + key.provider.slice(1);
                 const rowId = `key-row-${index}`;
                 const isExpanded = expandedModelsRows.has(rowId);
                 
@@ -437,7 +460,6 @@
         }
         
         async function addKey() {
-            const provider = document.getElementById('providerSelect').value;
             const apiKey = document.getElementById('apiKeyInput').value.trim();
             const messageDiv = document.getElementById('addKeyMessage');
             
@@ -446,50 +468,84 @@
                 return;
             }
             
-            messageDiv.innerHTML = '<div class="loading"></div> Проверка и добавление ключа...';
+            // Автоопределение провайдера перед добавлением (финальная проверка)
+            const providerSelect = document.getElementById('providerSelect');
+            if (apiKey.startsWith('pplx-')) {
+                providerSelect.value = 'perplexity';
+            } else if (apiKey.startsWith('sk-proj-') || apiKey.startsWith('sk-') && !apiKey.startsWith('sk-or-')) {
+                // OpenAI ключи: sk- или sk-proj-
+                // Исключаем DeepSeek (обычно sk-or-...)
+                if (providerSelect.value !== 'deepseek') {
+                    providerSelect.value = 'openai';
+                }
+            }
+            
+            const provider = providerSelect.value;
+            
+            messageDiv.innerHTML = '<div class="loading"></div> Добавление ключа...';
             
             try {
-                // Сначала валидируем
-                const validateResponse = await fetch('/api_keys/validate', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ provider, api_key: apiKey })
-                });
-                
-                const validateData = await validateResponse.json();
-                
-                if (!validateData.success) {
-                    showMessage(messageDiv, `❌ Ошибка валидации: ${validateData.error}`, 'error');
-                    return;
-                }
-                
-                // Затем сохраняем
+                // СНАЧАЛА СОХРАНЯЕМ ключ со статусом "не проверен"
                 const saveResponse = await fetch('/api_keys/add', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ 
                         provider, 
                         api_key: apiKey,
-                        models_count: validateData.models ? validateData.models.length : 0,
-                        available_models: validateData.models || []
+                        models_count: 0,
+                        available_models: []
                     })
                 });
                 
                 const saveData = await saveResponse.json();
                 
-                if (saveData.success) {
-                    showMessage(messageDiv, `✅ Ключ успешно добавлен! Найдено моделей: ${validateData.models ? validateData.models.length : 0}`, 'success');
+                if (!saveData.success) {
+                    showMessage(messageDiv, `❌ ${saveData.error}`, 'error');
+                    return;
+                }
+                
+                showMessage(messageDiv, '✅ Ключ добавлен. Проверка валидности...', 'success');
+                
+                // Очищаем поле ввода
+                document.getElementById('apiKeyInput').value = '';
+                
+                // Обновляем таблицу сразу
+                loadKeys();
+                
+                // ЗАТЕМ пытаемся валидировать асинхронно (не блокирует добавление)
+                try {
+                    const validateResponse = await fetch('/api_keys/validate', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ provider, api_key: apiKey })
+                    });
                     
-                    // Очищаем поле ввода
-                    document.getElementById('apiKeyInput').value = '';
+                    const validateData = await validateResponse.json();
                     
-                    // Обновляем таблицу
+                    if (validateData.success) {
+                        showMessage(messageDiv, `✅ Ключ валиден! Найдено моделей: ${validateData.models ? validateData.models.length : 0}`, 'success');
+                        
+                        // Обновляем информацию о ключе
+                        setTimeout(() => {
+                            loadKeys();
+                            messageDiv.innerHTML = '';
+                        }, 2000);
+                    } else {
+                        showMessage(messageDiv, `⚠️ Ключ добавлен, но валидация не прошла: ${validateData.error}. Вы можете проверить его позже через кнопку "Актуализировать все ключи".`, 'error');
+                        
+                        setTimeout(() => {
+                            loadKeys();
+                            messageDiv.innerHTML = '';
+                        }, 5000);
+                    }
+                } catch (validateError) {
+                    console.warn('Ошибка валидации (ключ уже добавлен):', validateError);
+                    showMessage(messageDiv, '⚠️ Ключ добавлен, но не удалось выполнить проверку. Используйте кнопку "Актуализировать все ключи" для проверки позже.', 'error');
+                    
                     setTimeout(() => {
                         loadKeys();
                         messageDiv.innerHTML = '';
-                    }, 2000);
-                } else {
-                    showMessage(messageDiv, `❌ ${saveData.error}`, 'error');
+                    }, 5000);
                 }
                 
             } catch (error) {

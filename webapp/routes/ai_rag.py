@@ -175,6 +175,60 @@ def _save_models_config(config: Dict[str, Any]):
         current_app.logger.error(f'Ошибка сохранения models.json: {e}')
 
 
+def _calculate_cost(model_config: Dict[str, Any], usage: Dict[str, int], request_count: int = 1) -> Dict[str, float]:
+    """
+    Универсальный расчет стоимости для разных моделей тарификации.
+    
+    Args:
+        model_config: Конфигурация модели из models.json
+        usage: Словарь с токенами {'input_tokens': N, 'output_tokens': M}
+        request_count: Количество запросов (для моделей с тарификацией per_request)
+        
+    Returns:
+        Dict со стоимостью: {
+            'input': float,
+            'output': float, 
+            'total': float,
+            'currency': str,
+            'pricing_model': str
+        }
+    """
+    pricing_model = model_config.get('pricing_model', 'per_token')
+    
+    if pricing_model == 'per_request':
+        # Тарификация по запросам (Search API)
+        price_per_1k = model_config.get('price_per_1000_requests', 0.0)
+        total_cost = (request_count / 1000) * price_per_1k
+        
+        return {
+            'input': 0.0,
+            'output': 0.0,
+            'total': round(total_cost, 6),
+            'currency': 'USD',
+            'pricing_model': 'per_request',
+            'requests_count': request_count
+        }
+    else:
+        # Стандартная тарификация по токенам
+        price_input = model_config.get('price_input_per_1m', 0.0)
+        price_output = model_config.get('price_output_per_1m', 0.0)
+        
+        input_tokens = usage.get('input_tokens', 0)
+        output_tokens = usage.get('output_tokens', 0)
+        
+        cost_input = (input_tokens / 1_000_000) * price_input
+        cost_output = (output_tokens / 1_000_000) * price_output
+        total_cost = cost_input + cost_output
+        
+        return {
+            'input': round(cost_input, 6),
+            'output': round(cost_output, 6),
+            'total': round(total_cost, 6),
+            'currency': 'USD',
+            'pricing_model': 'per_token'
+        }
+
+
 def _fetch_openai_models() -> List[Dict[str, Any]]:
     """Попробовать получить список моделей из OpenAI SDK. Возвращает [] при ошибке.
 
@@ -673,22 +727,22 @@ def estimate_request():
         # Общее количество
         total_tokens = input_tokens + output_tokens
         
-        # Стоимость
-        price_input = model_config.get('price_input_per_1m', 0.0)
-        price_output = model_config.get('price_output_per_1m', 0.0)
-        
-        cost_input = (input_tokens / 1_000_000) * price_input
-        cost_output = (output_tokens / 1_000_000) * price_output
-        total_cost = cost_input + cost_output
+        # Стоимость (универсальный расчет для разных моделей тарификации)
+        usage = {
+            'input_tokens': input_tokens,
+            'output_tokens': output_tokens
+        }
+        cost = _calculate_cost(model_config, usage, request_count=1)
         
         return jsonify({
             'success': True,
             'input_tokens': input_tokens,
             'output_tokens': output_tokens,
             'total_tokens': total_tokens,
-            'cost_input': round(cost_input, 4),
-            'cost_output': round(cost_output, 4),
-            'total_cost': round(total_cost, 4),
+            'cost_input': cost['input'],
+            'cost_output': cost['output'],
+            'total_cost': cost['total'],
+            'pricing_model': cost.get('pricing_model', 'per_token'),
             'model': model_id,
             'top_k': top_k
         }), 200
@@ -780,39 +834,37 @@ def index_documents():
 
 def _get_api_client(model_id: str, api_key: str, timeout: int = 90):
     """
-    Создать OpenAI-совместимый клиент для указанной модели.
-    
-    Args:
-        model_id: ID модели (например, 'gpt-4o-mini' или 'deepseek-chat')
-        api_key: API ключ (по умолчанию для OpenAI, используется как fallback)
-        timeout: Таймаут запроса в секундах
-        
-    Returns:
-        Настроенный клиент OpenAI
+    Создать OpenAI-совместимый клиент для указанной модели/провайдера.
+    Предпочитаем определять провайдера из models.json.
     """
     import openai
-    
+
     api_keys_mgr = get_api_keys_manager_multiple()
-    
-    # Проверяем, является ли это моделью DeepSeek
-    if model_id.startswith('deepseek-'):
-        deepseek_key = api_keys_mgr.get_key('deepseek')
-        if not deepseek_key:
-            deepseek_key = os.environ.get('DEEPSEEK_API_KEY')
-            if not deepseek_key:
-                current_app.logger.warning(f'DEEPSEEK_API_KEY не найден для {model_id}, используется OPENAI_API_KEY')
-                deepseek_key = api_key
-        current_app.logger.info(f'Используется DeepSeek API для модели {model_id}, ключ: {"присутствует" if deepseek_key and len(deepseek_key) > 10 else "ОТСУТСТВУЕТ!"}')
-        return openai.OpenAI(
-            api_key=deepseek_key,
-            base_url="https://api.deepseek.com",
-            timeout=timeout
-        )
-    else:
-        openai_key = api_keys_mgr.get_key('openai')
-        if not openai_key:
-            openai_key = api_key
-        return openai.OpenAI(api_key=openai_key, timeout=timeout)
+
+    # Пытаемся определить провайдера из конфигурации моделей
+    provider = 'openai'
+    try:
+        cfg = _load_models_config()
+        for m in cfg.get('models', []):
+            if m.get('model_id') == model_id:
+                provider = m.get('provider', 'openai')
+                break
+    except Exception:
+        provider = 'openai'
+
+    # DeepSeek
+    if provider == 'deepseek' or model_id.startswith('deepseek-'):
+        deepseek_key = api_keys_mgr.get_key('deepseek') or os.environ.get('DEEPSEEK_API_KEY') or api_key
+        return openai.OpenAI(api_key=deepseek_key, base_url="https://api.deepseek.com", timeout=timeout)
+
+    # Perplexity (семейство sonar: sonar, sonar-pro, sonar-reasoning, sonar-reasoning-pro, sonar-deep-research)
+    if provider == 'perplexity' or model_id.startswith('sonar'):
+        pplx_key = api_keys_mgr.get_key('perplexity') or os.environ.get('PPLX_API_KEY') or os.environ.get('PERPLEXITY_API_KEY') or api_key
+        return openai.OpenAI(api_key=pplx_key, base_url="https://api.perplexity.ai", timeout=timeout)
+
+    # По умолчанию OpenAI
+    openai_key = api_keys_mgr.get_key('openai') or api_key
+    return openai.OpenAI(api_key=openai_key, timeout=timeout)
 
 
 def _direct_analyze_without_rag(
@@ -900,6 +952,11 @@ def _direct_analyze_without_rag(
                 'gpt-5': 200000,
                 'deepseek-chat': 65536,
                 'deepseek-reasoner': 65536,
+                'sonar': 128000,
+                'sonar-pro': 128000,
+                'sonar-reasoning': 128000,
+                'sonar-reasoning-pro': 128000,
+                'sonar-deep-research': 128000,
             }
             for k, v in known.items():
                 if mid.startswith(k):
@@ -1177,26 +1234,27 @@ def _direct_analyze_without_rag(
         }
         
         if model_config:
-            price_input = model_config.get('price_input_per_1m', 0.0)
-            price_output = model_config.get('price_output_per_1m', 0.0)
-            
-            cost_input = (usage['input_tokens'] / 1_000_000) * price_input
-            cost_output = (usage['output_tokens'] / 1_000_000) * price_output
-            total_cost = cost_input + cost_output
+            # Универсальный расчет стоимости
+            cost = _calculate_cost(model_config, usage, request_count=1)
             
             # Курс доллара для конвертации в рубли
             usd_to_rub = current_app.config.get('USD_TO_RUB_RATE', 95.0)
             
             result['cost'] = {
-                'input': round(cost_input, 6),
-                'output': round(cost_output, 6),
-                'total': round(total_cost, 6),
-                'currency': 'USD',
-                'input_rub': round(cost_input * usd_to_rub, 2),
-                'output_rub': round(cost_output * usd_to_rub, 2),
-                'total_rub': round(total_cost * usd_to_rub, 2),
+                'input': cost['input'],
+                'output': cost['output'],
+                'total': cost['total'],
+                'currency': cost['currency'],
+                'pricing_model': cost.get('pricing_model', 'per_token'),
+                'input_rub': round(cost['input'] * usd_to_rub, 2),
+                'output_rub': round(cost['output'] * usd_to_rub, 2),
+                'total_rub': round(cost['total'] * usd_to_rub, 2),
                 'usd_to_rub_rate': usd_to_rub
             }
+            
+            # Для моделей с тарификацией по запросам добавляем количество запросов
+            if cost.get('pricing_model') == 'per_request':
+                result['cost']['requests_count'] = cost.get('requests_count', 1)
         
         return jsonify({
             'success': True,
@@ -1395,19 +1453,20 @@ def analyze():
                     break
             
             if model_config:
-                price_input = model_config.get('price_input_per_1m', 0.0)
-                price_output = model_config.get('price_output_per_1m', 0.0)
-                
-                cost_input = (usage['input_tokens'] / 1_000_000) * price_input
-                cost_output = (usage['output_tokens'] / 1_000_000) * price_output
-                total_cost = cost_input + cost_output
+                # Универсальный расчет стоимости
+                cost = _calculate_cost(model_config, usage, request_count=1)
                 
                 result['cost'] = {
-                    'input': round(cost_input, 4),
-                    'output': round(cost_output, 4),
-                    'total': round(total_cost, 4),
-                    'currency': 'руб/USD'  # Зависит от введённых цен
+                    'input': cost['input'],
+                    'output': cost['output'],
+                    'total': cost['total'],
+                    'currency': cost['currency'],
+                    'pricing_model': cost.get('pricing_model', 'per_token')
                 }
+                
+                # Для моделей с тарификацией по запросам добавляем количество запросов
+                if cost.get('pricing_model') == 'per_request':
+                    result['cost']['requests_count'] = cost.get('requests_count', 1)
             
             return jsonify({
                 'success': True,

@@ -19,6 +19,9 @@
         MODAL: 'modal'       // Модальное окно
     };
 
+    // Хранилище активных сообщений для отслеживания контекстов
+    const activeMessages = new Map();
+
     /**
      * Показать сообщение
      * @param {string} text - Текст сообщения
@@ -44,29 +47,29 @@
         textSpan.style.cssText = 'white-space: pre-wrap; flex: 1;';
         textSpan.textContent = text;
         
-        // Добавляем кнопку закрытия для сообщений, которые не скрываются автоматически
-        if (duration === 0) {
-            const closeBtn = document.createElement('span');
-            closeBtn.textContent = '×';
-            closeBtn.style.cssText = 'cursor: pointer; font-size: 24px; font-weight: bold; margin-left: 15px; opacity: 0.7; flex-shrink: 0;';
-            closeBtn.title = 'Закрыть сообщение';
-            closeBtn.onclick = () => hide(context);
-            
-            messageArea.appendChild(textSpan);
-            messageArea.appendChild(closeBtn);
-            messageArea.style.display = 'flex';
-            messageArea.style.alignItems = 'flex-start';
-            messageArea.style.justifyContent = 'space-between';
-        } else {
-            messageArea.appendChild(textSpan);
-            messageArea.style.display = 'block';
-        }
+        // Создаём кнопку закрытия (теперь всегда)
+        const closeBtn = document.createElement('span');
+        closeBtn.textContent = '×';
+        closeBtn.style.cssText = 'cursor: pointer; font-size: 24px; font-weight: bold; margin-left: 15px; opacity: 0.7; flex-shrink: 0; line-height: 1;';
+        closeBtn.title = 'Закрыть сообщение';
+        closeBtn.onclick = () => hide(context);
+        
+        // Добавляем элементы
+        messageArea.appendChild(textSpan);
+        messageArea.appendChild(closeBtn);
+        messageArea.style.display = 'flex';
+        messageArea.style.alignItems = 'flex-start';
+        messageArea.style.justifyContent = 'space-between';
         
         // Устанавливаем класс для стиля
         messageArea.className = 'message-area ' + type;
 
+        // Сохраняем активное сообщение
+        const contextKey = context instanceof Element ? 'element' : context;
+        activeMessages.set(contextKey, { text, type, timestamp: Date.now() });
+
         // Логируем
-        console.log(`[MessageManager] [${type.toUpperCase()}] ${text} (context: ${context})`);
+        console.log(`[MessageManager] [${type.toUpperCase()}] ${text} (context: ${contextKey})`);
 
         // Автоматическое скрытие
         if (duration > 0) {
@@ -87,6 +90,22 @@
             messageArea.style.display = 'none';
             messageArea.textContent = '';
             messageArea.className = 'message-area';
+            
+            // Удаляем из активных
+            const contextKey = context instanceof Element ? 'element' : context;
+            activeMessages.delete(contextKey);
+        }
+    }
+
+    /**
+     * Скрыть все сообщения кроме указанного контекста
+     * @param {string} keepContext - Контекст, который НЕ нужно скрывать
+     */
+    function hideAllExcept(keepContext) {
+        for (const [context] of activeMessages) {
+            if (context !== keepContext) {
+                hide(context);
+            }
         }
     }
 
@@ -109,7 +128,10 @@
         // Если это ID модального окна
         const modalElement = document.getElementById(context);
         if (modalElement) {
-            return modalElement.querySelector('.message-area');
+            // Ищем как новую, так и старую разметку области сообщений
+            const area = modalElement.querySelector('.message-area, .modal-message-area')
+                || modalElement.querySelector('#rag-message-area');
+            return area;
         }
 
         // Пробуем найти через data-атрибут
@@ -171,10 +193,39 @@
             hide(modalId);
         },
         
+        // Скрыть все кроме указанного контекста
+        hideAllExcept: hideAllExcept,
+        
         // Константы
         Type: MessageType,
         Context: Context
     };
+
+    // Автосброс сообщений при переходе между окнами
+    // Отслеживаем открытие/закрытие модальных окон
+    document.addEventListener('DOMContentLoaded', function() {
+        // При клике на кнопки открытия модалок - скрываем сообщения других контекстов
+        const modalTriggers = document.querySelectorAll('[onclick*="Modal"]');
+        modalTriggers.forEach(trigger => {
+            trigger.addEventListener('click', function() {
+                const modalId = this.getAttribute('onclick').match(/['"]([^'"]+Modal)['"]/)?.[1];
+                if (modalId) {
+                    setTimeout(() => hideAllExcept(modalId), 100);
+                }
+            });
+        });
+        
+        // При закрытии модалки - скрываем её сообщения
+        const closeButtons = document.querySelectorAll('.close');
+        closeButtons.forEach(btn => {
+            btn.addEventListener('click', function() {
+                const modal = this.closest('.modal');
+                if (modal) {
+                    hide(modal.id);
+                }
+            });
+        });
+    });
 
     // Экспортируем глобально
     window.MessageManager = MessageManager;

@@ -81,7 +81,7 @@
                     {% for folder_key, folder in files_by_folder.items() %}
                     <div class="folder-container" id="folder-{{ folder.display_name }}">
                         <div class="folder-header" onclick="toggleFolder('{{ folder.display_name }}')">
-                            <input type="checkbox" class="folder-checkbox" title="Выбрать все файлы в папке" onclick="event.stopPropagation();" style="margin-right:8px;">
+                            <input type="checkbox" class="folder-checkbox" title="Выбрать все файлы в папке" onclick="event.stopPropagation();">
                             <span class="folder-icon">📁</span>
                             <span class="folder-name">{{ folder.display_name }}</span>
                             <span class="file-count-badge">{{ folder.files|length }}</span>

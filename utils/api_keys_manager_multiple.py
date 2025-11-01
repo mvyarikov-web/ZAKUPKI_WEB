@@ -30,6 +30,12 @@ PROVIDERS = {
         'models_endpoint': '/models',
         'test_model': 'deepseek-chat',
         'key_prefix': 'sk-'
+    },
+        'perplexity': {
+        'name': 'Perplexity AI',
+        'base_url': 'https://api.perplexity.ai',
+        'test_model': 'sonar',  # Новое каноническое имя, быстрая и дешевая модель
+        'key_prefix': 'pplx-'
     }
 }
 
@@ -137,11 +143,11 @@ class APIKeysManagerMultiple:
                 'key_id': str(uuid.uuid4()),
                 'api_key': api_key,
                 'is_primary': is_primary,
-                'status': 'valid',  # Предполагаем, что ключ уже провалидирован
+                'status': 'not_validated' if models_count == 0 and not available_models else 'valid',
                 'models_count': models_count,
                 'available_models': available_models or [],
                 'added_at': datetime.now().isoformat(),
-                'last_validated': datetime.now().isoformat()
+                'last_validated': datetime.now().isoformat() if models_count > 0 or available_models else None
             }
             
             existing_keys.append(new_key)
@@ -432,6 +438,8 @@ class APIKeysManagerMultiple:
                 result = self._validate_openai(api_key, config)
             elif provider == 'deepseek':
                 result = self._validate_deepseek(api_key, config)
+            elif provider == 'perplexity':
+                result = self._validate_perplexity(api_key, config)
             else:
                 return False, {'error': f'Валидация для {provider} не реализована'}
             
@@ -555,6 +563,84 @@ class APIKeysManagerMultiple:
             return {
                 'success': False,
                 'error': f'Ошибка DeepSeek API: {error_msg}',
+                'models': [],
+                'analytics': None
+            }
+
+    def _validate_perplexity(self, api_key: str, config: Dict) -> Dict:
+        """Валидация ключа Perplexity с получением аналитики"""
+        try:
+            from openai import OpenAI
+
+            logger.info(f'Валидация Perplexity ключа: {api_key[:8]}... на {config["base_url"]}')
+
+            client = OpenAI(
+                api_key=api_key,
+                base_url=config['base_url']
+            )
+
+            # Простой тестовый запрос
+            logger.info(f'Отправка тестового запроса к модели {config["test_model"]}')
+            response = client.chat.completions.create(
+                model=config['test_model'],
+                messages=[{"role": "user", "content": "Hi"}],
+                max_tokens=5
+            )
+
+            # Канонические модели Perplexity согласно https://docs.perplexity.ai/getting-started/models
+            # Используем актуальные короткие имена
+            available_models = [
+                'sonar',                    # Быстрый, экономичный поиск
+                'sonar-pro',                # Продвинутый веб-поиск
+                'sonar-reasoning',          # Быстрое пошаговое рассуждение + поиск
+                'sonar-reasoning-pro',      # Топ-уровень reasoning (DeepSeek-R1 с CoT)
+                'sonar-deep-research'       # Длинные исчерпывающие исследования
+            ]
+
+            analytics = {
+                'test_tokens_used': response.usage.total_tokens if getattr(response, 'usage', None) else None,
+                'test_prompt_tokens': response.usage.prompt_tokens if getattr(response, 'usage', None) else None,
+                'test_completion_tokens': response.usage.completion_tokens if getattr(response, 'usage', None) else None,
+            }
+
+            # Ключи Perplexity часто начинаются с pplx-
+            analytics['key_type'] = 'standard' if api_key.startswith('pplx-') else 'unknown'
+            analytics['models_count'] = len(available_models)
+
+            logger.info(f'Perplexity валидация успешна: {len(available_models)} моделей')
+
+            return {
+                'success': True,
+                'message': 'Ключ Perplexity валиден',
+                'models': available_models,
+                'test_response': response.choices[0].message.content if response.choices[0].message.content else '(пустой ответ)',
+                'analytics': analytics
+            }
+
+        except Exception as e:
+            error_msg = str(e)
+            logger.error(f'Ошибка валидации Perplexity: {error_msg}', exc_info=True)
+
+            # Детальная диагностика для разных типов ошибок
+            if '<html>' in error_msg.lower() or 'authorization required' in error_msg.lower():
+                error_msg = '❌ Ключ Perplexity недействителен или истёк. Создайте новый ключ: https://www.perplexity.ai/settings/api'
+            elif '401' in error_msg or 'Incorrect API key' in error_msg or 'authentication' in error_msg.lower():
+                error_msg = '❌ Неверный API ключ Perplexity. Проверьте ключ: https://www.perplexity.ai/settings/api'
+            elif '429' in error_msg:
+                error_msg = '⏱️ Превышен лимит запросов Perplexity. Проверьте квоты и тариф.'
+            elif '403' in error_msg:
+                error_msg = '🚫 Доступ запрещён Perplexity. Проверьте статус аккаунта.'
+            elif '404' in error_msg or 'invalid_model' in error_msg.lower():
+                error_msg = f'🔍 Модель {config["test_model"]} не найдена. Попробуйте использовать другую модель для теста.'
+            elif 'Connection' in error_msg or 'timeout' in error_msg.lower():
+                error_msg = f'🌐 Ошибка подключения к Perplexity API. Проверьте сетевое соединение.'
+            else:
+                # Оставляем полное сообщение для неизвестных ошибок
+                error_msg = f'⚠️ Неизвестная ошибка Perplexity API: {error_msg[:200]}'
+
+            return {
+                'success': False,
+                'error': error_msg,
                 'models': [],
                 'analytics': None
             }

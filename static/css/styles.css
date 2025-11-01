@@ -984,7 +984,8 @@ section h2 {
 
 
 /* AI Analysis Styles */
-.file-checkbox {
+.file-checkbox,
+.folder-checkbox {
     cursor: pointer;
     width: 18px;
     height: 18px;
@@ -994,16 +995,19 @@ section h2 {
     flex-shrink: 0; /* Не сжимать при недостатке места */
 }
 
-.file-checkbox:hover {
+.file-checkbox:hover,
+.folder-checkbox:hover {
     transform: scale(1.1);
     transition: transform 0.2s ease;
 }
 
-.file-checkbox:checked {
+.file-checkbox:checked,
+.folder-checkbox:checked {
     background-color: #3498db;
 }
 
-.file-checkbox:disabled {
+.file-checkbox:disabled,
+.folder-checkbox:disabled {
     cursor: not-allowed;
     opacity: 0.4;
     filter: grayscale(100%);

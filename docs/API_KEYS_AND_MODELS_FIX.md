@@ -145,7 +145,7 @@ $ pytest tests/test_openai_api.py -v
 
 1. **API ключи настроены:**
    ```bash
-   python3 -c "from utils.api_keys_manager import get_api_keys_manager; print(get_api_keys_manager().list_keys())"
+   python3 -c "from utils.api_keys_manager_multiple import get_api_keys_manager_multiple; print(get_api_keys_manager_multiple().list_all_keys())"
    ```
 
 2. **Логи приложения:**

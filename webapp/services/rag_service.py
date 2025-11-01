@@ -520,14 +520,15 @@ class RAGService:
                 api_key=deepseek_key,
                 base_url="https://api.deepseek.com"
             )
-        else:
-            # Для моделей OpenAI получаем ключ из менеджера
-            openai_key = api_keys_mgr.get_key('openai')
-            if not openai_key:
-                # Fallback на self.api_key (из переменных окружения или конфига)
-                openai_key = self.api_key
-            
-            return openai.OpenAI(api_key=openai_key)
+        # Perplexity (семейство sonar: sonar, sonar-pro, sonar-reasoning, sonar-reasoning-pro, sonar-deep-research)
+        pplx_prefixes = ('sonar',)
+        if any(model.startswith(p) for p in pplx_prefixes):
+            pplx_key = api_keys_mgr.get_key('perplexity') or os.environ.get('PPLX_API_KEY') or os.environ.get('PERPLEXITY_API_KEY') or self.api_key
+            return openai.OpenAI(api_key=pplx_key, base_url="https://api.perplexity.ai")
+        
+        # Для моделей OpenAI получаем ключ из менеджера
+        openai_key = api_keys_mgr.get_key('openai') or self.api_key
+        return openai.OpenAI(api_key=openai_key)
 
 
 def get_rag_service(

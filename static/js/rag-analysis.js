@@ -652,7 +652,7 @@
                     file_paths: files,
                     prompt,
                     model_id: selectedModelId,
-                    top_k: isDeepMode ? 8 : 5,
+                    top_k: 8,
                     max_output_tokens: maxTokens,
                     temperature: 0.3
                 })
@@ -971,11 +971,22 @@
                 // Используем исходный Markdown текст
                 const result = window._lastAnalysisResult;
                 text = `Модель: ${result.model}\n`;
-                text += `Стоимость: $${result.cost?.total || 0}\n`;
+                
+                // Стоимость в зависимости от модели тарификации
+                if (result.cost?.pricing_model === 'per_request') {
+                    text += `Стоимость: $${result.cost?.total || 0} (${result.cost?.requests_count || 1} запрос)\n`;
+                } else {
+                    text += `Стоимость: $${result.cost?.total || 0}\n`;
+                }
+                
                 if (result.cost?.total_rub) {
                     text += `В рублях: ₽${result.cost.total_rub} (по курсу $${result.cost.usd_to_rub_rate})\n`;
                 }
-                text += `Токены: ${result.usage?.total_tokens || 0}\n`;
+                
+                if (result.usage?.total_tokens) {
+                    text += `Токены: ${result.usage.total_tokens}\n`;
+                }
+                
                 text += `\n${'='.repeat(80)}\n\n`;
                 text += result.answer;
             } else {
@@ -1005,11 +1016,26 @@
                 text += `AI АНАЛИЗ\n`;
                 text += `${'='.repeat(80)}\n`;
                 text += `Модель: ${result.model}\n`;
-                text += `Стоимость: $${result.cost?.total || 0} (вход: $${result.cost?.input || 0}, выход: $${result.cost?.output || 0})\n`;
-                if (result.cost?.total_rub) {
-                    text += `В рублях: ₽${result.cost.total_rub} (вход: ₽${result.cost.input_rub}, выход: ₽${result.cost.output_rub}) по курсу $${result.cost.usd_to_rub_rate}\n`;
+                
+                // Стоимость в зависимости от модели тарификации
+                if (result.cost?.pricing_model === 'per_request') {
+                    text += `Стоимость: $${result.cost?.total || 0} (${result.cost?.requests_count || 1} запрос)\n`;
+                } else {
+                    text += `Стоимость: $${result.cost?.total || 0} (вход: $${result.cost?.input || 0}, выход: $${result.cost?.output || 0})\n`;
                 }
-                text += `Токены: ${result.usage?.total_tokens || 0} (вход: ${result.usage?.input_tokens || 0}, выход: ${result.usage?.output_tokens || 0})\n`;
+                
+                if (result.cost?.total_rub) {
+                    if (result.cost?.pricing_model === 'per_request') {
+                        text += `В рублях: ₽${result.cost.total_rub} по курсу $${result.cost.usd_to_rub_rate}\n`;
+                    } else {
+                        text += `В рублях: ₽${result.cost.total_rub} (вход: ₽${result.cost.input_rub}, выход: ₽${result.cost.output_rub}) по курсу $${result.cost.usd_to_rub_rate}\n`;
+                    }
+                }
+                
+                if (result.usage?.total_tokens) {
+                    text += `Токены: ${result.usage.total_tokens} (вход: ${result.usage.input_tokens || 0}, выход: ${result.usage.output_tokens || 0})\n`;
+                }
+                
                 text += `${'='.repeat(80)}\n\n`;
                 text += result.answer;
             } else {
