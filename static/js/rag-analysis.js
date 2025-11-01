@@ -500,6 +500,64 @@
         return count;
     }
     
+    /**
+     * Показывает сообщение о качестве текста (mojibake) в message-area
+     * @param {number} percent - Процент нечитаемых символов
+     * @param {number} count - Количество нечитаемых символов
+     * @param {number} total - Общее количество символов
+     */
+    function showMojibakeMessage(percent, count, total) {
+        const messageArea = document.getElementById('rag-message-area');
+        if (!messageArea) {
+            console.warn('[showMojibakeMessage] Не найдена область rag-message-area');
+            return;
+        }
+
+        // Скрываем сообщение, если нет нечитаемых символов
+        if (count === 0) {
+            messageArea.style.display = 'none';
+            return;
+        }
+
+        const percentNum = parseFloat(percent);
+        let messageType = '';
+        let icon = '';
+        let text = '';
+        let autoHide = false;
+
+        if (percentNum < 5) {
+            // Зелёное сообщение: качество отличное
+            messageType = 'success';
+            icon = '✅';
+            text = `Качество текста отличное, нечитаемых символов: ${percent}% (${count.toLocaleString('ru-RU')} из ${total.toLocaleString('ru-RU')})`;
+            autoHide = true;  // Зелёные автоматически скрываются через 5 секунд
+        } else if (percentNum >= 5 && percentNum < 25) {
+            // Жёлтое предупреждение: рекомендуется оптимизация
+            messageType = 'warning';
+            icon = '⚠️';
+            text = `Обнаружено ${percent}% нечитаемых символов (${count.toLocaleString('ru-RU')} из ${total.toLocaleString('ru-RU')}). Рекомендация: используйте кнопку "⚡ Оптимизировать текст" для улучшения качества анализа`;
+            autoHide = false;  // Жёлтые остаются
+        } else {
+            // Красное предупреждение: критически много
+            messageType = 'error';
+            icon = '❌';
+            text = `Критически много нечитаемых символов (${percent}%, ${count.toLocaleString('ru-RU')} из ${total.toLocaleString('ru-RU')}). Настоятельно рекомендуется очистка текста с помощью кнопки "⚡ Оптимизировать текст" перед анализом`;
+            autoHide = false;  // Красные остаются
+        }
+
+        // Устанавливаем содержимое и стиль
+        messageArea.innerHTML = `${icon} ${text}`;
+        messageArea.className = 'modal-message-area ' + messageType;
+        messageArea.style.display = 'block';
+
+        // Автоматическое скрытие для зелёных сообщений
+        if (autoHide) {
+            setTimeout(() => {
+                messageArea.style.display = 'none';
+            }, 5000);
+        }
+    }
+    
     function updateRagMetrics() {
         clearTimeout(debounceTimer);
         debounceTimer = setTimeout(() => {
@@ -545,26 +603,16 @@
                 info += ' Стоимость не рассчитана: укажите цены в таблице моделей.';
             }
 
-            // Проверяем наличие битых символов
+            // Проверяем наличие битых символов и показываем в message-area
             const fullText = prompt + '\n\n' + docs;
             const mojibakeCount = countMojibakeChars(fullText);
             const mojibakePercent = totalChars > 0 ? ((mojibakeCount / totalChars) * 100).toFixed(1) : 0;
             
-            if (mojibakePercent > 5) {
-                // Желтое предупреждение если >5%
-                ragMetrics.innerHTML = info + 
-                    '<br><span style="color: #f57c00; font-weight: 600; background: #fff3e0; padding: 4px 8px; border-radius: 4px; display: inline-block; margin-top: 8px;">' +
-                    `⚠️ ${mojibakePercent}% битых символов, рекомендуется оптимизация! (${mojibakeCount.toLocaleString('ru-RU')} из ${totalChars.toLocaleString('ru-RU')} символов)` +
-                    '</span>';
-            } else if (mojibakeCount > 0) {
-                // Зеленое сообщение если ≤5%
-                ragMetrics.innerHTML = info + 
-                    '<br><span style="color: #2e7d32; font-weight: 600; background: #e8f5e9; padding: 4px 8px; border-radius: 4px; display: inline-block; margin-top: 8px;">' +
-                    `✅ ${mojibakePercent}% битых символов, оптимизация не требуется (${mojibakeCount.toLocaleString('ru-RU')} из ${totalChars.toLocaleString('ru-RU')} символов)` +
-                    '</span>';
-            } else {
-                ragMetrics.textContent = info;
-            }
+            // Показываем сообщение о качестве текста в message-area
+            showMojibakeMessage(mojibakePercent, mojibakeCount, totalChars);
+            
+            // Метрики без mojibake (он теперь отображается выше)
+            ragMetrics.textContent = info;
         }, 250);
     }
 
@@ -618,7 +666,8 @@
                 // Сервер вернул не-JSON (например, текст ошибки)
                 finishAnalysisTimer(false); // Показываем ошибку в прогресс-баре
                 const text = await res.text();
-                MessageManager.error('Ошибка сервера: ' + text.substring(0, 200), 'ragModal', 10000);
+                const errorMsg = `❌ Ошибка сервера (HTTP ${res.status}): ${text.substring(0, 300)}`;
+                MessageManager.error(errorMsg, 'ragModal', 0); // 0 = не скрывать автоматически
                 if (wasModalOpen) {
                     ragModal.style.display = 'block';
                 }
@@ -630,7 +679,8 @@
             } catch (jsonErr) {
                 finishAnalysisTimer(false); // Показываем ошибку в прогресс-баре
                 const text = await res.text();
-                MessageManager.error('Ошибка парсинга ответа: ' + text.substring(0, 200), 'ragModal', 10000);
+                const errorMsg = `❌ Ошибка парсинга JSON-ответа: ${jsonErr.message}. Ответ сервера: ${text.substring(0, 300)}`;
+                MessageManager.error(errorMsg, 'ragModal', 0); // 0 = не скрывать автоматически
                 if (wasModalOpen) {
                     ragModal.style.display = 'block';
                 }
@@ -681,7 +731,9 @@
             } else {
                 // При ошибке возвращаем модал обратно
                 finishAnalysisTimer(false); // Показываем ошибку в прогресс-баре
-                MessageManager.error(data.message || 'Ошибка анализа', 'ragModal', 10000);
+                const errorMsg = `❌ Ошибка AI-анализа: ${data.message || 'Неизвестная ошибка'}`;
+                const errorDetails = data.error ? `\n\nДетали: ${data.error}` : '';
+                MessageManager.error(errorMsg + errorDetails, 'ragModal', 0); // 0 = не скрывать автоматически
                 if (wasModalOpen) {
                     ragModal.style.display = 'block';
                 }
@@ -689,7 +741,8 @@
         } catch (e) {
             // При ошибке сети возвращаем модал обратно
             finishAnalysisTimer(false); // Показываем ошибку в прогресс-баре
-            MessageManager.error('Ошибка сети: ' + e.message, 'ragModal', 10000);
+            const errorMsg = `❌ Ошибка сети или соединения: ${e.message}\n\nПроверьте подключение к интернету и доступность API.`;
+            MessageManager.error(errorMsg, 'ragModal', 0); // 0 = не скрывать автоматически
             if (wasModalOpen) {
                 ragModal.style.display = 'block';
             }
@@ -1185,5 +1238,8 @@
         // Закрытие модалки списка промптов
         if (promptListClose) promptListClose.addEventListener('click', () => promptListModal.style.display = 'none');
         if (closePromptListBtn) closePromptListBtn.addEventListener('click', () => promptListModal.style.display = 'none');
+
+    // Экспортируем функцию глобально для использования в text-optimizer.js
+    window.updateRagMetrics = updateRagMetrics;
 
 })();

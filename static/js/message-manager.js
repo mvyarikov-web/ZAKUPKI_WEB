@@ -36,10 +36,34 @@
             return;
         }
 
-        // Устанавливаем текст и стиль
-        messageArea.textContent = text;
+        // Очищаем предыдущее содержимое
+        messageArea.innerHTML = '';
+        
+        // Создаём текстовый элемент
+        const textSpan = document.createElement('span');
+        textSpan.style.cssText = 'white-space: pre-wrap; flex: 1;';
+        textSpan.textContent = text;
+        
+        // Добавляем кнопку закрытия для сообщений, которые не скрываются автоматически
+        if (duration === 0) {
+            const closeBtn = document.createElement('span');
+            closeBtn.textContent = '×';
+            closeBtn.style.cssText = 'cursor: pointer; font-size: 24px; font-weight: bold; margin-left: 15px; opacity: 0.7; flex-shrink: 0;';
+            closeBtn.title = 'Закрыть сообщение';
+            closeBtn.onclick = () => hide(context);
+            
+            messageArea.appendChild(textSpan);
+            messageArea.appendChild(closeBtn);
+            messageArea.style.display = 'flex';
+            messageArea.style.alignItems = 'flex-start';
+            messageArea.style.justifyContent = 'space-between';
+        } else {
+            messageArea.appendChild(textSpan);
+            messageArea.style.display = 'block';
+        }
+        
+        // Устанавливаем класс для стиля
         messageArea.className = 'message-area ' + type;
-        messageArea.style.display = 'block';
 
         // Логируем
         console.log(`[MessageManager] [${type.toUpperCase()}] ${text} (context: ${context})`);
