@@ -29,7 +29,7 @@
      * @param {string|Element} context - Контекст: 'main' для главного экрана или ID/элемент модалки
      * @param {number} duration - Длительность показа в мс (0 = не скрывать автоматически)
      */
-    function show(text, type = MessageType.INFO, context = Context.MAIN, duration = 5000) {
+    function show(text, type = MessageType.INFO, context = Context.MAIN, duration = 0) {
         const messageArea = getMessageArea(context);
         
         if (!messageArea) {

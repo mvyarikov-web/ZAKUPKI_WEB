@@ -154,6 +154,58 @@
                     </div>
                 </div>
                 
+                <!-- Дополнительные параметры для Perplexity Search API (показываются только при выборе соответствующей модели) -->
+                <div id="searchApiParams" style="display: none; margin-bottom: 15px; padding: 15px; background: #f9f9f9; border: 1px solid #ddd; border-radius: 4px;">
+                    <h4 style="margin-top: 0;">Параметры Search API</h4>
+                    
+                    <div style="margin-bottom: 10px;">
+                        <label for="searchMaxResults"><strong>Количество результатов (1-20):</strong></label>
+                        <input type="number" id="searchMaxResults" min="1" max="20" value="10" style="width: 100%; padding: 6px; border: 1px solid #ccc; border-radius: 3px;">
+                        <small style="color: #666;">По умолчанию: 10</small>
+                    </div>
+                    
+                    <div style="margin-bottom: 10px;">
+                        <label for="searchDomainFilter"><strong>Фильтр доменов (через запятую):</strong></label>
+                        <input type="text" id="searchDomainFilter" placeholder="example.com, site.ru" style="width: 100%; padding: 6px; border: 1px solid #ccc; border-radius: 3px;">
+                        <small style="color: #666;">Оставьте пустым для поиска по всем доменам. Для исключения используйте минус: -example.com</small>
+                    </div>
+                    
+                    <div style="margin-bottom: 10px;">
+                        <label for="searchRecency"><strong>Свежесть:</strong></label>
+                        <select id="searchRecency" style="width: 100%; padding: 6px; border: 1px solid #ccc; border-radius: 3px;">
+                            <option value="">Без фильтра</option>
+                            <option value="day">День</option>
+                            <option value="week">Неделя</option>
+                            <option value="month">Месяц</option>
+                            <option value="year">Год</option>
+                        </select>
+                    </div>
+                    
+                    <div style="margin-bottom: 10px; display: flex; gap: 10px;">
+                        <div style="flex: 1;">
+                            <label for="searchAfterDate"><strong>После даты:</strong></label>
+                            <input type="date" id="searchAfterDate" style="width: 100%; padding: 6px; border: 1px solid #ccc; border-radius: 3px;">
+                        </div>
+                        <div style="flex: 1;">
+                            <label for="searchBeforeDate"><strong>До даты:</strong></label>
+                            <input type="date" id="searchBeforeDate" style="width: 100%; padding: 6px; border: 1px solid #ccc; border-radius: 3px;">
+                        </div>
+                    </div>
+                    
+                    <div style="margin-bottom: 10px;">
+                        <label for="searchCountry"><strong>Страна (ISO код):</strong></label>
+                        <input type="text" id="searchCountry" placeholder="RU, US, DE" maxlength="2" style="width: 100%; padding: 6px; border: 1px solid #ccc; border-radius: 3px; text-transform: uppercase;">
+                        <small style="color: #666;">Двухбуквенный код страны (например: RU для России)</small>
+                    </div>
+                    
+                    <div style="margin-bottom: 10px;">
+                        <label for="searchMaxTokens"><strong>Токенов на страницу (256-4096):</strong></label>
+                        <input type="range" id="searchMaxTokens" min="256" max="4096" step="128" value="1024" style="width: calc(100% - 60px);">
+                        <span id="searchMaxTokensValue" style="margin-left: 10px; font-weight: bold;">1024</span>
+                        <br><small style="color: #666;">По умолчанию: 1024</small>
+                    </div>
+                </div>
+                
                 <div style="margin-bottom: 15px;">
                     <label for="ragDocumentsText"><strong>Документы для анализа (редактируемый):</strong></label>
                     <textarea id="ragDocumentsText" rows="30" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; resize: none;"></textarea>

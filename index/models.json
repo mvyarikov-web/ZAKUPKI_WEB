@@ -125,22 +125,13 @@
       "display_name": "Perplexity Search API",
       "description": "Прямой поиск в интернете без LLM (только результаты поиска с URL и сниппетами)",
       "context_window_tokens": 0,
-      "pricing_model": "per_request",
-      "price_per_1000_requests": 5.0,
-      "max_results_per_request": 20,
+      "price_input_per_1m": 0.0,
+      "price_output_per_1m": 0.0,
       "enabled": true,
       "timeout": 30,
       "supports_system_role": false,
-      "provider": "perplexity",
-      "api_type": "search",
-      "features": {
-        "domain_filter": true,
-        "recency_filter": true,
-        "date_range_filter": true,
-        "country_filter": true,
-        "max_tokens_per_page": 1024
-      }
+      "provider": "perplexity"
     }
   ],
-  "default_model": "gpt-4o"
+  "default_model": "perplexity-search-api"
 }

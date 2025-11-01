@@ -255,11 +255,11 @@
                 if (data.success) {
                     MessageManager.success(data.message, 'main');
                 } else {
-                    MessageManager.error(data.message, 'main', 10000);
+                    MessageManager.error(data.message, 'main');
                 }
             })
             .catch(error => {
-                MessageManager.error('Ошибка сохранения промпта: ' + error, 'main', 10000);
+                MessageManager.error('Ошибка сохранения промпта: ' + error, 'main');
             });
         });
     }
@@ -278,7 +278,7 @@
                     }
                 })
                 .catch(error => {
-                    MessageManager.error('Ошибка загрузки списка промптов: ' + error, 'main', 10000);
+                    MessageManager.error('Ошибка загрузки списка промптов: ' + error, 'main');
                 });
         });
     }
@@ -320,11 +320,11 @@
                     aiPromptText.value = data.prompt;
                     MessageManager.success('Промпт загружен', 'main');
                 } else {
-                    MessageManager.error(data.message, 'main', 10000);
+                    MessageManager.error(data.message, 'main');
                 }
             })
             .catch(error => {
-                MessageManager.error('Ошибка загрузки промпта: ' + error, 'main', 10000);
+                MessageManager.error('Ошибка загрузки промпта: ' + error, 'main');
             });
     }
 
@@ -350,14 +350,14 @@
                 const data = await res.json();
                 if (!data.success) {
                     optInfo.textContent = data.message || 'Не удалось получить тексты';
-                    MessageManager.error(data.message || 'Не удалось получить тексты', 'main', 10000);
+                    MessageManager.error(data.message || 'Не удалось получить тексты', 'main');
                     return;
                 }
                 renderDocsForOptimize(data.docs || []);
                 updateOptimizeInfo();
             } catch (e) {
                 optInfo.textContent = 'Ошибка загрузки текстов';
-                MessageManager.error('Ошибка загрузки текстов: ' + e, 'main', 10000);
+                MessageManager.error('Ошибка загрузки текстов: ' + e, 'main');
             }
         });
     }
@@ -484,7 +484,7 @@
             if (data.success) {
                 MessageManager.success('Воркспейс сохранён', 'main');
             } else {
-                MessageManager.error(data.message || 'Ошибка сохранения воркспейса', 'main', 10000);
+                MessageManager.error(data.message || 'Ошибка сохранения воркспейса', 'main');
             }
         });
     }
@@ -555,12 +555,12 @@
                     aiResultModal.style.display = 'block';
                 } else {
                     aiPromptModal.style.display = 'block';
-                    MessageManager.error(data.message || 'Ошибка анализа', 'main', 10000);
+                    MessageManager.error(data.message || 'Ошибка анализа', 'main');
                 }
             } catch (e) {
                 aiProgressModal.style.display = 'none';
                 aiPromptModal.style.display = 'block';
-                MessageManager.error('Ошибка AI анализа: ' + e, 'main', 10000);
+                MessageManager.error('Ошибка AI анализа: ' + e, 'main');
             }
         });
     }

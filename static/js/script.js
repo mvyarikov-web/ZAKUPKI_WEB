@@ -314,6 +314,22 @@ async function performSearch(terms) {
     await updateFilesList();
     
     if (data.results && data.results.length > 0) {
+        // Подсчитываем количество совпадений и документов
+        const totalMatches = data.results.reduce((sum, r) => {
+            if (r.per_term) {
+                return sum + r.per_term.reduce((termSum, t) => termSum + (t.count || 0), 0);
+            }
+            return sum;
+        }, 0);
+        const totalDocs = data.results.length;
+        
+        // Показываем зеленое сообщение об успехе
+        if (typeof MessageManager !== 'undefined') {
+            MessageManager.success(
+                `✅ Найдено ${totalMatches} совпадений в ${totalDocs} документах`,
+                'main'
+            );
+        }
         const t = termsFromInput();
         
         // Группируем результаты по файлам и отображаем под каждым файлом
@@ -380,7 +396,13 @@ async function performSearch(terms) {
         highlightSnippets(t);
         applyQueryToViewLinks();
     } else {
-        // Нет результатов
+        // Нет результатов - показываем желтое предупреждение
+        if (typeof MessageManager !== 'undefined') {
+            MessageManager.warning(
+                '⚠️ Совпадений не найдено',
+                'main'
+            );
+        }
     }
 }
 
@@ -514,7 +536,7 @@ if (deleteFilesBtn) {
                 // Показываем ошибки, если они есть
                 if (data.errors && data.errors.length > 0) {
                     const errorList = data.errors.map(e => `  - ${e.path}: ${e.error}`).join('\n');
-                    MessageManager.warning(`При удалении возникли ошибки:\n${errorList}`, 'main', 10000);
+                    MessageManager.warning(`При удалении возникли ошибки:\n${errorList}`, 'main');
                 }
             } else {
                 MessageManager.error('Ошибка при очистке: ' + (data.error || 'Неизвестная ошибка'));
@@ -951,13 +973,13 @@ function refreshIndexStatus() {
                 
                 // Если индексация только что завершилась, показываем актуальный статус
                 if (currentStatus === 'completed' || currentStatus === 'idle') {
-                    indexStatus.textContent = `Сводный файл: сформирован, ${sizeKb} KB, записей: ${entries}`;
+                    indexStatus.textContent = `Сводный файл: сформирован, ${sizeKb} KB, файлов: ${entries}`;
                     indexStatus.style.color = '#2a2';
                 } else if (currentStatus === 'running') {
                     indexStatus.textContent = `Сводный файл: обновляется… (${sizeKb} KB)`;
                     indexStatus.style.color = '#f90';
                 } else {
-                    indexStatus.textContent = `Сводный файл: сформирован, ${sizeKb} KB, записей: ${entries}`;
+                    indexStatus.textContent = `Сводный файл: сформирован, ${sizeKb} KB, файлов: ${entries}`;
                     indexStatus.style.color = '#2a2';
                 }
             }

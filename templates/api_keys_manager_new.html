@@ -632,10 +632,7 @@
                     `;
                     messageDiv.innerHTML = successMsg;
                     
-                    // Автоскрытие через 5 секунд
-                    setTimeout(() => {
-                        messageDiv.innerHTML = '';
-                    }, 5000);
+                    // Сообщение остается до закрытия крестиком или нового сообщения
                     
                     btn.innerHTML = '✅ Обновлено';
                     setTimeout(() => {

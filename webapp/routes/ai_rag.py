@@ -595,6 +595,8 @@ def update_model_prices():
         model_id = data['model_id']
         price_input = data.get('price_input_per_1m')
         price_output = data.get('price_output_per_1m')
+        price_per_1000_requests = data.get('price_per_1000_requests')
+        pricing_model = data.get('pricing_model')
         timeout = data.get('timeout')
         
         # Загружаем конфигурацию
@@ -608,6 +610,10 @@ def update_model_prices():
                     model['price_input_per_1m'] = float(price_input)
                 if price_output is not None:
                     model['price_output_per_1m'] = float(price_output)
+                if price_per_1000_requests is not None:
+                    model['price_per_1000_requests'] = float(price_per_1000_requests)
+                if pricing_model is not None:
+                    model['pricing_model'] = pricing_model
                 if timeout is not None:
                     model['timeout'] = int(timeout)
                 found = True
@@ -632,6 +638,69 @@ def update_model_prices():
         return jsonify({
             'success': False,
             'message': f'Ошибка обновления цен: {str(e)}'
+        }), 500
+
+
+@ai_rag_bp.route('/models/search_params', methods=['POST'])
+def update_search_params():
+    """
+    Обновить параметры поиска для модели Search API.
+    
+    Ожидает JSON:
+    {
+        "model_id": "perplexity-search-api",
+        "search_params": {
+            "max_results": 10,
+            "search_domain_filter": "",
+            ...
+        }
+    }
+    
+    Returns:
+        JSON с результатом обновления
+    """
+    try:
+        data = request.get_json()
+        
+        if not data or 'model_id' not in data or 'search_params' not in data:
+            return jsonify({
+                'success': False,
+                'message': 'Не указаны model_id или search_params'
+            }), 400
+        
+        model_id = data['model_id']
+        search_params = data['search_params']
+        
+        # Загружаем конфигурацию
+        config = _load_models_config()
+        
+        # Находим модель и обновляем параметры
+        found = False
+        for model in config.get('models', []):
+            if model['model_id'] == model_id:
+                model['search_params'] = search_params
+                found = True
+                break
+        
+        if not found:
+            return jsonify({
+                'success': False,
+                'message': f'Модель {model_id} не найдена'
+            }), 404
+        
+        # Сохраняем обновлённую конфигурацию
+        _save_models_config(config)
+        
+        return jsonify({
+            'success': True,
+            'message': 'Параметры поиска обновлены'
+        }), 200
+    
+    except Exception as e:
+        current_app.logger.exception(f'Ошибка в /ai_rag/models/search_params POST: {e}')
+        return jsonify({
+            'success': False,
+            'message': f'Ошибка обновления параметров: {str(e)}'
         }), 500
 
 
@@ -867,13 +936,146 @@ def _get_api_client(model_id: str, api_key: str, timeout: int = 90):
     return openai.OpenAI(api_key=openai_key, timeout=timeout)
 
 
+def _perplexity_search_api(
+    file_paths: List[str],
+    prompt: str,
+    search_params: Dict[str, Any],
+    usd_rub_rate: float = None
+):
+    """Выполнить поиск через Perplexity Search API (без LLM, только результаты поиска)."""
+    import time
+    import requests
+    start_time = time.time()
+    
+    try:
+        # Получаем API ключ для Perplexity
+        api_keys_mgr = get_api_keys_manager_multiple()
+        pplx_key = api_keys_mgr.get_key('perplexity') or os.environ.get('PPLX_API_KEY') or os.environ.get('PERPLEXITY_API_KEY')
+        
+        if not pplx_key:
+            return jsonify({
+                'success': False,
+                'message': 'Perplexity API ключ не настроен'
+            }), 500
+        
+        # Формируем запрос для Search API
+        # Документация: https://docs.perplexity.ai/api-reference/search-api
+        url = "https://api.perplexity.ai/v1/search"
+        headers = {
+            "Authorization": f"Bearer {pplx_key}",
+            "Content-Type": "application/json"
+        }
+        
+        # Базовые параметры
+        payload = {
+            "query": prompt,
+            "max_results": search_params.get('max_results', 10)
+        }
+        
+        # Опциональные параметры
+        if search_params.get('search_domain_filter'):
+            domains = search_params['search_domain_filter']
+            if isinstance(domains, str):
+                domains = [d.strip() for d in domains.split(',') if d.strip()]
+            payload['search_domain_filter'] = domains
+        
+        if search_params.get('search_recency_filter'):
+            payload['search_recency_filter'] = search_params['search_recency_filter']
+        
+        if search_params.get('search_after_date'):
+            payload['search_after_date'] = search_params['search_after_date']
+        
+        if search_params.get('search_before_date'):
+            payload['search_before_date'] = search_params['search_before_date']
+        
+        if search_params.get('country'):
+            payload['country'] = search_params['country']
+        
+        if search_params.get('max_tokens_per_page'):
+            payload['max_tokens_per_page'] = search_params['max_tokens_per_page']
+        
+        current_app.logger.info(f'Perplexity Search API запрос: {payload}')
+        
+        # Выполняем запрос
+        response = requests.post(url, headers=headers, json=payload, timeout=30)
+        
+        if not response.ok:
+            error_msg = f"Search API error: {response.status_code} - {response.text}"
+            current_app.logger.error(error_msg)
+            return jsonify({
+                'success': False,
+                'message': f'Ошибка Search API: {error_msg}'
+            }), response.status_code
+        
+        search_data = response.json()
+        
+        # Форматируем результаты
+        results = search_data.get('results', [])
+        formatted_output = f"# Результаты поиска Perplexity\n\n**Запрос:** {prompt}\n\n"
+        formatted_output += f"**Найдено результатов:** {len(results)}\n\n---\n\n"
+        
+        for idx, result in enumerate(results, 1):
+            formatted_output += f"## {idx}. {result.get('title', 'Без названия')}\n\n"
+            formatted_output += f"**URL:** {result.get('url', 'N/A')}\n\n"
+            if result.get('snippet'):
+                formatted_output += f"**Описание:** {result['snippet']}\n\n"
+            formatted_output += "---\n\n"
+        
+        # Подсчёт стоимости (за запросы, не за токены)
+        elapsed_time = time.time() - start_time
+        
+        # Загружаем конфиг для получения цены
+        config = _load_models_config()
+        price_per_1000 = 5.0  # Дефолт
+        
+        for m in config.get('models', []):
+            if m['model_id'] == 'perplexity-search-api':
+                price_per_1000 = m.get('price_per_1000_requests', 5.0)
+                break
+        
+        # 1 запрос = price_per_1000 / 1000
+        cost_usd = price_per_1000 / 1000
+        cost_rub = cost_usd * (usd_rub_rate if usd_rub_rate else 0)
+        
+        metrics = {
+            'model': 'perplexity-search-api',
+            'requests': 1,
+            'cost_usd': round(cost_usd, 4),
+            'cost_rub': round(cost_rub, 2) if usd_rub_rate else 0,
+            'time': round(elapsed_time, 2),
+            'results_count': len(results)
+        }
+        
+        current_app.logger.info(f'Search API выполнен за {elapsed_time:.2f}с, {len(results)} результатов')
+        
+        return jsonify({
+            'success': True,
+            'result': formatted_output,
+            'metrics': metrics
+        }), 200
+    
+    except requests.exceptions.Timeout:
+        current_app.logger.exception('Search API timeout')
+        return jsonify({
+            'success': False,
+            'message': 'Таймаут запроса к Search API'
+        }), 504
+    except Exception as e:
+        current_app.logger.exception(f'Ошибка Search API: {e}')
+        return jsonify({
+            'success': False,
+            'message': f'Ошибка Search API: {str(e)}'
+        }), 500
+
+
 def _direct_analyze_without_rag(
     file_paths: List[str],
     prompt: str,
     model_id: str,
     max_output_tokens: int,
     temperature: float,
-    upload_folder: str
+    upload_folder: str,
+    usd_rub_rate: float = None
 ):
     """Прямой анализ без RAG - просто читаем тексты и отправляем в OpenAI."""
     import time
@@ -1237,8 +1439,11 @@ def _direct_analyze_without_rag(
             # Универсальный расчет стоимости
             cost = _calculate_cost(model_config, usage, request_count=1)
             
-            # Курс доллара для конвертации в рубли
-            usd_to_rub = current_app.config.get('USD_TO_RUB_RATE', 95.0)
+            # Курс доллара для конвертации в рубли (пользовательский или дефолтный)
+            if usd_rub_rate and usd_rub_rate > 0:
+                usd_to_rub = usd_rub_rate
+            else:
+                usd_to_rub = current_app.config.get('USD_TO_RUB_RATE', 95.0)
             
             result['cost'] = {
                 'input': cost['input'],
@@ -1350,6 +1555,7 @@ def analyze():
         top_k = data.get('top_k', 5)
         max_output_tokens = data.get('max_output_tokens', 600)
         temperature = data.get('temperature', 0.3)
+        usd_rub_rate = data.get('usd_rub_rate')  # Пользовательский курс USD/RUB
         
         if not file_paths:
             return jsonify({
@@ -1362,6 +1568,17 @@ def analyze():
                 'success': False,
                 'message': 'Не указан промпт'
             }), 400
+        
+        # Если выбран Search API, используем отдельную обработку
+        if model_id == 'perplexity-search-api':
+            search_params = data.get('search_params', {})
+            current_app.logger.info(f'Perplexity Search API: запрос "{prompt[:50]}...", параметры: {search_params}')
+            return _perplexity_search_api(
+                file_paths=file_paths,
+                prompt=prompt,
+                search_params=search_params,
+                usd_rub_rate=usd_rub_rate
+            )
         
         current_app.logger.info(f'RAG анализ: {len(file_paths)} файлов, модель {model_id}, Top-K={top_k}')
         
@@ -1379,7 +1596,8 @@ def analyze():
                 model_id=model_id,
                 max_output_tokens=max_output_tokens,
                 temperature=temperature,
-                upload_folder=upload_folder
+                upload_folder=upload_folder,
+                usd_rub_rate=usd_rub_rate
             )
         
         # Выполняем анализ с RAG
@@ -1402,7 +1620,8 @@ def analyze():
                 model_id=model_id,
                 max_output_tokens=max_output_tokens,
                 temperature=temperature,
-                upload_folder=upload_folder
+                upload_folder=upload_folder,
+                usd_rub_rate=usd_rub_rate
             )
         
         # Если RAG вернул ошибку, тоже используем fallback
@@ -1416,7 +1635,8 @@ def analyze():
                     model_id=model_id,
                     max_output_tokens=max_output_tokens,
                     temperature=temperature,
-                    upload_folder=upload_folder
+                    upload_folder=upload_folder,
+                    usd_rub_rate=usd_rub_rate
                 )
             # Другие ошибки возвращаем как есть
             return jsonify({'success': False, 'message': message}), 400
@@ -1456,12 +1676,22 @@ def analyze():
                 # Универсальный расчет стоимости
                 cost = _calculate_cost(model_config, usage, request_count=1)
                 
+                # Курс доллара для конвертации в рубли (пользовательский или дефолтный)
+                if usd_rub_rate and usd_rub_rate > 0:
+                    usd_to_rub = usd_rub_rate
+                else:
+                    usd_to_rub = current_app.config.get('USD_TO_RUB_RATE', 95.0)
+                
                 result['cost'] = {
                     'input': cost['input'],
                     'output': cost['output'],
                     'total': cost['total'],
                     'currency': cost['currency'],
-                    'pricing_model': cost.get('pricing_model', 'per_token')
+                    'pricing_model': cost.get('pricing_model', 'per_token'),
+                    'input_rub': round(cost['input'] * usd_to_rub, 2),
+                    'output_rub': round(cost['output'] * usd_to_rub, 2),
+                    'total_rub': round(cost['total'] * usd_to_rub, 2),
+                    'usd_to_rub_rate': usd_to_rub
                 }
                 
                 # Для моделей с тарификацией по запросам добавляем количество запросов

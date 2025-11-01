@@ -37,6 +37,17 @@
     const aiResultError = document.getElementById('aiResultError');
     const aiResultErrorText = document.getElementById('aiResultErrorText');
 
+    // Параметры Search API
+    const searchApiParams = document.getElementById('searchApiParams');
+    const searchMaxResults = document.getElementById('searchMaxResults');
+    const searchDomainFilter = document.getElementById('searchDomainFilter');
+    const searchRecency = document.getElementById('searchRecency');
+    const searchAfterDate = document.getElementById('searchAfterDate');
+    const searchBeforeDate = document.getElementById('searchBeforeDate');
+    const searchCountry = document.getElementById('searchCountry');
+    const searchMaxTokens = document.getElementById('searchMaxTokens');
+    const searchMaxTokensValue = document.getElementById('searchMaxTokensValue');
+    
     // Модал выбора промпта (переиспользуем существующий)
     const promptListModal = document.getElementById('promptListModal');
     const promptList = document.getElementById('promptList');
@@ -246,6 +257,24 @@
                     
                     <!-- Полоса 3: Параметры (вертикально) -->
                     <div style="display:flex; flex-direction:column; gap:10px; margin-bottom:14px;">
+            `;
+            
+            // Для Search API показываем только поле стоимости запросов
+            if (m.pricing_model === 'per_request' || m.model_id === 'perplexity-search-api') {
+                html += `
+                        <div style="display:flex; align-items:center; gap:10px;">
+                            <input type="number" 
+                                   step="0.01" 
+                                   min="0" 
+                                   data-price-requests="${m.model_id}" 
+                                   value="${m.price_per_1000_requests || 5.0}" 
+                                   style="width:150px; padding:6px; border:1px solid #ccc; border-radius:4px; font-size:13px;" />
+                            <label style="font-size:13px; color:#555; flex:1;">Стоимость 1000 запросов ($)</label>
+                        </div>
+                `;
+            } else {
+                // Для обычных моделей показываем поля токенов
+                html += `
                         <div style="display:flex; align-items:center; gap:10px;">
                             <input type="number" 
                                    step="0.0001" 
@@ -265,7 +294,10 @@
                                    style="width:150px; padding:6px; border:1px solid #ccc; border-radius:4px; font-size:13px;" />
                             <label style="font-size:13px; color:#555; flex:1;">Стоимость выхода (за 1М токенов)</label>
                         </div>
-                        
+                `;
+            }
+            
+            html += `
                         <div style="display:flex; align-items:center; gap:10px;">
                             <input type="number" 
                                    step="1" 
@@ -300,6 +332,7 @@
                 selectedModelId = e.target.value;
                 updateCurrentModelLabel();
                 updateRagMetrics();
+                toggleSearchApiParams();
             });
         });
         
@@ -386,14 +419,68 @@
             });
         }
     }
+    
+    // Показ/скрытие параметров Search API
+    function toggleSearchApiParams() {
+        if (!searchApiParams) return;
+        
+        const model = models.find(m => m.model_id === selectedModelId);
+        // Показываем параметры только для Search API
+        if (model && model.model_id === 'perplexity-search-api') {
+            searchApiParams.style.display = 'block';
+            
+            // Загружаем сохранённые значения параметров
+            if (model.search_params) {
+                const params = model.search_params;
+                if (searchMaxResults) searchMaxResults.value = params.max_results || 10;
+                if (searchDomainFilter) searchDomainFilter.value = params.search_domain_filter || '';
+                if (searchRecency) searchRecency.value = params.search_recency_filter || '';
+                if (searchAfterDate) searchAfterDate.value = params.search_after_date || '';
+                if (searchBeforeDate) searchBeforeDate.value = params.search_before_date || '';
+                if (searchCountry) searchCountry.value = params.country || '';
+                if (searchMaxTokens) {
+                    searchMaxTokens.value = params.max_tokens_per_page || 1024;
+                    if (searchMaxTokensValue) searchMaxTokensValue.textContent = searchMaxTokens.value;
+                }
+            }
+        } else {
+            searchApiParams.style.display = 'none';
+        }
+    }
+
+    async function saveSearchApiParams(searchParams) {
+        // Сохраняем параметры Search API в модель
+        try {
+            const response = await fetch('/ai_rag/models/search_params', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    model_id: 'perplexity-search-api',
+                    search_params: searchParams
+                })
+            });
+            
+            if (response.ok) {
+                // Обновляем локальную копию модели
+                const model = models.find(m => m.model_id === 'perplexity-search-api');
+                if (model) {
+                    model.search_params = searchParams;
+                }
+            }
+        } catch (error) {
+            console.error('Ошибка при сохранении параметров Search API:', error);
+        }
+    }
 
     async function saveModelPrices() {
         // Собираем значения из инпутов
         const inputsIn = modelsList.querySelectorAll('input[data-price-in]');
         const inputsOut = modelsList.querySelectorAll('input[data-price-out]');
+        const inputsRequests = modelsList.querySelectorAll('input[data-price-requests]');
         const inputsTimeout = modelsList.querySelectorAll('input[data-timeout]');
         const toSave = [];
 
+        // Обрабатываем модели с токенами
         inputsIn.forEach(inp => {
             const id = inp.getAttribute('data-price-in');
             const valIn = parseFloat(inp.value) || 0;
@@ -405,6 +492,20 @@
                 model_id: id, 
                 price_input_per_1m: valIn, 
                 price_output_per_1m: valOut,
+                timeout: timeout
+            });
+        });
+        
+        // Обрабатываем модели с запросами (Search API)
+        inputsRequests.forEach(inp => {
+            const id = inp.getAttribute('data-price-requests');
+            const pricePerRequests = parseFloat(inp.value) || 5.0;
+            const timeoutInp = modelsList.querySelector(`input[data-timeout="${id}"]`);
+            const timeout = timeoutInp ? (parseInt(timeoutInp.value) || 30) : 30;
+            toSave.push({
+                model_id: id,
+                price_per_1000_requests: pricePerRequests,
+                pricing_model: 'per_request',
                 timeout: timeout
             });
         });
@@ -523,39 +624,50 @@
         let messageType = '';
         let icon = '';
         let text = '';
-        let autoHide = false;
 
         if (percentNum < 5) {
             // Зелёное сообщение: качество отличное
             messageType = 'success';
             icon = '✅';
             text = `Качество текста отличное, нечитаемых символов: ${percent}% (${count.toLocaleString('ru-RU')} из ${total.toLocaleString('ru-RU')})`;
-            autoHide = true;  // Зелёные автоматически скрываются через 5 секунд
         } else if (percentNum >= 5 && percentNum < 25) {
             // Жёлтое предупреждение: рекомендуется оптимизация
             messageType = 'warning';
             icon = '⚠️';
             text = `Обнаружено ${percent}% нечитаемых символов (${count.toLocaleString('ru-RU')} из ${total.toLocaleString('ru-RU')}). Рекомендация: используйте кнопку "⚡ Оптимизировать текст" для улучшения качества анализа`;
-            autoHide = false;  // Жёлтые остаются
         } else {
             // Красное предупреждение: критически много
             messageType = 'error';
             icon = '❌';
             text = `Критически много нечитаемых символов (${percent}%, ${count.toLocaleString('ru-RU')} из ${total.toLocaleString('ru-RU')}). Настоятельно рекомендуется очистка текста с помощью кнопки "⚡ Оптимизировать текст" перед анализом`;
-            autoHide = false;  // Красные остаются
         }
 
-        // Устанавливаем содержимое и стиль
-        messageArea.innerHTML = `${icon} ${text}`;
+        // Очищаем предыдущее содержимое
+        messageArea.innerHTML = '';
+        
+        // Создаём текстовый элемент
+        const textSpan = document.createElement('span');
+        textSpan.style.cssText = 'white-space: pre-wrap; flex: 1;';
+        textSpan.textContent = `${icon} ${text}`;
+        
+        // Создаём кнопку закрытия
+        const closeBtn = document.createElement('span');
+        closeBtn.textContent = '×';
+        closeBtn.style.cssText = 'cursor: pointer; font-size: 24px; font-weight: bold; margin-left: 15px; opacity: 0.7; flex-shrink: 0; line-height: 1;';
+        closeBtn.title = 'Закрыть сообщение';
+        closeBtn.onclick = () => {
+            messageArea.style.display = 'none';
+        };
+        
+        // Добавляем элементы
+        messageArea.appendChild(textSpan);
+        messageArea.appendChild(closeBtn);
+        messageArea.style.display = 'flex';
+        messageArea.style.alignItems = 'flex-start';
+        messageArea.style.justifyContent = 'space-between';
+        
+        // Устанавливаем класс для стиля
         messageArea.className = 'modal-message-area ' + messageType;
-        messageArea.style.display = 'block';
-
-        // Автоматическое скрытие для зелёных сообщений
-        if (autoHide) {
-            setTimeout(() => {
-                messageArea.style.display = 'none';
-            }, 5000);
-        }
     }
     
     function updateRagMetrics() {
@@ -645,17 +757,76 @@
         }
         
         try {
+            const usdRubRate = getUsdRubRate();
+            
+            // Собираем параметры для запроса
+            const requestData = {
+                file_paths: files,
+                prompt,
+                model_id: selectedModelId,
+                top_k: 8,
+                max_output_tokens: maxTokens,
+                temperature: 0.3,
+                usd_rub_rate: usdRubRate > 0 ? usdRubRate : null
+            };
+            
+            // Если выбран Search API, добавляем дополнительные параметры
+            if (selectedModelId === 'perplexity-search-api') {
+                const searchParams = {};
+                
+                // Количество результатов
+                const maxResults = parseInt(searchMaxResults?.value) || 10;
+                if (maxResults >= 1 && maxResults <= 20) {
+                    searchParams.max_results = maxResults;
+                }
+                
+                // Фильтр доменов
+                const domainFilter = (searchDomainFilter?.value || '').trim();
+                if (domainFilter) {
+                    searchParams.search_domain_filter = domainFilter.split(',').map(d => d.trim()).filter(d => d);
+                }
+                
+                // Свежесть
+                const recency = (searchRecency?.value || '').trim();
+                if (recency) {
+                    searchParams.search_recency_filter = recency;
+                }
+                
+                // Даты (конвертируем в MM/DD/YYYY)
+                const afterDate = searchAfterDate?.value;
+                if (afterDate) {
+                    const d = new Date(afterDate);
+                    searchParams.search_after_date = `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}/${d.getFullYear()}`;
+                }
+                const beforeDate = searchBeforeDate?.value;
+                if (beforeDate) {
+                    const d = new Date(beforeDate);
+                    searchParams.search_before_date = `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}/${d.getFullYear()}`;
+                }
+                
+                // Страна
+                const country = (searchCountry?.value || '').trim().toUpperCase();
+                if (country && country.length === 2) {
+                    searchParams.country = country;
+                }
+                
+                // Токены на страницу
+                const maxTokensPerPage = parseInt(searchMaxTokens?.value) || 1024;
+                if (maxTokensPerPage >= 256 && maxTokensPerPage <= 4096) {
+                    searchParams.max_tokens_per_page = maxTokensPerPage;
+                }
+                
+                // Добавляем параметры в запрос
+                requestData.search_params = searchParams;
+                
+                // Сохраняем параметры в модель для последующего использования
+                await saveSearchApiParams(searchParams);
+            }
+            
             const res = await fetch('/ai_rag/analyze', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    file_paths: files,
-                    prompt,
-                    model_id: selectedModelId,
-                    top_k: 8,
-                    max_output_tokens: maxTokens,
-                    temperature: 0.3
-                })
+                body: JSON.stringify(requestData)
             });
             
             // Проверяем Content-Type перед парсингом JSON
@@ -1032,7 +1203,10 @@
                     }
                 }
                 
-                if (result.usage?.total_tokens) {
+                // Для Search API показываем количество запросов вместо токенов
+                if (result.cost?.pricing_model === 'per_request') {
+                    text += `Запросы: ${result.cost?.requests_count || 1}\n`;
+                } else if (result.usage?.total_tokens) {
                     text += `Токены: ${result.usage.total_tokens} (вход: ${result.usage.input_tokens || 0}, выход: ${result.usage.output_tokens || 0})\n`;
                 }
                 
@@ -1119,7 +1293,7 @@
                         newWindow.document.close();
                         MessageManager.success('Результат открыт в новой вкладке', 'ragModal');
                     } else {
-                        MessageManager.warning('Не удалось открыть новое окно. Проверьте настройки браузера.', 'ragModal', 7000);
+                        MessageManager.warning('Не удалось открыть новое окно. Проверьте настройки браузера.', 'ragModal');
                     }
                 } else {
                     MessageManager.error(data.message || 'Ошибка получения HTML', 'ragModal');
@@ -1165,7 +1339,7 @@
                     MessageManager.success(`DOCX файл сохранён: ${filename}`, 'ragModal');
                 } else {
                     const errorText = await res.text();
-                    MessageManager.error('Ошибка экспорта: ' + errorText.substring(0, 100), 'ragModal', 10000);
+                    MessageManager.error('Ошибка экспорта: ' + errorText.substring(0, 100), 'ragModal');
                 }
             } catch (err) {
                 MessageManager.error('Ошибка экспорта DOCX: ' + err.message, 'ragModal');
@@ -1186,19 +1360,120 @@
         }
         if (ragPromptText) ragPromptText.addEventListener('input', () => { updateRagMetrics(); autoResize(ragPromptText, 4); });
         if (ragDocumentsText) ragDocumentsText.addEventListener('input', () => { updateRagMetrics(); autoResize(ragDocumentsText, 10); });
+        
+        // Обработчик slider для токенов Search API
+        if (searchMaxTokens && searchMaxTokensValue) {
+            searchMaxTokens.addEventListener('input', (e) => {
+                searchMaxTokensValue.textContent = e.target.value;
+            });
+        }
 
         // Сохранить/Загрузить промпт в RAG
         if (ragSavePromptBtn) {
             ragSavePromptBtn.addEventListener('click', async () => {
                 const prompt = (ragPromptText.value || '').trim();
                 if (!prompt) return MessageManager.warning('Промпт пуст', 'ragModal');
-                const filename = window.prompt('Введите имя файла (без расширения):');
-                if (!filename) return;
+                
+                // Загружаем список существующих промптов
                 try {
-                    const res = await fetch('/ai_analysis/prompts/save', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ prompt, filename }) });
+                    const res = await fetch('/ai_analysis/prompts/list');
                     const data = await res.json();
-                    MessageManager.show(data.message || (data.success ? 'Промпт сохранён' : 'Не удалось сохранить промпт'), data.success ? 'success' : 'error', 'ragModal');
-                } catch (e) { MessageManager.error('Ошибка сохранения: ' + e.message, 'ragModal'); }
+                    
+                    if (!promptList || !promptListModal) return;
+                    promptList.innerHTML = '';
+                    
+                    // Добавляем заголовок и поле для ввода нового имени
+                    const header = document.createElement('div');
+                    header.style.cssText = 'padding:15px; background:#2196f3; color:white; font-weight:600; font-size:16px;';
+                    header.textContent = 'Сохранить промпт';
+                    promptList.appendChild(header);
+                    
+                    const newNameBlock = document.createElement('div');
+                    newNameBlock.style.cssText = 'padding:15px; background:#f0f0f0; border-bottom:2px solid #ddd;';
+                    const newNameLabel = document.createElement('div');
+                    newNameLabel.style.cssText = 'font-weight:600; margin-bottom:8px;';
+                    newNameLabel.textContent = '💾 Создать новый промпт:';
+                    const newNameInput = document.createElement('input');
+                    newNameInput.type = 'text';
+                    newNameInput.placeholder = 'Введите имя файла (без расширения)';
+                    newNameInput.style.cssText = 'width:100%; padding:8px; border:1px solid #ccc; border-radius:4px; font-size:14px;';
+                    const saveNewBtn = document.createElement('button');
+                    saveNewBtn.textContent = 'Сохранить как новый';
+                    saveNewBtn.style.cssText = 'margin-top:10px; padding:8px 16px; background:#4caf50; color:white; border:none; border-radius:4px; cursor:pointer; font-weight:600;';
+                    saveNewBtn.onclick = async () => {
+                        const filename = newNameInput.value.trim();
+                        if (!filename) return MessageManager.warning('Введите имя файла', 'ragModal');
+                        try {
+                            const saveRes = await fetch('/ai_analysis/prompts/save', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ prompt, filename }) });
+                            const saveData = await saveRes.json();
+                            MessageManager.show(saveData.message || (saveData.success ? 'Промпт сохранён' : 'Не удалось сохранить промпт'), saveData.success ? 'success' : 'error', 'ragModal');
+                            if (saveData.success) promptListModal.style.display = 'none';
+                        } catch (e) { MessageManager.error('Ошибка сохранения: ' + e.message, 'ragModal'); }
+                    };
+                    newNameBlock.appendChild(newNameLabel);
+                    newNameBlock.appendChild(newNameInput);
+                    newNameBlock.appendChild(saveNewBtn);
+                    promptList.appendChild(newNameBlock);
+                    
+                    // Если есть существующие промпты, показываем их
+                    if (data.success && Array.isArray(data.prompts) && data.prompts.length > 0) {
+                        const existingHeader = document.createElement('div');
+                        existingHeader.style.cssText = 'padding:12px 15px; background:#e3f2fd; font-weight:600; border-bottom:1px solid #ddd;';
+                        existingHeader.textContent = '📝 Или перезаписать существующий:';
+                        promptList.appendChild(existingHeader);
+                        
+                        // Для каждого файла показываем превью и кнопку перезаписи
+                        for (const filename of data.prompts) {
+                            let preview = '';
+                            try {
+                                const r = await fetch('/ai_analysis/prompts/load/' + encodeURIComponent(filename));
+                                const ld = await r.json();
+                                if (ld.success && typeof ld.prompt === 'string') {
+                                    const para = ld.prompt.split(/\n\s*\n/)[0] || ld.prompt;
+                                    preview = para.trim().slice(0, 150);
+                                }
+                            } catch (_) {}
+                            
+                            const item = document.createElement('div');
+                            item.style.cssText = 'padding:12px; margin:6px 0; background:#fff; border:1px solid #ddd; border-radius:6px; display:flex; justify-content:space-between; align-items:center;';
+                            
+                            const textBlock = document.createElement('div');
+                            textBlock.style.cssText = 'flex:1;';
+                            const title = document.createElement('div');
+                            title.style.cssText = 'font-weight:600; margin-bottom:4px;';
+                            title.textContent = filename;
+                            const desc = document.createElement('div');
+                            desc.style.cssText = 'font-size:12px; color:#666; white-space:pre-wrap;';
+                            desc.textContent = preview || '(пусто)';
+                            textBlock.appendChild(title);
+                            textBlock.appendChild(desc);
+                            
+                            const overwriteBtn = document.createElement('button');
+                            overwriteBtn.textContent = '♻️ Перезаписать';
+                            overwriteBtn.style.cssText = 'padding:6px 12px; background:#ff9800; color:white; border:none; border-radius:4px; cursor:pointer; font-weight:600; white-space:nowrap;';
+                            overwriteBtn.onclick = async () => {
+                                if (!confirm(`Перезаписать промпт "${filename}"?`)) return;
+                                try {
+                                    const saveRes = await fetch('/ai_analysis/prompts/save', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ prompt, filename }) });
+                                    const saveData = await saveRes.json();
+                                    MessageManager.show(saveData.message || (saveData.success ? 'Промпт перезаписан' : 'Не удалось перезаписать промпт'), saveData.success ? 'success' : 'error', 'ragModal');
+                                    if (saveData.success) promptListModal.style.display = 'none';
+                                } catch (e) { MessageManager.error('Ошибка перезаписи: ' + e.message, 'ragModal'); }
+                            };
+                            
+                            item.appendChild(textBlock);
+                            item.appendChild(overwriteBtn);
+                            promptList.appendChild(item);
+                        }
+                    }
+                    
+                    // Показываем модальное окно
+                    promptListModal.style.display = 'block';
+                    newNameInput.focus();
+                    
+                } catch (e) { 
+                    MessageManager.error('Ошибка загрузки списка промптов: ' + e.message, 'ragModal'); 
+                }
             });
         }
         if (ragLoadPromptBtn) {
@@ -1265,7 +1540,14 @@
         if (promptListClose) promptListClose.addEventListener('click', () => promptListModal.style.display = 'none');
         if (closePromptListBtn) closePromptListBtn.addEventListener('click', () => promptListModal.style.display = 'none');
 
-    // Экспортируем функцию глобально для использования в text-optimizer.js
+    // Экспортируем функции глобально для использования в text-optimizer.js
     window.updateRagMetrics = updateRagMetrics;
+    
+    // Инициализация при загрузке
+    loadModels().then(() => {
+        renderModelsList();
+        toggleSearchApiParams();
+        updateRagMetrics();
+    });
 
 })();
