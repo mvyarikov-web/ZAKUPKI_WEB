@@ -1,0 +1,79 @@
+{
+  "models": [
+    {
+      "model_id": "gpt-4o",
+      "display_name": "GPT-4o",
+      "description": "Быстрый мультимодальный вариант; полезно, если встречаются сканы/изображения в документах",
+      "context_window_tokens": 128000,
+      "price_input_per_1m": 2.5,
+      "price_output_per_1m": 10.0,
+      "enabled": true,
+      "timeout": 30,
+      "supports_system_role": true,
+      "provider": "openai"
+    },
+    {
+      "model_id": "gpt-4o-mini",
+      "display_name": "GPT-4o-mini",
+      "description": "Дешевая и быстрая альтернатива для массового анализа текста",
+      "context_window_tokens": 128000,
+      "price_input_per_1m": 0.15,
+      "price_output_per_1m": 0.6,
+      "enabled": true,
+      "timeout": 120,
+      "supports_system_role": true,
+      "provider": "openai"
+    },
+    {
+      "model_id": "o1",
+      "display_name": "o1",
+      "description": "Усиленное рассуждение; когда важна аккуратная логика при сложных правилах/долгом контексте",
+      "context_window_tokens": 128000,
+      "price_input_per_1m": 15.0,
+      "price_output_per_1m": 60.0,
+      "enabled": true,
+      "timeout": 120,
+      "supports_system_role": false,
+      "provider": "openai"
+    },
+    {
+      "model_id": "gpt-3.5-turbo",
+      "display_name": "gpt-3.5-turbo",
+      "description": "Быстрая и дешевая модель для простых задач",
+      "context_window_tokens": 16385,
+      "price_input_per_1m": 0.5,
+      "price_output_per_1m": 1.5,
+      "enabled": true,
+      "timeout": 60,
+      "supports_system_role": true,
+      "provider": "openai"
+    },
+    {
+      "model_id": "deepseek-chat",
+      "display_name": "DeepSeek Chat",
+      "description": "Альтернативная дешевая модель с хорошим качеством анализа",
+      "context_window_tokens": 32768,
+      "price_input_per_1m": 0.028,
+      "price_output_per_1m": 0.42,
+      "enabled": true,
+      "timeout": 60,
+      "supports_system_role": true,
+      "provider": "deepseek",
+      "base_url": "https://api.deepseek.com"
+    },
+    {
+      "model_id": "deepseek-reasoner",
+      "display_name": "DeepSeek Reasoner",
+      "description": "Модель с расширенными возможностями рассуждения (DeepSeek-V3.2-Exp Thinking Mode)",
+      "context_window_tokens": 128000,
+      "price_input_per_1m": 0.028,
+      "price_output_per_1m": 0.42,
+      "enabled": true,
+      "timeout": 120,
+      "supports_system_role": true,
+      "provider": "deepseek",
+      "base_url": "https://api.deepseek.com"
+    }
+  ],
+  "default_model": "deepseek-chat"
+}

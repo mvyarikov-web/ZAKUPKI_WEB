@@ -99,17 +99,23 @@ def test_deepseek_reasoner_connection():
         assert len(response.choices) > 0, "Список choices пустой"
         assert hasattr(response.choices[0], 'message'), "Choice не содержит message"
         
-        # Проверяем содержимое
-        message_content = response.choices[0].message.content
-        assert message_content is not None, "Содержимое сообщения пустое"
-        assert len(message_content) > 0, "Содержимое сообщения имеет нулевую длину"
+        # Проверяем содержимое (для reasoner может быть в reasoning_content)
+        message = response.choices[0].message
+        message_content = message.content or ""
+        reasoning_content = getattr(message, 'reasoning_content', None) or ""
+        
+        # Хотя бы одно из полей должно быть заполнено
+        assert (message_content or reasoning_content), "Оба поля (content и reasoning_content) пустые"
         
         # Проверяем usage (использование токенов)
         assert hasattr(response, 'usage'), "Ответ не содержит информацию об usage"
         assert response.usage.total_tokens > 0, "Количество токенов должно быть больше 0"
         
         print(f"\n✅ DeepSeek Reasoner успешно подключен!")
-        print(f"   Ответ: {message_content[:100]}")
+        if message_content:
+            print(f"   Ответ: {message_content[:100]}")
+        if reasoning_content:
+            print(f"   Рассуждение: {reasoning_content[:100]}")
         print(f"   Токены: {response.usage.total_tokens}")
         
     except Exception as e:

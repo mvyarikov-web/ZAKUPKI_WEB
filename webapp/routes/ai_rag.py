@@ -792,8 +792,10 @@ def _get_api_client(model_id: str, api_key: str, timeout: int = 90):
             deepseek_key = os.environ.get('DEEPSEEK_API_KEY')
             if not deepseek_key:
                 # Последний fallback на переданный ключ
-                current_app.logger.warning('DEEPSEEK_API_KEY не найден, используется OPENAI_API_KEY')
+                current_app.logger.warning(f'DEEPSEEK_API_KEY не найден для {model_id}, используется OPENAI_API_KEY')
                 deepseek_key = api_key
+        
+        current_app.logger.info(f'Используется DeepSeek API для модели {model_id}, ключ: {"присутствует" if deepseek_key and len(deepseek_key) > 10 else "ОТСУТСТВУЕТ!"}')
         
         # Создаём клиент для DeepSeek API
         return openai.OpenAI(
@@ -908,6 +910,7 @@ def _direct_analyze_without_rag(
                 )
         except Exception as api_err:
             error_str = str(api_err)
+            current_app.logger.error(f'Ошибка API {model_id}: {error_str}', exc_info=True)
             
             # Обработка ошибки таймаута
             if 'timed out' in error_str.lower() or 'timeout' in error_str.lower():

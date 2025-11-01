@@ -341,6 +341,9 @@
         
         const range = selection.getRangeAt(0);
         
+        // Очищаем выделение, чтобы не вылетало из окна
+        window.getSelection().removeAllRanges();
+        
         // Проверяем, что выделение внутри optimizeTextPreview
         if (!optimizeTextPreview.contains(range.commonAncestorContainer)) {
             return;
@@ -487,9 +490,12 @@
         }
     });
     
-    // Применение правил оптимизации (повторная оптимизация текущего текста)
+    // Удаление выделенного текста (повторная оптимизация текущего текста)
     if (btnApplyOptimization) {
         btnApplyOptimization.addEventListener('click', async function() {
+            // Сохраняем текущую позицию скролла
+            const scrollPosition = optimizeTextPreview.scrollTop;
+            
             // Получаем текущий текст из превью (с учётом пользовательских изменений)
             const currentText = buildOptimizedTextFromDOM();
             
@@ -545,6 +551,11 @@
                 // Отображаем текст с подсветкой
                 renderHighlightedText(currentText, data.change_spans || []);
                 
+                // Восстанавливаем позицию скролла
+                setTimeout(() => {
+                    optimizeTextPreview.scrollTop = scrollPosition;
+                }, 0);
+                
             } catch (error) {
                 console.error('[TextOptimizer] Ошибка повторной оптимизации:', error);
                 showModalMessage('Не удалось выполнить оптимизацию. Повторите позже', 'error');
@@ -584,6 +595,11 @@
             // Показываем уведомление
             const reduction = optimizationResult.chars_before - optimizationResult.chars_after;
             const message = `Оптимизировано: −${reduction.toLocaleString('ru-RU')} символов (−${optimizationResult.reduction_pct.toFixed(1)}%)`;
+            
+            // Пересчитываем метрики RAG (включая битые символы)
+            if (typeof updateRagMetrics === 'function') {
+                updateRagMetrics();
+            }
             
             // Показываем success сообщение в RAG модалке
             if (window.MessageManager) {

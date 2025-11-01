@@ -480,10 +480,24 @@
     // Функция для проверки наличия битых символов (кракозябр)
     function detectMojibake(text) {
         // Паттерны для обнаружения битого текста (неправильная кодировка)
-        const mojibakePattern = /[–∂—ë–a—ã–μ–æ–ø–μ—Ä–∞—Ü–∏–∏—Ç–æ–a—å–∫–æ–Ω–∞—ç—Ç–∞–ø–μ–∏–Ω–¥–μ–∫—Å–∞—Ü–∏–∏–Ω–μ–≤–ú–∏–Ω–∏–o–∞–a—å–Ω—ã–μ–∏–∑–o–μ–Ω–μ–Ω–∏—è–ü—É–±–a–∏—á–Ω—ã]{8,}/;
-        const garbagePattern = /[–]{2,}[∂—ë]+[–]{2,}|[–∂—ë–a—ã–μ–æ–ø]{10,}/;
+        const mojibakePattern = /[–∂—ë–a—ã–μ–æ–ø–μ—Ä–∞—Ü–∏–∏—Ç–æ–a—å–∫–æ–Ω–∞—ç—Ç–∞–ø–μ–∏–Ω–¥–μ–∫—Å–∞—Ü–∏–∏–Ω–μ–≤–ú–∏–Ω–∏–o–∞–a—å–Ω—ã–μ–∏–∑–o–μ–Ω–μ–Ω–∏—è–ü—É–±–a–∏—á–Ω—ã]{8,}/g;
+        const garbagePattern = /[–]{2,}[∂—ë]+[–]{2,}|[–∂—ë–a—ã–μ–æ–ø]{10,}/g;
         
         return mojibakePattern.test(text) || garbagePattern.test(text);
+    }
+    
+    // Функция для подсчёта битых символов
+    function countMojibakeChars(text) {
+        const mojibakeChars = '–∂—ë–a—ã–μ–æ–ø–μ—Ä–∞—Ü–∏–∏—Ç–æ–a—å–∫–æ–Ω–∞—ç—Ç–∞–ø–μ–∏–Ω–¥–μ–∫—Å–∞—Ü–∏–∏–Ω–μ–≤–ú–∏–Ω–∏–o–∞–a—å–Ω—ã–μ–∏–∑–o–μ–Ω–μ–Ω–∏—è–ü—É–±–a–∏—á–Ω—ã';
+        let count = 0;
+        
+        for (let i = 0; i < text.length; i++) {
+            if (mojibakeChars.includes(text[i])) {
+                count++;
+            }
+        }
+        
+        return count;
     }
     
     function updateRagMetrics() {
@@ -533,11 +547,21 @@
 
             // Проверяем наличие битых символов
             const fullText = prompt + '\n\n' + docs;
-            const hasMojibake = detectMojibake(fullText);
+            const mojibakeCount = countMojibakeChars(fullText);
+            const mojibakePercent = totalChars > 0 ? ((mojibakeCount / totalChars) * 100).toFixed(1) : 0;
             
-            if (hasMojibake) {
-                // Добавляем предупреждение жёлтым цветом
-                ragMetrics.innerHTML = info + '<br><span style="color: #f57c00; font-weight: 600; background: #fff3e0; padding: 4px 8px; border-radius: 4px; display: inline-block; margin-top: 8px;">⚠️ Много битых символов, рекомендуется оптимизация!</span>';
+            if (mojibakePercent > 5) {
+                // Желтое предупреждение если >5%
+                ragMetrics.innerHTML = info + 
+                    '<br><span style="color: #f57c00; font-weight: 600; background: #fff3e0; padding: 4px 8px; border-radius: 4px; display: inline-block; margin-top: 8px;">' +
+                    `⚠️ ${mojibakePercent}% битых символов, рекомендуется оптимизация! (${mojibakeCount.toLocaleString('ru-RU')} из ${totalChars.toLocaleString('ru-RU')} символов)` +
+                    '</span>';
+            } else if (mojibakeCount > 0) {
+                // Зеленое сообщение если ≤5%
+                ragMetrics.innerHTML = info + 
+                    '<br><span style="color: #2e7d32; font-weight: 600; background: #e8f5e9; padding: 4px 8px; border-radius: 4px; display: inline-block; margin-top: 8px;">' +
+                    `✅ ${mojibakePercent}% битых символов, оптимизация не требуется (${mojibakeCount.toLocaleString('ru-RU')} из ${totalChars.toLocaleString('ru-RU')} символов)` +
+                    '</span>';
             } else {
                 ragMetrics.textContent = info;
             }
