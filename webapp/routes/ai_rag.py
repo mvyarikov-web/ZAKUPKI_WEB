@@ -861,7 +861,7 @@ def _direct_analyze_without_rag(
                 'message': 'Не удалось извлечь текст из файлов. Постройте индекс через кнопку «Построить индекс».'
             }), 400
         
-        # Получаем конфигурацию модели для проверки поддержки system role
+        # Получаем конфигурацию модели для проверки поддержки system role и лимитов
         config = _load_models_config()
         model_config = None
         
@@ -880,6 +880,91 @@ def _direct_analyze_without_rag(
             timeout = model_config['timeout']
         else:
             timeout = current_app.config.get('OPENAI_TIMEOUT', 90)
+
+        # Определяем лимит контекста модели
+        def _get_context_window_tokens(mid: str, cfg: Optional[Dict[str, Any]]) -> int:
+            # 1) из конфигурации, если задано > 0
+            if cfg:
+                try:
+                    val = int(cfg.get('context_window_tokens') or 0)
+                    if val > 0:
+                        return val
+                except Exception:
+                    pass
+            # 2) известные значения по умолчанию
+            known: Dict[str, int] = {
+                'gpt-3.5-turbo': 16385,
+                'gpt-4o-mini': 128000,
+                'gpt-4o': 128000,
+                'gpt-4.1': 128000,
+                'gpt-5': 200000,
+                'deepseek-chat': 65536,
+                'deepseek-reasoner': 65536,
+            }
+            for k, v in known.items():
+                if mid.startswith(k):
+                    return v
+            # 3) дефолт
+            return 16385
+
+        context_window = _get_context_window_tokens(model_id, model_config)
+
+        # Токенайзер (graceful degrade)
+        try:
+            import tiktoken  # type: ignore
+            # Для большинства chat-моделей OpenAI подходит cl100k_base
+            encoding = tiktoken.get_encoding('cl100k_base')
+            def count_tokens(text: str) -> int:
+                return len(encoding.encode(text))
+            def truncate_by_tokens(text: str, max_tokens: int) -> str:
+                if max_tokens <= 0:
+                    return ''
+                ids = encoding.encode(text)
+                if len(ids) <= max_tokens:
+                    return text
+                return encoding.decode(ids[:max_tokens])
+        except Exception:
+            # При отсутствии tiktoken используем грубую эвристику: ~4 символа на токен
+            avg_chars_per_token = 4
+            def count_tokens(text: str) -> int:
+                return max(1, len(text) // avg_chars_per_token)
+            def truncate_by_tokens(text: str, max_tokens: int) -> str:
+                if max_tokens <= 0:
+                    return ''
+                max_chars = max_tokens * avg_chars_per_token
+                return text[:max_chars]
+
+        # Резерв под ответ и служебные токены
+        # Берём max_output_tokens, плюс запас 512 токенов под форматирование/служебные поля
+        reserve_for_output = int(max_output_tokens or 0)
+        safety_margin = 512
+
+        # Оценим накладные (prompt + системное сообщение без текста документов)
+        system_text = "Вы - помощник для анализа документов. Отвечайте на русском языке." if supports_system else ''
+        user_prefix = "Документы:\n\n"
+        user_suffix = f"\n\nЗапрос: {prompt}"
+        overhead_text = (system_text + user_prefix + user_suffix) if supports_system else ("Ты - помощник для анализа документов. Отвечай на русском языке.\n\n" + user_prefix + user_suffix)
+        overhead_tokens = count_tokens(overhead_text)
+
+        allowed_doc_tokens = context_window - reserve_for_output - overhead_tokens - safety_margin
+        if allowed_doc_tokens <= 0:
+            # Объём явно не поместится — возвращаем понятную ошибку пользователю
+            return jsonify({
+                'success': False,
+                'message': (
+                    f'Слишком большой объём текста для выбранной модели {model_id}. '
+                    f'Доступно токенов под документы: {max(0, allowed_doc_tokens)} из {context_window}. '
+                    'Уменьшите число выбранных файлов или выберите модель с большим контекстом.'
+                )
+            }), 400
+
+        combined_docs_trunc = truncate_by_tokens(combined_docs, allowed_doc_tokens)
+        # Если усекли более чем на 5%, предупредим логом (в UI сообщим при finish_reason length)
+        if len(combined_docs_trunc) < len(combined_docs) * 0.95:
+            current_app.logger.info(
+                f'Текст документов усечён под лимит контекста: {len(combined_docs)} -> {len(combined_docs_trunc)} символов '
+                f'(allowed_doc_tokens={allowed_doc_tokens}, context_window={context_window})'
+            )
         
         # Создаём клиент с учётом провайдера (OpenAI или DeepSeek)
         client = _get_api_client(model_id, api_key, timeout)
@@ -888,11 +973,11 @@ def _direct_analyze_without_rag(
         if supports_system:
             messages = [
                 {"role": "system", "content": "Вы - помощник для анализа документов. Отвечайте на русском языке."},
-                {"role": "user", "content": f"Документы:\n\n{combined_docs}\n\nЗапрос: {prompt}"}
+                {"role": "user", "content": f"Документы:\n\n{combined_docs_trunc}\n\nЗапрос: {prompt}"}
             ]
         else:
             messages = [
-                {"role": "user", "content": f"Ты - помощник для анализа документов. Отвечай на русском языке.\n\nДокументы:\n\n{combined_docs}\n\nЗапрос: {prompt}"}
+                {"role": "user", "content": f"Ты - помощник для анализа документов. Отвечай на русском языке.\n\nДокументы:\n\n{combined_docs_trunc}\n\nЗапрос: {prompt}"}
             ]
         
         # Определяем параметры для новых семейств (o1, o3, o4, gpt-4.1, gpt-5)
@@ -924,13 +1009,14 @@ def _direct_analyze_without_rag(
                     'message': f'Запрос превышает лимит времени {timeout} сек. Попробуйте позже.'
                 }), 504
             
-            # Обработка ошибки превышения контекста
+            # Обработка ошибки превышения контекста (на случай несовпадения оценки токенов)
             if 'context_length_exceeded' in error_str or 'maximum context length' in error_str:
                 # Попытка сократить текст
                 current_app.logger.warning(f'Превышен лимит контекста для {model_id}, сокращаем текст')
                 
-                # Берем только первую половину текста
-                combined_docs_short = combined_docs[:len(combined_docs)//2]
+                # Ещё уменьшаем допустимые токены документов в 2 раза
+                reduced_tokens = max(1, allowed_doc_tokens // 2)
+                combined_docs_short = truncate_by_tokens(combined_docs_trunc, reduced_tokens)
                 
                 if supports_system:
                     messages = [
@@ -962,6 +1048,88 @@ def _direct_analyze_without_rag(
                         'success': False,
                         'message': f'Ошибка анализа даже после сокращения текста: {str(retry_err)}'
                     }), 500
+
+            # Обработка ограничения по токенам в минуту (TPM) — HTTP 429 rate_limit_exceeded
+            elif 'rate_limit_exceeded' in error_str or 'tokens per min' in error_str or 'TPM' in error_str or 'Error code: 429' in error_str:
+                try:
+                    import time as _time
+                    # Вычислим текущую оценку запроса
+                    doc_tokens_now = count_tokens(combined_docs_trunc)
+                    total_requested = overhead_tokens + doc_tokens_now + reserve_for_output
+
+                    # Попробуем извлечь лимит/запрошено из текста
+                    tpm_limit = None
+                    m = re.search(r'Limit\s+(\d+)\D+Requested\s+(\d+)', error_str)
+                    if m:
+                        try:
+                            tpm_limit = int(m.group(1))
+                            requested_val = int(m.group(2))
+                            current_app.logger.warning(f'TPM ограничение: limit={tpm_limit}, requested={requested_val}')
+                        except Exception:
+                            tpm_limit = None
+                    
+                    if tpm_limit and tpm_limit > 1000:
+                        target_total = max(1000, int(tpm_limit * 0.9) - safety_margin)
+                    else:
+                        # Если не смогли распарсить — сокращаем вдвое
+                        target_total = max(1000, int(total_requested * 0.5))
+
+                    if target_total <= overhead_tokens + 64:
+                        return jsonify({
+                            'success': False,
+                            'message': (
+                                'Ограничение провайдера по токенам в минуту для модели слишком низкое для текущего объёма. '
+                                'Уменьшите количество файлов, сократите промпт или попробуйте позже/выберите другую модель.'
+                            )
+                        }), 429
+
+                    # Пропорционально уменьшаем токены документов и ответа
+                    ratio = target_total / max(1, total_requested)
+                    new_doc_token_limit = max(1, int(doc_tokens_now * ratio))
+                    new_output_limit = max(64, int(reserve_for_output * ratio))
+
+                    current_app.logger.info(
+                        f'Адаптация под TPM: total_requested={total_requested} -> target_total={target_total}, '
+                        f'doc_tokens {doc_tokens_now}->{new_doc_token_limit}, output {reserve_for_output}->{new_output_limit}'
+                    )
+
+                    combined_docs_tpm = truncate_by_tokens(combined_docs_trunc, new_doc_token_limit)
+                    if supports_system:
+                        messages = [
+                            {"role": "system", "content": "Вы - помощник для анализа документов. Отвечайте на русском языке."},
+                            {"role": "user", "content": f"Документы (уменьшено):\n\n{combined_docs_tpm}\n\nЗапрос: {prompt}"}
+                        ]
+                    else:
+                        messages = [
+                            {"role": "user", "content": f"Ты - помощник для анализа документов. Отвечай на русском языке.\n\nДокументы (уменьшено):\n\n{combined_docs_tpm}\n\nЗапрос: {prompt}"}
+                        ]
+
+                    # Небольшой бэк-офф перед повтором
+                    _time.sleep(1)
+
+                    if is_new_family:
+                        response = client.chat.completions.create(
+                            model=model_id,
+                            messages=messages,
+                            max_completion_tokens=new_output_limit
+                        )
+                    else:
+                        response = client.chat.completions.create(
+                            model=model_id,
+                            messages=messages,
+                            max_tokens=new_output_limit,
+                            temperature=temperature
+                        )
+                except Exception as retry_rate_err:
+                    return jsonify({
+                        'success': False,
+                        'message': (
+                            'Провайдер вернул ограничение по токенам в минуту (429). '
+                            'Даже после автоматического уменьшения объёма запрос не прошёл. '
+                            'Попробуйте уменьшить объём документов или подождать/выбрать другую модель. '
+                            f'Детали: {str(retry_rate_err)}'
+                        )
+                    }), 429
             else:
                 return jsonify({
                     'success': False,
