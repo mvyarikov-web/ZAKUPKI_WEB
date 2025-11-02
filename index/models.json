@@ -63,75 +63,118 @@
     {
       "model_id": "sonar",
       "display_name": "Perplexity Sonar",
-      "description": "Быстрый, экономичный поиск с обоснованием",
+      "description": "Быстрый, экономичный LLM с возможностью поиска в интернете",
       "context_window_tokens": 128000,
       "price_input_per_1m": 1.0,
       "price_output_per_1m": 1.0,
       "enabled": true,
       "timeout": 120,
       "supports_system_role": true,
-      "provider": "perplexity"
+      "provider": "perplexity",
+      "supports_search": true,
+      "price_per_1000_requests": 5.0,
+      "search_params": {
+        "recency_filter": "month",
+        "return_citations": true,
+        "return_images": false,
+        "return_related_questions": false,
+        "search_domain_filter": [],
+        "search_recency_filter": "month",
+        "temperature": 0.2
+      }
     },
     {
       "model_id": "sonar-pro",
       "display_name": "Perplexity Sonar Pro",
-      "description": "Продвинутый веб-поиск для сложных запросов",
+      "description": "Продвинутый LLM с веб-поиском для сложных запросов",
       "context_window_tokens": 128000,
       "price_input_per_1m": 3.0,
       "price_output_per_1m": 15.0,
       "enabled": true,
       "timeout": 120,
       "supports_system_role": true,
-      "provider": "perplexity"
+      "provider": "perplexity",
+      "supports_search": true,
+      "price_per_1000_requests": 5.0,
+      "search_params": {
+        "recency_filter": "month",
+        "return_citations": true,
+        "return_images": false,
+        "return_related_questions": false,
+        "search_domain_filter": [],
+        "search_recency_filter": "month",
+        "temperature": 0.2
+      }
     },
     {
       "model_id": "sonar-reasoning",
       "display_name": "Perplexity Sonar Reasoning",
-      "description": "Быстрое пошаговое рассуждение с поиском",
+      "description": "Быстрое пошаговое рассуждение с возможностью поиска",
       "context_window_tokens": 128000,
       "price_input_per_1m": 1.0,
       "price_output_per_1m": 5.0,
       "enabled": true,
       "timeout": 120,
       "supports_system_role": true,
-      "provider": "perplexity"
+      "provider": "perplexity",
+      "supports_search": true,
+      "price_per_1000_requests": 5.0,
+      "search_params": {
+        "recency_filter": "month",
+        "return_citations": true,
+        "return_images": false,
+        "return_related_questions": false,
+        "search_domain_filter": [],
+        "search_recency_filter": "month",
+        "temperature": 0.2
+      }
     },
     {
       "model_id": "sonar-reasoning-pro",
       "display_name": "Perplexity Sonar Reasoning Pro",
-      "description": "Топ-уровень reasoning на базе DeepSeek-R1 с CoT",
+      "description": "Топ-уровень reasoning на базе DeepSeek-R1 с CoT и поиском",
       "context_window_tokens": 128000,
       "price_input_per_1m": 2.0,
       "price_output_per_1m": 8.0,
       "enabled": true,
       "timeout": 120,
       "supports_system_role": true,
-      "provider": "perplexity"
+      "provider": "perplexity",
+      "supports_search": true,
+      "price_per_1000_requests": 5.0,
+      "search_params": {
+        "recency_filter": "month",
+        "return_citations": true,
+        "return_images": false,
+        "return_related_questions": false,
+        "search_domain_filter": [],
+        "search_recency_filter": "month",
+        "temperature": 0.2
+      }
     },
     {
       "model_id": "sonar-deep-research",
       "display_name": "Perplexity Sonar Deep Research",
-      "description": "Длинные исчерпывающие исследования (сотни источников)",
+      "description": "Длинные исчерпывающие исследования (сотни источников) с глубоким поиском",
       "context_window_tokens": 128000,
       "price_input_per_1m": 2.0,
       "price_output_per_1m": 8.0,
       "enabled": true,
       "timeout": 180,
       "supports_system_role": true,
-      "provider": "perplexity"
-    },
-    {
-      "model_id": "perplexity-search-api",
-      "display_name": "Perplexity Search API",
-      "description": "Прямой поиск в интернете без LLM (только результаты поиска с URL и сниппетами)",
-      "context_window_tokens": 0,
-      "price_input_per_1m": 0.0,
-      "price_output_per_1m": 0.0,
-      "enabled": true,
-      "timeout": 30,
-      "supports_system_role": false,
-      "provider": "perplexity"
+      "provider": "perplexity",
+      "supports_search": true,
+      "price_per_1000_requests": 5.0,
+      "search_params": {
+        "recency_filter": "month",
+        "return_citations": true,
+        "return_images": false,
+        "return_related_questions": false,
+        "search_domain_filter": [],
+        "search_recency_filter": "month",
+        "temperature": 0.2
+      }
     }
   ],
-  "default_model": "perplexity-search-api"
+  "default_model": "sonar"
 }
