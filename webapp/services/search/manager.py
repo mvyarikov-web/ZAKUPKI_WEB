@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any, Dict, Optional, Tuple
 
 ALLOWED_RECENCY = {"day", "week", "month", "year"}
+ALLOWED_CONTEXT_SIZE = {"low", "medium", "high"}
 
 
 def normalize_search_params(raw: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
@@ -63,12 +64,17 @@ def normalize_search_params(raw: Optional[Dict[str, Any]]) -> Optional[Dict[str,
     except Exception:
         pass
 
+    # web_search_options.search_context_size
+    scs = str(raw.get("search_context_size", "")).strip().lower()
+    if scs in ALLOWED_CONTEXT_SIZE:
+        out["search_context_size"] = scs
+
     return out or None
 
 
-def is_search_enabled(model_id: str, params: Optional[Dict[str, Any]]) -> bool:
-    """Простое правило: поиском занимаются только sonar-модели с непустыми параметрами."""
-    return bool(params) and ("sonar" in (model_id or "").lower())
+def is_search_enabled(model_id: str, params_present: bool) -> bool:
+    """Включаем поиск для sonar-моделей, если пользователь его запросил (даже без параметров)."""
+    return bool(params_present) and ("sonar" in (model_id or "").lower())
 
 
 def apply_search_to_request(request_params: Dict[str, Any], params: Optional[Dict[str, Any]]) -> None:
@@ -76,9 +82,19 @@ def apply_search_to_request(request_params: Dict[str, Any], params: Optional[Dic
 
     Если params None — ничего не делать (ограничения и disable_search решаются на уровне сервиса).
     """
-    if not params:
+    if params is None:
         return
 
+    # Базовые включатели веб-поиска Perplexity (умный режим)
+    request_params["enable_search_classifier"] = True
+    request_params["search_mode"] = params.get("search_mode", "web")
+    request_params["language_preference"] = params.get("language_preference", "ru")
+
+    # Настройки объёма веб-контента
+    scs = params.get("search_context_size", "low")
+    request_params["web_search_options"] = {"search_context_size": scs if scs in ALLOWED_CONTEXT_SIZE else "low"}
+
+    # Прочие фильтры
     keys = (
         "max_results",
         "search_domain_filter",

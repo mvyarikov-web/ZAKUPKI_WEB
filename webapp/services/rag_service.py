@@ -5,9 +5,11 @@
 import os
 import json
 import hashlib
+import time
 from typing import List, Dict, Any, Optional, Tuple
 from flask import current_app
 import openai
+import httpx
 
 from webapp.models.rag_models import RAGDatabase
 from webapp.services.chunking import chunk_document, TextChunker
@@ -284,7 +286,7 @@ class RAGService:
             client = self._get_client_for_model(model)
             
             # Формируем параметры запроса (без max_tokens — добавим ниже при необходимости)
-            request_params = {
+            request_params: Dict[str, Any] = {
                 "model": model,
                 "messages": [
                     {"role": "system", "content": system_prompt},
@@ -295,25 +297,56 @@ class RAGService:
             }
             
             # Нормализуем и применяем параметры поиска
-            norm_search = normalize_search_params(search_params)
-            if is_search_enabled(model, norm_search):
+            norm_search = normalize_search_params(search_params) if search_params else None
+            # Фиксируем факт запрошенного поиска по флагу наличия параметров (даже пустых) и модели
+            search_requested = is_search_enabled(model, search_params is not None)
+            if search_requested:
                 # В режиме поиска max_tokens не указываем, чтобы не обрезать ответ
-                apply_search_to_request(request_params, norm_search)
+                # Параметры поиска Perplexity передаём НАПРЯМУЮ в request_params (НЕ через extra_body!)
+                # Применяем нормализованные параметры; если их нет — включим умный поиск с дефолтами
+                apply_search_to_request(request_params, norm_search or {})
                 try:
                     current_app.logger.info(f'🌐 Режим С ПОИСКОМ: параметры = {norm_search}')
                 except Exception:
                     pass
             else:
-                # Без поиска: ставим лимит токенов и отключаем поиск для Perplexity
-                request_params["max_tokens"] = max_output_tokens
+                # Без поиска: для Perplexity не передаём max_tokens, только отключаем поиск
                 if 'sonar' in model.lower() or 'perplexity' in model.lower():
                     request_params['disable_search'] = True
                     try:
                         current_app.logger.info(f'🚫 Режим БЕЗ ПОИСКА: disable_search = True для модели {model}')
                     except Exception:
                         pass
+                else:
+                    # Для остальных провайдеров укажем max_tokens
+                    request_params["max_tokens"] = max_output_tokens
             
-            response = client.chat.completions.create(**request_params)
+            # Вызов модели с одноразовым ретраем на сетевые ошибки/таймауты
+            try:
+                response = client.chat.completions.create(**request_params)
+            except Exception as call_err:
+                err_str = str(call_err)
+                retryable = False
+                # Признаки сетевых/временных ошибок
+                lower = err_str.lower()
+                if any(k in lower for k in [
+                    'timeout', 'timed out', 'read timeout', 'connect timeout',
+                    'connection reset', 'econnreset', 'temporarily unavailable',
+                    'service unavailable', 'retry later'
+                ]):
+                    retryable = True
+                # httpx исключения
+                if isinstance(call_err, (httpx.ConnectTimeout, httpx.ReadTimeout, httpx.TimeoutException)):
+                    retryable = True
+                if retryable:
+                    try:
+                        current_app.logger.warning(f"Сетевая ошибка при обращении к модели {model}: {err_str}. Повтор через 1с")
+                    except Exception:
+                        pass
+                    time.sleep(1.0)
+                    response = client.chat.completions.create(**request_params)
+                else:
+                    raise
 
             # Проверяем факт использования поиска в ответе
             search_used = extract_search_used(response)
@@ -322,6 +355,13 @@ class RAGService:
                     current_app.logger.info(f'✅ Поиск БЫЛ использован')
                 else:
                     current_app.logger.info(f'📝 Поиск НЕ использован (только знания модели)')
+                # Пробуем залогировать источники, если провайдер вернул их в совместимом виде
+                try:
+                    sr = getattr(response, 'search_results', None)
+                    if sr:
+                        current_app.logger.info(f"🔗 Источники поиска ({len(sr)}): " + ", ".join([getattr(x, 'url', '') or getattr(x, 'source', '') or '' for x in sr][:5]))
+                except Exception:
+                    pass
             except Exception:
                 pass
             
@@ -349,8 +389,10 @@ class RAGService:
             )
             
             # Формируем название модели с суффиксом "+ Search" если поиск использован
+            # Для отображения и отчётов используем "+ Search", если поиск был ЗАПРОШЕН (детерминирует тарификацию)
+            # или если по факту найден в ответе (на случай авто-поиска провайдера)
             model_display_name = model
-            if search_used:
+            if search_requested or search_used:
                 model_display_name = f"{model} + Search"
             
             # Формируем итоговый результат
@@ -365,6 +407,7 @@ class RAGService:
                 },
                 'model': model_display_name,
                 'search_used': search_used,  # Флаг фактического использования поиска
+                'search_enabled': bool(search_requested),  # Флаг запрошенного режима поиска (для тарификации/отображения)
                 'chunks_used': len(relevant_chunks),
                 'sources': [
                     {
@@ -543,6 +586,8 @@ class RAGService:
             Настроенный клиент OpenAI
         """
         api_keys_mgr = get_api_keys_manager_multiple()
+        # Выбираем таймаут: из models.json или из конфигурации/дефолта
+        timeout = self._get_model_timeout(model)
         
         # Проверяем, является ли это моделью DeepSeek (только конкретные ID)
         deepseek_models = ['deepseek-chat', 'deepseek-reasoner']
@@ -563,17 +608,46 @@ class RAGService:
             # Создаём клиент для DeepSeek API
             return openai.OpenAI(
                 api_key=deepseek_key,
-                base_url="https://api.deepseek.com"
+                base_url="https://api.deepseek.com",
+                timeout=timeout
             )
         # Perplexity (семейство sonar: sonar, sonar-pro, sonar-reasoning, sonar-reasoning-pro, sonar-deep-research)
         pplx_prefixes = ('sonar',)
         if any(model.startswith(p) for p in pplx_prefixes):
             pplx_key = api_keys_mgr.get_key('perplexity') or os.environ.get('PPLX_API_KEY') or os.environ.get('PERPLEXITY_API_KEY') or self.api_key
-            return openai.OpenAI(api_key=pplx_key, base_url="https://api.perplexity.ai")
+            return openai.OpenAI(api_key=pplx_key, base_url="https://api.perplexity.ai", timeout=timeout)
         
         # Для моделей OpenAI получаем ключ из менеджера
         openai_key = api_keys_mgr.get_key('openai') or self.api_key
-        return openai.OpenAI(api_key=openai_key)
+        return openai.OpenAI(api_key=openai_key, timeout=timeout)
+
+    def _get_model_timeout(self, model: str) -> int:
+        """Определить таймаут для HTTP-запроса модели.
+
+        Порядок приоритетов:
+        1) index/models.json -> поле timeout для конкретной модели
+        2) current_app.config['OPENAI_TIMEOUT']
+        3) дефолт 90 секунд
+        """
+        # 1) Пытаемся прочитать из index/models.json
+        try:
+            root = current_app.root_path if current_app else os.getcwd()
+            cfg_path = os.path.join(root, 'index', 'models.json')
+            if os.path.exists(cfg_path):
+                with open(cfg_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                for m in data.get('models', []):
+                    if m.get('model_id') == model:
+                        t = m.get('timeout')
+                        if isinstance(t, (int, float)) and t > 0:
+                            return int(t)
+        except Exception:
+            pass
+        # 2) Конфиг приложения
+        try:
+            return int(current_app.config.get('OPENAI_TIMEOUT', 90))
+        except Exception:
+            return 90
 
 
 def get_rag_service(

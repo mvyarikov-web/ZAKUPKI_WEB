@@ -166,23 +166,21 @@ def _load_models_config() -> Dict[str, Any]:
 def _save_models_config(config: Dict[str, Any]):
     """Сохранить конфигурацию моделей в файл (атомарно)."""
     models_file = current_app.config.get('RAG_MODELS_FILE')
-
     if not models_file:
         return
 
+    tmp_path = models_file + '.tmp'
     try:
-        # Создаём директорию если нужно
-        dir_path = os.path.dirname(models_file)
-        os.makedirs(dir_path, exist_ok=True)
-
-        # Атомарная запись: пишем во временный файл в той же директории и заменяем
-        tmp_path = models_file + '.tmp'
         with open(tmp_path, 'w', encoding='utf-8') as f:
             json.dump(config, f, ensure_ascii=False, indent=2)
         os.replace(tmp_path, models_file)
-    except Exception as e:
-        current_app.logger.error(f'Ошибка сохранения models.json: {e}')
-
+    except Exception:
+        # В случае ошибки при записи временный файл может остаться — пробуем удалить
+        try:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+        except Exception:
+            pass
 
 def _calculate_cost(model_config: Dict[str, Any], usage: Dict[str, int], request_count: int = 1) -> Dict[str, float]:
     """
@@ -938,6 +936,8 @@ def _get_api_client(model_id: str, api_key: str, timeout: int = 90):
     # Perplexity (семейство sonar: sonar, sonar-pro, sonar-reasoning, sonar-reasoning-pro, sonar-deep-research)
     if provider == 'perplexity' or model_id.startswith('sonar'):
         pplx_key = api_keys_mgr.get_key('perplexity') or os.environ.get('PPLX_API_KEY') or os.environ.get('PERPLEXITY_API_KEY') or api_key
+        if not pplx_key or not pplx_key.strip():
+            raise RuntimeError('Perplexity API ключ не настроен. Укажите PPLX_API_KEY/PERPLEXITY_API_KEY или добавьте ключ в разделе «API ключи».')
         return openai.OpenAI(api_key=pplx_key, base_url="https://api.perplexity.ai", timeout=timeout)
 
     # По умолчанию OpenAI
@@ -1084,7 +1084,9 @@ def _direct_analyze_without_rag(
     max_output_tokens: int,
     temperature: float,
     upload_folder: str,
-    usd_rub_rate: float = None
+    usd_rub_rate: float = None,
+    search_enabled: bool = False,
+    search_params: Optional[Dict[str, Any]] = None
 ):
     """Прямой анализ без RAG - просто читаем тексты и отправляем в OpenAI."""
     import time
@@ -1234,7 +1236,7 @@ def _direct_analyze_without_rag(
                 f'(allowed_doc_tokens={allowed_doc_tokens}, context_window={context_window})'
             )
         
-        # Создаём клиент с учётом провайдера (OpenAI или DeepSeek)
+    # Создаём клиент с учётом провайдера (OpenAI/Perplexity/DeepSeek)
         client = _get_api_client(model_id, api_key, timeout)
         
         # Для o1-* моделей используем только user role
@@ -1250,6 +1252,7 @@ def _direct_analyze_without_rag(
         
         # Определяем параметры для новых семейств (o1, o3, o4, gpt-4.1, gpt-5)
         is_new_family = model_id.startswith(('o1', 'o3', 'o4', 'gpt-4.1', 'gpt-5'))
+        is_sonar = model_id.startswith('sonar')
         
         try:
             # Новые модели используют max_completion_tokens и не принимают temperature
@@ -1260,15 +1263,47 @@ def _direct_analyze_without_rag(
                     max_completion_tokens=max_output_tokens
                 )
             else:
-                response = client.chat.completions.create(
-                    model=model_id,
-                    messages=messages,
-                    max_tokens=max_output_tokens,
-                    temperature=temperature
-                )
+                # Для Perplexity Sonar учитываем флаг веб-поиска
+                req_kwargs = {
+                    'model': model_id,
+                    'messages': messages,
+                    'temperature': temperature,
+                }
+                if is_sonar and search_enabled:
+                    # Поисковые параметры Perplexity передаём НАПРЯМУЮ в kwargs (НЕ через extra_body!)
+                    try:
+                        from webapp.services.search.manager import normalize_search_params, apply_search_to_request
+                        norm = normalize_search_params(search_params) if search_params else {}
+                        apply_search_to_request(req_kwargs, norm or {})
+                    except Exception:
+                        req_kwargs['enable_search_classifier'] = True
+                        req_kwargs['search_mode'] = 'web'
+                        req_kwargs['language_preference'] = 'ru'
+                        req_kwargs['web_search_options'] = {'search_context_size': 'low'}
+                        if search_params:
+                            req_kwargs.update(search_params)
+                else:
+                    if is_sonar:
+                        # Переключатель выключен — гарантированно отключаем поиск и НЕ передаём max_tokens
+                        req_kwargs['disable_search'] = True
+                    else:
+                        req_kwargs['max_tokens'] = max_output_tokens
+
+                response = client.chat.completions.create(**req_kwargs)
         except Exception as api_err:
             error_str = str(api_err)
             current_app.logger.error(f'Ошибка API {model_id}: {error_str}', exc_info=True)
+            # Дружественная обработка 401 от Perplexity (sonar): неверный/просроченный ключ
+            if (model_id.startswith('sonar') and (
+                '401' in error_str or 'Authorization Required' in error_str or 'AuthenticationError' in error_str or 'unauthorized' in error_str.lower()
+            )):
+                return jsonify({
+                    'success': False,
+                    'message': (
+                        'Не удалось выполнить запрос к Perplexity (sonar): неверный или просроченный API ключ. '
+                        'Проверьте ключ в разделе «API ключи» или задайте переменную окружения PPLX_API_KEY/PERPLEXITY_API_KEY.'
+                    )
+                }), 401
             
             # Обработка ошибки таймаута
             if 'timed out' in error_str.lower() or 'timeout' in error_str.lower():
@@ -1305,12 +1340,30 @@ def _direct_analyze_without_rag(
                             max_completion_tokens=max_output_tokens
                         )
                     else:
-                        response = client.chat.completions.create(
-                            model=model_id,
-                            messages=messages,
-                            max_tokens=max_output_tokens,
-                            temperature=temperature
-                        )
+                        req_kwargs = {
+                            'model': model_id,
+                            'messages': messages,
+                            'temperature': temperature,
+                        }
+                        if is_sonar and search_enabled:
+                            try:
+                                from webapp.services.search.manager import normalize_search_params, apply_search_to_request
+                                norm = normalize_search_params(search_params) if search_params else {}
+                                apply_search_to_request(req_kwargs, norm or {})
+                            except Exception:
+                                req_kwargs['enable_search_classifier'] = True
+                                req_kwargs['search_mode'] = 'web'
+                                req_kwargs['language_preference'] = 'ru'
+                                req_kwargs['web_search_options'] = {'search_context_size': 'low'}
+                                if search_params:
+                                    req_kwargs.update(search_params)
+                        else:
+                            if is_sonar:
+                                req_kwargs['disable_search'] = True
+                            else:
+                                req_kwargs['max_tokens'] = max_output_tokens
+
+                        response = client.chat.completions.create(**req_kwargs)
                 except Exception as retry_err:
                     return jsonify({
                         'success': False,
@@ -1382,12 +1435,30 @@ def _direct_analyze_without_rag(
                             max_completion_tokens=new_output_limit
                         )
                     else:
-                        response = client.chat.completions.create(
-                            model=model_id,
-                            messages=messages,
-                            max_tokens=new_output_limit,
-                            temperature=temperature
-                        )
+                        req_kwargs = {
+                            'model': model_id,
+                            'messages': messages,
+                            'temperature': temperature,
+                        }
+                        if is_sonar and search_enabled:
+                            try:
+                                from webapp.services.search.manager import normalize_search_params, apply_search_to_request
+                                norm = normalize_search_params(search_params) if search_params else {}
+                                apply_search_to_request(req_kwargs, norm or {})
+                            except Exception:
+                                req_kwargs['enable_search_classifier'] = True
+                                req_kwargs['search_mode'] = 'web'
+                                req_kwargs['language_preference'] = 'ru'
+                                req_kwargs['web_search_options'] = {'search_context_size': 'low'}
+                                if search_params:
+                                    req_kwargs.update(search_params)
+                        else:
+                            if is_sonar:
+                                req_kwargs['disable_search'] = True
+                            else:
+                                req_kwargs['max_tokens'] = new_output_limit
+
+                        response = client.chat.completions.create(**req_kwargs)
                 except Exception as retry_rate_err:
                     return jsonify({
                         'success': False,
@@ -1437,10 +1508,15 @@ def _direct_analyze_without_rag(
         )
         
         # Вычисляем стоимость
+        # Отображаемое имя модели (+ Search при активном поиске для Sonar)
+        model_display = model_id
+        if is_sonar and search_enabled:
+            model_display = f"{model_id} + Search"
+
         result = {
             'answer': answer,
             'usage': usage,
-            'model': model_id,
+            'model': model_display,
             'finish_reason': finish_reason
         }
         
@@ -1602,7 +1678,9 @@ def analyze():
                 max_output_tokens=max_output_tokens,
                 temperature=temperature,
                 upload_folder=upload_folder,
-                usd_rub_rate=usd_rub_rate
+                usd_rub_rate=usd_rub_rate,
+                search_enabled=search_enabled,
+                search_params=search_params
             )
         
         # Выполняем анализ с RAG
@@ -1627,7 +1705,9 @@ def analyze():
                 max_output_tokens=max_output_tokens,
                 temperature=temperature,
                 upload_folder=upload_folder,
-                usd_rub_rate=usd_rub_rate
+                usd_rub_rate=usd_rub_rate,
+                search_enabled=search_enabled,
+                search_params=search_params
             )
         
         # Если RAG вернул ошибку, тоже используем fallback
