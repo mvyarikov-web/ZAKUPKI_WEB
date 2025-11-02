@@ -131,6 +131,15 @@ def _load_models_config() -> Dict[str, Any]:
         if base_url:
             model_dict['base_url'] = base_url
         
+        # Добавляем поддержку режима поиска для Perplexity моделей
+        if m.get('supports_search'):
+            model_dict['supports_search'] = True
+            model_dict['price_per_1000_requests'] = float(m.get('price_per_1000_requests', 5.0))
+            model_dict['search_params'] = m.get('search_params', {})
+            # Сохраняем флаг search_enabled если он есть
+            if 'search_enabled' in m:
+                model_dict['search_enabled'] = bool(m.get('search_enabled', False))
+        
         normalized_models.append(model_dict)
 
     if normalized_models != models:
@@ -1569,16 +1578,12 @@ def analyze():
                 'message': 'Не указан промпт'
             }), 400
         
-        # Если выбран Search API, используем отдельную обработку
-        if model_id == 'perplexity-search-api':
-            search_params = data.get('search_params', {})
-            current_app.logger.info(f'Perplexity Search API: запрос "{prompt[:50]}...", параметры: {search_params}')
-            return _perplexity_search_api(
-                file_paths=file_paths,
-                prompt=prompt,
-                search_params=search_params,
-                usd_rub_rate=usd_rub_rate
-            )
+        # Если включен режим поиска, передаем параметры в RAG
+        search_enabled = data.get('search_enabled', False)
+        search_params = data.get('search_params', {}) if search_enabled else {}
+        
+        if search_enabled:
+            current_app.logger.info(f'RAG анализ с поиском: модель {model_id}, параметры: {search_params}')
         
         current_app.logger.info(f'RAG анализ: {len(file_paths)} файлов, модель {model_id}, Top-K={top_k}')
         
@@ -1609,7 +1614,8 @@ def analyze():
                 top_k=top_k,
                 max_output_tokens=max_output_tokens,
                 temperature=temperature,
-                upload_folder=upload_folder
+                upload_folder=upload_folder,
+                search_params=search_params if search_enabled else None
             )
         except Exception as rag_err:
             # При любой ошибке RAG (включая эмбеддинги) используем fallback

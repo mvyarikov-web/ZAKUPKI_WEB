@@ -284,10 +284,14 @@ class RAGService:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
-                "max_tokens": max_output_tokens,
                 "temperature": temperature,
                 "response_format": {"type": "json_object"}
             }
+            
+            # При включённом поиске не ограничиваем max_tokens, иначе устанавливаем лимит
+            if not search_params:
+                request_params["max_tokens"] = max_output_tokens
+            # else: max_tokens не устанавливаем, чтобы не обрезать ответ при поиске
             
             # ВАРИАНТ B: Явное управление поиском через disable_search
             # Если переданы параметры поиска (для Perplexity models с поиском)
@@ -352,6 +356,11 @@ class RAGService:
             # Определяем, был ли использован поиск (проверяем наличие результатов поиска)
             search_was_used = hasattr(response, 'search_results') and response.search_results is not None and len(response.search_results) > 0
             
+            # Формируем название модели с суффиксом "+ Search" если поиск использован
+            model_display_name = model
+            if search_was_used:
+                model_display_name = f"{model} + Search"
+            
             # Формируем итоговый результат
             result = {
                 'summary': processed_result.get('summary', []),
@@ -362,7 +371,7 @@ class RAGService:
                     'output_tokens': actual_output_tokens,
                     'total_tokens': total_tokens
                 },
-                'model': model,
+                'model': model_display_name,
                 'search_used': search_was_used,  # Флаг фактического использования поиска
                 'chunks_used': len(relevant_chunks),
                 'sources': [

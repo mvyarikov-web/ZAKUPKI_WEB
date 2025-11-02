@@ -205,7 +205,25 @@
             console.log('Загружены модели:', data);
             if (data.success) {
                 models = data.models || [];
-                selectedModelId = data.default_model || (models[0] && models[0].model_id) || null;
+                
+                // Восстановление последней выбранной модели из localStorage
+                const savedModelId = localStorage.getItem('rag_selected_model');
+                const savedSearchStates = JSON.parse(localStorage.getItem('rag_search_enabled') || '{}');
+                
+                // Восстанавливаем флаги search_enabled для каждой модели
+                models.forEach(m => {
+                    if (savedSearchStates[m.model_id] !== undefined) {
+                        m.search_enabled = savedSearchStates[m.model_id];
+                    }
+                });
+                
+                // Выбираем модель: сохранённая → дефолтная → первая
+                if (savedModelId && models.find(m => m.model_id === savedModelId)) {
+                    selectedModelId = savedModelId;
+                } else {
+                    selectedModelId = data.default_model || (models[0] && models[0].model_id) || null;
+                }
+                
                 console.log('Установлено моделей:', models.length, 'Выбрана:', selectedModelId);
                 updateCurrentModelLabel();
             } else {
@@ -218,7 +236,12 @@
 
     function updateCurrentModelLabel() {
         const m = models.find(x => x.model_id === selectedModelId);
-        ragCurrentModel.textContent = `Модель: ${m ? m.display_name : 'не выбрана'}`;
+        let modelName = m ? m.display_name : 'не выбрана';
+        // Добавляем "+ Search" если включён режим поиска
+        if (m && m.search_enabled) {
+            modelName += ' + Search';
+        }
+        ragCurrentModel.textContent = `Модель: ${modelName}`;
     }
 
     function renderModelsList() {
@@ -254,13 +277,38 @@
                             ${description}
                         </div>
                     </div>
-                    
-                    <!-- Полоса 3: Параметры (вертикально) -->
-                    <div style="display:flex; flex-direction:column; gap:10px; margin-bottom:14px;">
             `;
             
-            // Для Search API показываем только поле стоимости запросов
-            if (m.pricing_model === 'per_request' || m.model_id === 'perplexity-search-api') {
+            // Если модель поддерживает поиск (sonar-модели), добавляем чекбокс
+            if (m.supports_search) {
+                const searchEnabled = m.search_enabled || false;
+                html += `
+                    <!-- Чекбокс "С поиском в интернете" -->
+                    <div style="margin-bottom:14px; padding:10px; background:#e8f5e9; border-left:3px solid #4caf50; border-radius:4px;">
+                        <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+                            <input type="checkbox" 
+                                   data-search-toggle="${m.model_id}" 
+                                   ${searchEnabled ? 'checked' : ''}
+                                   style="width:18px; height:18px; cursor:pointer;" />
+                            <span style="font-weight:600; color:#2e7d32; font-size:14px;">🌐 С поиском в интернете</span>
+                        </label>
+                        <div style="margin-top:6px; font-size:12px; color:#666;">
+                            При включении этого режима модель будет искать актуальную информацию в интернете и использовать её в ответе. Тарификация изменится на стоимость за запросы.
+                        </div>
+                    </div>
+                `;
+            }
+            
+            html += `
+                    <!-- Полоса 3: Параметры (вертикально) -->
+                    <div id="model-params-${m.model_id}" style="display:flex; flex-direction:column; gap:10px; margin-bottom:14px;">
+            `;
+            
+            // Проверяем, включен ли режим поиска для этой модели
+            const isSearchMode = m.supports_search && (m.search_enabled || false);
+            
+            if (isSearchMode) {
+                // Режим поиска: показываем стоимость за запросы
                 html += `
                         <div style="display:flex; align-items:center; gap:10px;">
                             <input type="number" 
@@ -273,7 +321,7 @@
                         </div>
                 `;
             } else {
-                // Для обычных моделей показываем поля токенов
+                // Обычный режим: показываем стоимость токенов
                 html += `
                         <div style="display:flex; align-items:center; gap:10px;">
                             <input type="number" 
@@ -330,9 +378,34 @@
         modelsList.querySelectorAll('input[name="rag-model"]').forEach(r => {
             r.addEventListener('change', (e) => {
                 selectedModelId = e.target.value;
+                // Сохраняем выбранную модель в localStorage
+                localStorage.setItem('rag_selected_model', selectedModelId);
                 updateCurrentModelLabel();
                 updateRagMetrics();
                 toggleSearchApiParams();
+            });
+        });
+        
+        // Обработчики чекбоксов "С поиском в интернете"
+        modelsList.querySelectorAll('input[data-search-toggle]').forEach(checkbox => {
+            checkbox.addEventListener('change', (e) => {
+                const modelId = e.target.getAttribute('data-search-toggle');
+                const model = models.find(m => m.model_id === modelId);
+                if (model) {
+                    model.search_enabled = e.target.checked;
+                    
+                    // Сохраняем состояния search_enabled в localStorage
+                    const savedSearchStates = JSON.parse(localStorage.getItem('rag_search_enabled') || '{}');
+                    savedSearchStates[modelId] = e.target.checked;
+                    localStorage.setItem('rag_search_enabled', JSON.stringify(savedSearchStates));
+                    
+                    // Перерисовываем список моделей для обновления полей тарификации
+                    renderModelsList();
+                    // Обновляем метрики
+                    updateRagMetrics();
+                    // Обновляем видимость параметров поиска
+                    toggleSearchApiParams();
+                }
             });
         });
         
@@ -420,20 +493,29 @@
         }
     }
     
-    // Показ/скрытие параметров Search API
+    // Показ/скрытие параметров поиска
     function toggleSearchApiParams() {
         if (!searchApiParams) return;
         
         const model = models.find(m => m.model_id === selectedModelId);
-        // Показываем параметры только для Search API
-        if (model && model.model_id === 'perplexity-search-api') {
+        // Показываем параметры если модель поддерживает поиск И режим поиска включен
+        if (model && model.supports_search && model.search_enabled) {
             searchApiParams.style.display = 'block';
             
-            // Загружаем сохранённые значения параметров
-            if (model.search_params) {
-                const params = model.search_params;
+            // Загружаем сохранённые значения параметров (из localStorage либо из модели)
+            const lsKey = `rag_search_params_${model.model_id}`;
+            let params = null;
+            try {
+                params = JSON.parse(localStorage.getItem(lsKey) || 'null');
+            } catch (e) { params = null; }
+            if (!params && model.search_params) params = model.search_params;
+            if (params) {
                 if (searchMaxResults) searchMaxResults.value = params.max_results || 10;
-                if (searchDomainFilter) searchDomainFilter.value = params.search_domain_filter || '';
+                if (searchDomainFilter) {
+                    // Преобразуем массив в строку через запятую
+                    const domains = Array.isArray(params.search_domain_filter) ? params.search_domain_filter.join(', ') : (params.search_domain_filter || '');
+                    searchDomainFilter.value = domains;
+                }
                 if (searchRecency) searchRecency.value = params.search_recency_filter || '';
                 if (searchAfterDate) searchAfterDate.value = params.search_after_date || '';
                 if (searchBeforeDate) searchBeforeDate.value = params.search_before_date || '';
@@ -443,32 +525,49 @@
                     if (searchMaxTokensValue) searchMaxTokensValue.textContent = searchMaxTokens.value;
                 }
             }
+
+            // Навешиваем обработчики для автосохранения в localStorage
+            const persistParams = () => {
+                const p = {
+                    max_results: searchMaxResults ? Number(searchMaxResults.value) || 10 : 10,
+                    search_domain_filter: searchDomainFilter && searchDomainFilter.value ? searchDomainFilter.value.split(',').map(s => s.trim()).filter(Boolean) : [],
+                    search_recency_filter: searchRecency ? searchRecency.value || '' : '',
+                    search_after_date: searchAfterDate ? searchAfterDate.value || '' : '',
+                    search_before_date: searchBeforeDate ? searchBeforeDate.value || '' : '',
+                    country: searchCountry ? searchCountry.value || '' : '',
+                    max_tokens_per_page: searchMaxTokens ? Number(searchMaxTokens.value) || 1024 : 1024
+                };
+                localStorage.setItem(lsKey, JSON.stringify(p));
+            };
+            [searchMaxResults, searchDomainFilter, searchRecency, searchAfterDate, searchBeforeDate, searchCountry, searchMaxTokens]
+                .filter(Boolean)
+                .forEach(inp => inp.addEventListener('input', persistParams));
         } else {
             searchApiParams.style.display = 'none';
         }
     }
 
-    async function saveSearchApiParams(searchParams) {
-        // Сохраняем параметры Search API в модель
+    async function saveSearchApiParams(modelId, searchParams) {
+        // Сохраняем параметры поиска для модели
         try {
             const response = await fetch('/ai_rag/models/search_params', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    model_id: 'perplexity-search-api',
+                    model_id: modelId,
                     search_params: searchParams
                 })
             });
             
             if (response.ok) {
                 // Обновляем локальную копию модели
-                const model = models.find(m => m.model_id === 'perplexity-search-api');
+                const model = models.find(m => m.model_id === modelId);
                 if (model) {
                     model.search_params = searchParams;
                 }
             }
         } catch (error) {
-            console.error('Ошибка при сохранении параметров Search API:', error);
+            console.error('Ошибка при сохранении параметров поиска:', error);
         }
     }
 
@@ -483,31 +582,42 @@
         // Обрабатываем модели с токенами
         inputsIn.forEach(inp => {
             const id = inp.getAttribute('data-price-in');
+            const model = models.find(m => m.model_id === id);
             const valIn = parseFloat(inp.value) || 0;
             const outInp = modelsList.querySelector(`input[data-price-out="${id}"]`);
             const valOut = outInp ? (parseFloat(outInp.value) || 0) : 0;
             const timeoutInp = modelsList.querySelector(`input[data-timeout="${id}"]`);
             const timeout = timeoutInp ? (parseInt(timeoutInp.value) || 30) : 30;
-            toSave.push({ 
+            const item = { 
                 model_id: id, 
                 price_input_per_1m: valIn, 
                 price_output_per_1m: valOut,
                 timeout: timeout
-            });
+            };
+            // Если модель поддерживает поиск, добавляем флаг search_enabled
+            if (model && model.supports_search) {
+                item.search_enabled = model.search_enabled || false;
+            }
+            toSave.push(item);
         });
         
-        // Обрабатываем модели с запросами (Search API)
+        // Обрабатываем модели с запросами (режим поиска)
         inputsRequests.forEach(inp => {
             const id = inp.getAttribute('data-price-requests');
+            const model = models.find(m => m.model_id === id);
             const pricePerRequests = parseFloat(inp.value) || 5.0;
             const timeoutInp = modelsList.querySelector(`input[data-timeout="${id}"]`);
             const timeout = timeoutInp ? (parseInt(timeoutInp.value) || 30) : 30;
-            toSave.push({
+            const item = {
                 model_id: id,
                 price_per_1000_requests: pricePerRequests,
-                pricing_model: 'per_request',
                 timeout: timeout
-            });
+            };
+            // Если модель поддерживает поиск, добавляем флаг search_enabled
+            if (model && model.supports_search) {
+                item.search_enabled = model.search_enabled || false;
+            }
+            toSave.push(item);
         });
 
         // Отправляем по одному (минимальная правка бэка)
@@ -571,10 +681,15 @@
 
     function getSelectedModelPrices() {
         const m = models.find(x => x.model_id === selectedModelId);
+        let modelName = m ? m.display_name : '—';
+        // Добавляем "+ Search" если включён режим поиска
+        if (m && m.search_enabled) {
+            modelName += ' + Search';
+        }
         return {
             inPrice: m ? (m.price_input_per_1m || 0) : 0,
             outPrice: m ? (m.price_output_per_1m || 0) : 0,
-            name: m ? m.display_name : '—'
+            name: modelName
         };
     }
 
@@ -693,26 +808,52 @@
             
             const totalTokens = inputTokens + expectedOutput;
 
-            const { inPrice, outPrice, name } = getSelectedModelPrices();
-            let info = `Модель: ${name}. Символы: промпт ${promptChars.toLocaleString()}, документы ${docsChars.toLocaleString()}, всего ${totalChars.toLocaleString()}. Токены (оценка): вход ${inputTokens.toLocaleString()}, выход ${expectedOutput.toLocaleString()}, всего ${totalTokens.toLocaleString()}.`;
-
-            if (inPrice > 0 || outPrice > 0) {
-                const costIn = (inputTokens / 1_000_000) * inPrice;
-                const costOut = (expectedOutput / 1_000_000) * outPrice;
-                const totalCost = costIn + costOut;
-                info += ` Стоимость (оценка): вход $${costIn.toFixed(4)}, выход $${costOut.toFixed(4)}, всего $${totalCost.toFixed(4)}`;
+            const model = models.find(m => m.model_id === selectedModelId);
+            const isSearchMode = model && model.supports_search && model.search_enabled;
+            
+            let info = '';
+            
+            if (isSearchMode) {
+                // Режим поиска: показываем "Model + Search"
+                info = `Модель: ${model.display_name} + Search. Символы: промпт ${promptChars.toLocaleString()}, документы ${docsChars.toLocaleString()}, всего ${totalChars.toLocaleString()}.`;
                 
-                // Добавляем пересчёт в рубли, если курс задан
+                // Стоимость по запросам
+                const pricePerRequest = model.price_per_1000_requests || 5.0;
+                const estimatedRequests = 1; // За один анализ считаем 1 запрос
+                const totalCost = (estimatedRequests / 1000) * pricePerRequest;
+                
+                info += ` Стоимость (оценка): $${totalCost.toFixed(4)} за ${estimatedRequests} запрос`;
+                
+                // Добавляем пересчёт в рубли
                 const rate = getUsdRubRate();
                 if (rate > 0) {
-                    const rubIn = costIn * rate;
-                    const rubOut = costOut * rate;
                     const rubTotal = totalCost * rate;
-                    info += ` (${rubIn.toFixed(2)}₽ / ${rubOut.toFixed(2)}₽ / ${rubTotal.toFixed(2)}₽)`;
+                    info += ` (${rubTotal.toFixed(2)}₽)`;
                 }
                 info += '.';
             } else {
-                info += ' Стоимость не рассчитана: укажите цены в таблице моделей.';
+                // Обычный режим: токены
+                const { inPrice, outPrice, name } = getSelectedModelPrices();
+                info = `Модель: ${name}. Символы: промпт ${promptChars.toLocaleString()}, документы ${docsChars.toLocaleString()}, всего ${totalChars.toLocaleString()}. Токены (оценка): вход ${inputTokens.toLocaleString()}, выход ${expectedOutput.toLocaleString()}, всего ${totalTokens.toLocaleString()}.`;
+
+                if (inPrice > 0 || outPrice > 0) {
+                    const costIn = (inputTokens / 1_000_000) * inPrice;
+                    const costOut = (expectedOutput / 1_000_000) * outPrice;
+                    const totalCost = costIn + costOut;
+                    info += ` Стоимость (оценка): вход $${costIn.toFixed(4)}, выход $${costOut.toFixed(4)}, всего $${totalCost.toFixed(4)}`;
+                    
+                    // Добавляем пересчёт в рубли, если курс задан
+                    const rate = getUsdRubRate();
+                    if (rate > 0) {
+                        const rubIn = costIn * rate;
+                        const rubOut = costOut * rate;
+                        const rubTotal = totalCost * rate;
+                        info += ` (${rubIn.toFixed(2)}₽ / ${rubOut.toFixed(2)}₽ / ${rubTotal.toFixed(2)}₽)`;
+                    }
+                    info += '.';
+                } else {
+                    info += ' Стоимость не рассчитана: укажите цены в таблице моделей.';
+                }
             }
 
             // Проверяем наличие битых символов и показываем в message-area
@@ -770,8 +911,15 @@
                 usd_rub_rate: usdRubRate > 0 ? usdRubRate : null
             };
             
-            // Если выбран Search API, добавляем дополнительные параметры
-            if (selectedModelId === 'perplexity-search-api') {
+            // Проверяем, включен ли режим поиска для выбранной модели
+            const model = models.find(m => m.model_id === selectedModelId);
+            const isSearchMode = model && model.supports_search && model.search_enabled;
+            
+            if (isSearchMode) {
+                // Передаем флаг, что используется режим поиска
+                requestData.search_enabled = true;
+                
+                // Собираем параметры поиска
                 const searchParams = {};
                 
                 // Количество результатов
@@ -820,7 +968,7 @@
                 requestData.search_params = searchParams;
                 
                 // Сохраняем параметры в модель для последующего использования
-                await saveSearchApiParams(searchParams);
+                await saveSearchApiParams(selectedModelId, searchParams);
             }
             
             const res = await fetch('/ai_rag/analyze', {
