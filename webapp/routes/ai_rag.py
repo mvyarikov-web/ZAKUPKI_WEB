@@ -1269,13 +1269,20 @@ def _direct_analyze_without_rag(
                     'messages': messages,
                     'temperature': temperature,
                 }
+                
+                # DEBUG: логирование входных параметров
+                current_app.logger.info(f'🔍 DEBUG DIRECT: is_sonar={is_sonar}, search_enabled={search_enabled}, search_params={search_params}')
+                
                 if is_sonar and search_enabled:
                     # Поисковые параметры Perplexity передаём через extra_body (требование OpenAI SDK)
                     try:
                         from webapp.services.search.manager import normalize_search_params, apply_search_to_request
                         norm = normalize_search_params(search_params) if search_params else {}
+                        current_app.logger.info(f'🔍 DEBUG DIRECT: norm после нормализации = {norm}')
                         apply_search_to_request(req_kwargs, norm or {})
-                    except Exception:
+                        current_app.logger.info(f'🌐 Режим С ПОИСКОМ (fallback): extra_body = {req_kwargs.get("extra_body")}')
+                    except Exception as e:
+                        current_app.logger.exception(f'⚠️  Ошибка при применении search params: {e}')
                         # Фолбэк: минимальный набор параметров поиска
                         req_kwargs['extra_body'] = {
                             'enable_search_classifier': True,
@@ -1285,10 +1292,12 @@ def _direct_analyze_without_rag(
                         }
                         if search_params:
                             req_kwargs['extra_body'].update(search_params)
+                        current_app.logger.info(f'🌐 Режим С ПОИСКОМ (emergency fallback): extra_body = {req_kwargs.get("extra_body")}')
                 else:
                     if is_sonar:
                         # Переключатель выключен — гарантированно отключаем поиск через extra_body
                         req_kwargs['extra_body'] = {'disable_search': True}
+                        current_app.logger.info(f'🚫 Режим БЕЗ ПОИСКА (fallback): extra_body = {req_kwargs.get("extra_body")}')
                     else:
                         req_kwargs['max_tokens'] = max_output_tokens
 
@@ -1729,7 +1738,9 @@ def analyze():
                     max_output_tokens=max_output_tokens,
                     temperature=temperature,
                     upload_folder=upload_folder,
-                    usd_rub_rate=usd_rub_rate
+                    usd_rub_rate=usd_rub_rate,
+                    search_enabled=search_enabled,
+                    search_params=search_params
                 )
             # Другие ошибки возвращаем как есть
             return jsonify({'success': False, 'message': message}), 400

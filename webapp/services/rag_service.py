@@ -297,9 +297,12 @@ class RAGService:
             }
             
             # Нормализуем и применяем параметры поиска
+            current_app.logger.info(f'🔍 DEBUG: search_params до нормализации: {search_params}')
             norm_search = normalize_search_params(search_params) if search_params else None
+            current_app.logger.info(f'🔍 DEBUG: norm_search после нормализации: {norm_search}')
             # Фиксируем факт запрошенного поиска по флагу наличия параметров (даже пустых) и модели
             search_requested = is_search_enabled(model, search_params is not None)
+            current_app.logger.info(f'🔍 DEBUG: search_requested = {search_requested} (модель={model}, params_present={search_params is not None})')
             if search_requested:
                 # В режиме поиска max_tokens не указываем, чтобы не обрезать ответ
                 # Параметры поиска Perplexity передаём через extra_body (требование OpenAI SDK)
