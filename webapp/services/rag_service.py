@@ -14,6 +14,12 @@ from webapp.services.chunking import chunk_document, TextChunker
 from webapp.services.embeddings import get_embeddings_service
 from document_processor.core import DocumentProcessor
 from utils.api_keys_manager_multiple import get_api_keys_manager_multiple
+from webapp.services.search.manager import (
+    normalize_search_params,
+    is_search_enabled,
+    apply_search_to_request,
+    extract_search_used,
+)
 
 
 class RAGService:
@@ -277,7 +283,7 @@ class RAGService:
             # Отправляем запрос к модели (OpenAI или DeepSeek)
             client = self._get_client_for_model(model)
             
-            # Формируем параметры запроса
+            # Формируем параметры запроса (без max_tokens — добавим ниже при необходимости)
             request_params = {
                 "model": model,
                 "messages": [
@@ -288,47 +294,36 @@ class RAGService:
                 "response_format": {"type": "json_object"}
             }
             
-            # При включённом поиске не ограничиваем max_tokens, иначе устанавливаем лимит
-            if not search_params:
-                request_params["max_tokens"] = max_output_tokens
-            # else: max_tokens не устанавливаем, чтобы не обрезать ответ при поиске
-            
-            # ВАРИАНТ B: Явное управление поиском через disable_search
-            # Если переданы параметры поиска (для Perplexity models с поиском)
-            if search_params:
-                # Режим С ПОИСКОМ: disable_search НЕ устанавливаем (по умолчанию False)
-                # Добавляем параметры поиска к запросу
-                if search_params.get('max_results'):
-                    request_params['max_results'] = search_params['max_results']
-                if search_params.get('search_domain_filter'):
-                    request_params['search_domain_filter'] = search_params['search_domain_filter']
-                if search_params.get('search_recency_filter'):
-                    request_params['search_recency_filter'] = search_params['search_recency_filter']
-                if search_params.get('search_after_date'):
-                    request_params['search_after_date'] = search_params['search_after_date']
-                if search_params.get('search_before_date'):
-                    request_params['search_before_date'] = search_params['search_before_date']
-                if search_params.get('country'):
-                    request_params['country'] = search_params['country']
-                if search_params.get('max_tokens_per_page'):
-                    request_params['max_tokens_per_page'] = search_params['max_tokens_per_page']
-                
-                current_app.logger.info(f'🌐 Режим С ПОИСКОМ: параметры = {search_params}')
+            # Нормализуем и применяем параметры поиска
+            norm_search = normalize_search_params(search_params)
+            if is_search_enabled(model, norm_search):
+                # В режиме поиска max_tokens не указываем, чтобы не обрезать ответ
+                apply_search_to_request(request_params, norm_search)
+                try:
+                    current_app.logger.info(f'🌐 Режим С ПОИСКОМ: параметры = {norm_search}')
+                except Exception:
+                    pass
             else:
-                # Режим БЕЗ ПОИСКА: явно отключаем поиск для Perplexity моделей
+                # Без поиска: ставим лимит токенов и отключаем поиск для Perplexity
+                request_params["max_tokens"] = max_output_tokens
                 if 'sonar' in model.lower() or 'perplexity' in model.lower():
                     request_params['disable_search'] = True
-                    current_app.logger.info(f'🚫 Режим БЕЗ ПОИСКА: disable_search = True для модели {model}')
+                    try:
+                        current_app.logger.info(f'🚫 Режим БЕЗ ПОИСКА: disable_search = True для модели {model}')
+                    except Exception:
+                        pass
             
             response = client.chat.completions.create(**request_params)
-            
+
             # Проверяем факт использования поиска в ответе
-            search_used = False
-            if hasattr(response, 'search_results') and response.search_results:
-                search_used = True
-                current_app.logger.info(f'✅ Поиск БЫЛ использован: найдено {len(response.search_results)} результатов')
-            else:
-                current_app.logger.info(f'📝 Поиск НЕ использован (только знания модели)')
+            search_used = extract_search_used(response)
+            try:
+                if search_used:
+                    current_app.logger.info(f'✅ Поиск БЫЛ использован')
+                else:
+                    current_app.logger.info(f'📝 Поиск НЕ использован (только знания модели)')
+            except Exception:
+                pass
             
             if not response or not response.choices:
                 return False, "Не получен ответ от GPT", None
@@ -353,12 +348,9 @@ class RAGService:
                 relevant_chunks
             )
             
-            # Определяем, был ли использован поиск (проверяем наличие результатов поиска)
-            search_was_used = hasattr(response, 'search_results') and response.search_results is not None and len(response.search_results) > 0
-            
             # Формируем название модели с суффиксом "+ Search" если поиск использован
             model_display_name = model
-            if search_was_used:
+            if search_used:
                 model_display_name = f"{model} + Search"
             
             # Формируем итоговый результат
@@ -372,7 +364,7 @@ class RAGService:
                     'total_tokens': total_tokens
                 },
                 'model': model_display_name,
-                'search_used': search_was_used,  # Флаг фактического использования поиска
+                'search_used': search_used,  # Флаг фактического использования поиска
                 'chunks_used': len(relevant_chunks),
                 'sources': [
                     {
