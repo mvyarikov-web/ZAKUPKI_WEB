@@ -1270,22 +1270,25 @@ def _direct_analyze_without_rag(
                     'temperature': temperature,
                 }
                 if is_sonar and search_enabled:
-                    # Поисковые параметры Perplexity передаём НАПРЯМУЮ в kwargs (НЕ через extra_body!)
+                    # Поисковые параметры Perplexity передаём через extra_body (требование OpenAI SDK)
                     try:
                         from webapp.services.search.manager import normalize_search_params, apply_search_to_request
                         norm = normalize_search_params(search_params) if search_params else {}
                         apply_search_to_request(req_kwargs, norm or {})
                     except Exception:
-                        req_kwargs['enable_search_classifier'] = True
-                        req_kwargs['search_mode'] = 'web'
-                        req_kwargs['language_preference'] = 'ru'
-                        req_kwargs['web_search_options'] = {'search_context_size': 'low'}
+                        # Фолбэк: минимальный набор параметров поиска
+                        req_kwargs['extra_body'] = {
+                            'enable_search_classifier': True,
+                            'search_mode': 'web',
+                            'language_preference': 'ru',
+                            'web_search_options': {'search_context_size': 'low'}
+                        }
                         if search_params:
-                            req_kwargs.update(search_params)
+                            req_kwargs['extra_body'].update(search_params)
                 else:
                     if is_sonar:
-                        # Переключатель выключен — гарантированно отключаем поиск и НЕ передаём max_tokens
-                        req_kwargs['disable_search'] = True
+                        # Переключатель выключен — гарантированно отключаем поиск через extra_body
+                        req_kwargs['extra_body'] = {'disable_search': True}
                     else:
                         req_kwargs['max_tokens'] = max_output_tokens
 
@@ -1351,15 +1354,17 @@ def _direct_analyze_without_rag(
                                 norm = normalize_search_params(search_params) if search_params else {}
                                 apply_search_to_request(req_kwargs, norm or {})
                             except Exception:
-                                req_kwargs['enable_search_classifier'] = True
-                                req_kwargs['search_mode'] = 'web'
-                                req_kwargs['language_preference'] = 'ru'
-                                req_kwargs['web_search_options'] = {'search_context_size': 'low'}
+                                req_kwargs['extra_body'] = {
+                                    'enable_search_classifier': True,
+                                    'search_mode': 'web',
+                                    'language_preference': 'ru',
+                                    'web_search_options': {'search_context_size': 'low'}
+                                }
                                 if search_params:
-                                    req_kwargs.update(search_params)
+                                    req_kwargs['extra_body'].update(search_params)
                         else:
                             if is_sonar:
-                                req_kwargs['disable_search'] = True
+                                req_kwargs['extra_body'] = {'disable_search': True}
                             else:
                                 req_kwargs['max_tokens'] = max_output_tokens
 
@@ -1446,15 +1451,17 @@ def _direct_analyze_without_rag(
                                 norm = normalize_search_params(search_params) if search_params else {}
                                 apply_search_to_request(req_kwargs, norm or {})
                             except Exception:
-                                req_kwargs['enable_search_classifier'] = True
-                                req_kwargs['search_mode'] = 'web'
-                                req_kwargs['language_preference'] = 'ru'
-                                req_kwargs['web_search_options'] = {'search_context_size': 'low'}
+                                req_kwargs['extra_body'] = {
+                                    'enable_search_classifier': True,
+                                    'search_mode': 'web',
+                                    'language_preference': 'ru',
+                                    'web_search_options': {'search_context_size': 'low'}
+                                }
                                 if search_params:
-                                    req_kwargs.update(search_params)
+                                    req_kwargs['extra_body'].update(search_params)
                         else:
                             if is_sonar:
-                                req_kwargs['disable_search'] = True
+                                req_kwargs['extra_body'] = {'disable_search': True}
                             else:
                                 req_kwargs['max_tokens'] = new_output_limit
 

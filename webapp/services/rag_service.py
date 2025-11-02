@@ -302,19 +302,19 @@ class RAGService:
             search_requested = is_search_enabled(model, search_params is not None)
             if search_requested:
                 # В режиме поиска max_tokens не указываем, чтобы не обрезать ответ
-                # Параметры поиска Perplexity передаём НАПРЯМУЮ в request_params (НЕ через extra_body!)
+                # Параметры поиска Perplexity передаём через extra_body (требование OpenAI SDK)
                 # Применяем нормализованные параметры; если их нет — включим умный поиск с дефолтами
                 apply_search_to_request(request_params, norm_search or {})
                 try:
-                    current_app.logger.info(f'🌐 Режим С ПОИСКОМ: параметры = {norm_search}')
+                    current_app.logger.info(f'🌐 Режим С ПОИСКОМ: extra_body = {request_params.get("extra_body")}')
                 except Exception:
                     pass
             else:
-                # Без поиска: для Perplexity не передаём max_tokens, только отключаем поиск
+                # Без поиска: для Perplexity не передаём max_tokens, только отключаем поиск через extra_body
                 if 'sonar' in model.lower() or 'perplexity' in model.lower():
-                    request_params['disable_search'] = True
+                    request_params['extra_body'] = {'disable_search': True}
                     try:
-                        current_app.logger.info(f'🚫 Режим БЕЗ ПОИСКА: disable_search = True для модели {model}')
+                        current_app.logger.info(f'🚫 Режим БЕЗ ПОИСКА: extra_body = {request_params["extra_body"]}')
                     except Exception:
                         pass
                 else:
@@ -351,15 +351,31 @@ class RAGService:
             # Проверяем факт использования поиска в ответе
             search_used = extract_search_used(response)
             try:
+                # Логирование usage-метрик поиска
+                usage_dict = getattr(response, 'usage', None)
+                if usage_dict:
+                    num_queries = getattr(usage_dict, 'num_search_queries', None)
+                    context_size = getattr(usage_dict, 'search_context_size', None)
+                    if num_queries is not None or context_size is not None:
+                        current_app.logger.info(f'🔍 Search usage: num_search_queries={num_queries}, search_context_size={context_size}')
+                
                 if search_used:
                     current_app.logger.info(f'✅ Поиск БЫЛ использован')
                 else:
                     current_app.logger.info(f'📝 Поиск НЕ использован (только знания модели)')
+                
                 # Пробуем залогировать источники, если провайдер вернул их в совместимом виде
                 try:
                     sr = getattr(response, 'search_results', None)
-                    if sr:
-                        current_app.logger.info(f"🔗 Источники поиска ({len(sr)}): " + ", ".join([getattr(x, 'url', '') or getattr(x, 'source', '') or '' for x in sr][:5]))
+                    if sr and len(sr) > 0:
+                        sources_info = []
+                        for x in sr[:5]:
+                            url = getattr(x, 'url', None) or getattr(x, 'source', None)
+                            title = getattr(x, 'title', None)
+                            if url:
+                                sources_info.append(f"{title or 'Untitled'} ({url})")
+                        if sources_info:
+                            current_app.logger.info(f"🔗 Источники поиска ({len(sr)} всего): {'; '.join(sources_info)}")
                 except Exception:
                     pass
             except Exception:

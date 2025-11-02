@@ -81,18 +81,24 @@ def apply_search_to_request(request_params: Dict[str, Any], params: Optional[Dic
     """Применить параметры поиска к словарю запроса Chat Completions.
 
     Если params None — ничего не делать (ограничения и disable_search решаются на уровне сервиса).
+    
+    ВАЖНО: Для OpenAI SDK все кастомные параметры Perplexity должны идти через extra_body,
+    иначе SDK перемещает их автоматически и они теряются.
     """
     if params is None:
         return
 
+    # Создаём extra_body для Perplexity-специфичных параметров
+    extra_body = {}
+    
     # Базовые включатели веб-поиска Perplexity (умный режим)
-    request_params["enable_search_classifier"] = True
-    request_params["search_mode"] = params.get("search_mode", "web")
-    request_params["language_preference"] = params.get("language_preference", "ru")
+    extra_body["enable_search_classifier"] = True
+    extra_body["search_mode"] = params.get("search_mode", "web")
+    extra_body["language_preference"] = params.get("language_preference", "ru")
 
     # Настройки объёма веб-контента
     scs = params.get("search_context_size", "low")
-    request_params["web_search_options"] = {"search_context_size": scs if scs in ALLOWED_CONTEXT_SIZE else "low"}
+    extra_body["web_search_options"] = {"search_context_size": scs if scs in ALLOWED_CONTEXT_SIZE else "low"}
 
     # Прочие фильтры
     keys = (
@@ -106,7 +112,10 @@ def apply_search_to_request(request_params: Dict[str, Any], params: Optional[Dic
     )
     for k in keys:
         if k in params:
-            request_params[k] = params[k]
+            extra_body[k] = params[k]
+    
+    # Помещаем все параметры поиска в extra_body
+    request_params["extra_body"] = extra_body
 
 
 def extract_search_used(response: Any) -> bool:
