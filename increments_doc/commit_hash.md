@@ -37,6 +37,24 @@ Increment: 013 (DataAccessAdapter для dual-mode, шаги 8.1-8.2)
 - Базовые тесты инициализации: 4/4 passed
 - Сохранена обратная совместимость с legacy режимом
 
+6. Git commit hash: a697bca32292a6f04698f540adfba55ff7981988
+Дата: 04.11.2025
+Increment: 013 (Завершение шага 8: dual-mode adapter, шаги 8.3-8.5)
+- Расширены тесты test_dual_mode_adapter.py до 406 строк (17/19 passed, 2 skipped)
+  * Добавлен flask_app fixture для интеграционных тестов с Flask context
+  * Тесты: файловый режим, DB режим с fallback, полный цикл поиска
+- Обновлён ConfigService для совместимости с Flask:
+  * Добавлены properties: UPLOAD_FOLDER, INDEX_FOLDER, LOGS_DIR, PROMPTS_FOLDER, SEARCH_RESULTS_FILE
+  * Flask-атрибуты: SECRET_KEY, JSON_AS_ASCII, MAX_CONTENT_LENGTH, REQUEST_TIMEOUT
+  * Логирование: LOG_FILE, LOG_LEVEL, LOG_BACKUP_COUNT
+- Исправлен webapp/__init__.py:
+  * Изменён вызов get_config() на singleton без параметров
+  * Исправлено: app.config.from_object(config_service)
+- Проверен запуск приложения в обоих режимах:
+  * USE_DATABASE=false (legacy mode) — успешно, health OK
+  * USE_DATABASE=true (DB mode) — успешно, health OK
+- Обновлена документация increment 013: Шаг 8 отмечен как ✅ ЗАВЕРШЁН
+
 Градиентный зелёный фон с тенью для блока итоговой суммы
 Увеличенный шрифт (18px, bold, тёмно-зелёный)
 Визуально выделяется в финальном отчёте анализа
