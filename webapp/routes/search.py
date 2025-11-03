@@ -16,8 +16,14 @@ from webapp.services.indexing import (
     get_index_path,
     parse_index_char_counts
 )
+from webapp.services.data_access_adapter import DataAccessAdapter
 
 search_bp = Blueprint('search', __name__)
+
+
+def _get_adapter():
+    """Получить экземпляр DataAccessAdapter для текущего приложения."""
+    return DataAccessAdapter(current_app.config)
 
 
 def _get_files_state():
@@ -70,17 +76,12 @@ def _search_in_files(search_terms, exclude_mode=False):
             import threading
             def _bg_build():
                 try:
-                    dp = DocumentProcessor()
-                    tmp_index = dp.create_search_index(uploads, use_groups=True)
-                    # Перемещать не обязательно: поиск читает из uploads; по завершении можно скопировать в index/
-                    try:
-                        os.makedirs(current_app.config['INDEX_FOLDER'], exist_ok=True)
-                        final_idx = get_index_path(current_app.config['INDEX_FOLDER'])
-                        if os.path.exists(tmp_index):
-                            shutil.copyfile(tmp_index, final_idx)
-                    except Exception:
-                        pass
-                    current_app.logger.info('Фоновая сборка индекса завершена (доступна по uploads/_search_index.txt)')
+                    adapter = _get_adapter()
+                    success, message, char_counts = adapter.build_index(use_groups=True)
+                    if success:
+                        current_app.logger.info(f'Фоновая сборка индекса завершена: {message}')
+                    else:
+                        current_app.logger.error(f'Ошибка фоновой индексации: {message}')
                 except Exception:
                     current_app.logger.exception('Ошибка фоновой индексации')
             threading.Thread(target=_bg_build, daemon=True).start()
@@ -89,11 +90,16 @@ def _search_in_files(search_terms, exclude_mode=False):
         # Возвращаем пусто: UI покажет индикатор групп и предложит повторить поиск спустя секунды
         return results
 
-    # Поиск по индексу с привязкой к файлам
+    # Поиск по индексу с привязкой к файлам через DataAccessAdapter
     try:
-        s = Searcher()
+        adapter = _get_adapter()
         current_app.logger.info(f"Поиск по индексу: terms={terms}, exclude_mode={exclude_mode}")
-        matches = s.search(index_path, terms, context=80, exclude_mode=exclude_mode)
+        matches = adapter.search_documents(
+            keywords=terms,
+            user_id=None,  # TODO: получать из request.user после реализации аутентификации
+            exclude_mode=exclude_mode,
+            context_chars=80
+        )
     except Exception as e:
         current_app.logger.exception(f'Ошибка поиска по индексу: {e}')
         matches = []
@@ -326,30 +332,25 @@ def build_index_route():
     use_groups = request.json.get('use_groups', True) if request.is_json else True
     
     try:
-        dp = DocumentProcessor()
+        adapter = _get_adapter()
         current_app.logger.info(f"Запуск явной сборки индекса для uploads (use_groups={use_groups})")
         
-        # Создаём индекс в uploads, затем переносим в index/
-        tmp_index_path = dp.create_search_index(uploads, use_groups=use_groups)
-        os.makedirs(current_app.config['INDEX_FOLDER'], exist_ok=True)
+        # Используем DataAccessAdapter для построения индекса
+        success, message, char_counts = adapter.build_index(use_groups=use_groups)
+        
+        if not success:
+            current_app.logger.error(f"Ошибка построения индекса: {message}")
+            return jsonify({'success': False, 'message': message}), 500
+        
+        # Определяем путь к индексу для вывода статистики
         index_path = get_index_path(current_app.config['INDEX_FOLDER'])
-        
-        try:
-            if os.path.exists(tmp_index_path) and tmp_index_path != index_path:
-                shutil.move(tmp_index_path, index_path)
-            else:
-                # На всякий случай, если реализация уже пишет в index_folder
-                if os.path.exists(index_path):
-                    pass
-        except Exception:
-            current_app.logger.exception('Не удалось переместить индекс в папку index')
-        
         size = os.path.getsize(index_path) if os.path.exists(index_path) else 0
-        current_app.logger.info(f"Индекс собран: {index_path}, размер: {size} байт")
+        current_app.logger.info(f"Индекс собран: {index_path}, размер: {size} байт, файлов: {len(char_counts)}")
         
         # Обновим количество распознанных символов по каждому файлу (включая виртуальные из архивов) и статусы ошибок/неподдержки
         try:
-            counts = parse_index_char_counts(index_path)
+            # char_counts уже получены из adapter.build_index()
+            counts = char_counts
             
             # Список всех реальных файлов в uploads
             all_files: list[str] = []
