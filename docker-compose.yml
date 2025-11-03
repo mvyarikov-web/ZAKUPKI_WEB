@@ -1,0 +1,15 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: pg_klimat
+    environment:
+      POSTGRES_USER: app_user
+      POSTGRES_PASSWORD: change_me_strong
+      POSTGRES_DB: klimat_tenders
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./.data/pg:/var/lib/postgresql/data
+    command: ["postgres", "-c", "password_encryption=scram-sha-256", "-c", "timezone=Europe/Moscow"]
+    restart: unless-stopped
+

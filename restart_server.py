@@ -265,8 +265,8 @@ def main():
     parser.add_argument(
         '--command', '-c',
         type=str,
-        default='python3 app.py',
-        help='Команда запуска сервера (по умолчанию: "python3 app.py")'
+        default='.venv/bin/python app.py',
+        help='Команда запуска сервера (по умолчанию: ".venv/bin/python app.py")'
     )
     parser.add_argument(
         '--wait', '-w',

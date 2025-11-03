@@ -22,6 +22,18 @@ pgvector==0.2.5
 openai==1.54.0
 tiktoken==0.8.0
 
+# ORM, миграции и безопасность (инкремент 13)
+SQLAlchemy==2.0.35
+alembic==1.13.3
+cryptography==43.0.3
+bcrypt==4.2.0
+PyJWT==2.9.0
+python-dotenv==1.0.1
+
+# Рендеринг Markdown и санитизация HTML
+bleach==6.2.0
+markdown==3.7
+
 # Опциональные зависимости для модуля анализа текста
 # spacy>=3.0.0
 # ru_core_news_sm (устанавливается через: python -m spacy download ru_core_news_sm)

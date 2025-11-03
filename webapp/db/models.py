@@ -1,0 +1,322 @@
+"""
+Модели данных для SQLAlchemy (инкремент 13).
+Все сущности из спецификации раздела 1.1 (Фаза 1).
+"""
+
+from datetime import datetime
+from typing import Optional
+
+from sqlalchemy import (
+    Column, Integer, String, Text, Boolean, DateTime, 
+    ForeignKey, LargeBinary, Enum as SQLEnum, JSON, Index
+)
+from sqlalchemy.orm import relationship
+from pgvector.sqlalchemy import Vector
+
+from webapp.db.base import Base
+
+
+# ==============================================================================
+# ПОЛЬЗОВАТЕЛИ И СЕССИИ
+# ==============================================================================
+
+class User(Base):
+    """Пользователь системы."""
+    __tablename__ = 'users'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    email = Column(String(255), unique=True, nullable=False, index=True)
+    password_hash = Column(String(255), nullable=False)
+    role = Column(SQLEnum('user', 'admin', name='user_role'), default='user', nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Связи
+    sessions = relationship('Session', back_populates='user', cascade='all, delete-orphan')
+    documents = relationship('Document', back_populates='owner')
+    chunks = relationship('Chunk', back_populates='owner')
+    conversations = relationship('AIConversation', back_populates='user')
+    search_history = relationship('SearchHistory', back_populates='user')
+    api_keys = relationship('APIKey', back_populates='user')
+    user_models = relationship('UserModel', back_populates='user')
+    
+    def __repr__(self):
+        return f"<User(id={self.id}, email='{self.email}', role='{self.role}')>"
+
+
+class Session(Base):
+    """JWT-токены и активные сессии."""
+    __tablename__ = 'sessions'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    token_hash = Column(String(255), unique=True, nullable=False, index=True)
+    expires_at = Column(DateTime, nullable=False)
+    ip_address = Column(String(45))  # IPv6 поддержка
+    user_agent = Column(Text)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    
+    # Связи
+    user = relationship('User', back_populates='sessions')
+    
+    __table_args__ = (
+        Index('idx_sessions_user_expires', 'user_id', 'expires_at'),
+    )
+    
+    def __repr__(self):
+        return f"<Session(id={self.id}, user_id={self.user_id}, expires_at={self.expires_at})>"
+
+
+# ==============================================================================
+# ДОКУМЕНТЫ И ЧАНКИ
+# ==============================================================================
+
+class Document(Base):
+    """Загруженные документы."""
+    __tablename__ = 'documents'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    owner_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    original_filename = Column(String(512), nullable=False)
+    content_type = Column(String(127))
+    size_bytes = Column(Integer, nullable=False)
+    sha256 = Column(String(64), nullable=False, index=True)
+    blob = Column(LargeBinary)  # Для файлов < 10 МБ
+    storage_url = Column(Text)  # Для файлов > 50 МБ (S3/MinIO)
+    status = Column(SQLEnum('new', 'parsed', 'indexed', 'error', name='document_status'), 
+                   default='new', nullable=False)
+    uploaded_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    indexed_at = Column(DateTime)
+    
+    # Связи
+    owner = relationship('User', back_populates='documents')
+    chunks = relationship('Chunk', back_populates='document', cascade='all, delete-orphan')
+    
+    __table_args__ = (
+        Index('idx_documents_owner_status', 'owner_id', 'status'),
+        Index('idx_documents_sha256', 'sha256'),
+    )
+    
+    def __repr__(self):
+        return f"<Document(id={self.id}, filename='{self.original_filename}', status='{self.status}')>"
+
+
+class Chunk(Base):
+    """Чанки текста для RAG с pgvector embeddings."""
+    __tablename__ = 'chunks'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    document_id = Column(Integer, ForeignKey('documents.id', ondelete='CASCADE'), nullable=False)
+    owner_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    chunk_idx = Column(Integer, nullable=False)  # Порядковый номер чанка в документе
+    text = Column(Text, nullable=False)
+    text_sha256 = Column(String(64), index=True)
+    tokens = Column(Integer)
+    embedding = Column(Vector(1536))  # OpenAI ada-002 размерность
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    
+    # Связи
+    document = relationship('Document', back_populates='chunks')
+    owner = relationship('User', back_populates='chunks')
+    
+    __table_args__ = (
+        Index('idx_chunks_document', 'document_id', 'chunk_idx'),
+        Index('idx_chunks_owner', 'owner_id'),
+        # IVFFlat индекс будет создан вручную в миграции
+    )
+    
+    def __repr__(self):
+        return f"<Chunk(id={self.id}, document_id={self.document_id}, chunk_idx={self.chunk_idx})>"
+
+
+# ==============================================================================
+# AI ДИАЛОГИ И СООБЩЕНИЯ
+# ==============================================================================
+
+class AIConversation(Base):
+    """Диалоги с AI."""
+    __tablename__ = 'ai_conversations'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    title = Column(String(512))
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Связи
+    user = relationship('User', back_populates='conversations')
+    messages = relationship('AIMessage', back_populates='conversation', 
+                          cascade='all, delete-orphan', order_by='AIMessage.created_at')
+    
+    __table_args__ = (
+        Index('idx_conversations_user_updated', 'user_id', 'updated_at'),
+    )
+    
+    def __repr__(self):
+        return f"<AIConversation(id={self.id}, user_id={self.user_id}, title='{self.title}')>"
+
+
+class AIMessage(Base):
+    """Сообщения в диалогах с AI."""
+    __tablename__ = 'ai_messages'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    conversation_id = Column(Integer, ForeignKey('ai_conversations.id', ondelete='CASCADE'), 
+                            nullable=False)
+    role = Column(SQLEnum('user', 'assistant', 'system', name='message_role'), nullable=False)
+    content = Column(Text, nullable=False)
+    tokens = Column(Integer)
+    cost = Column(Integer)  # В копейках для точности
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    
+    # Связи
+    conversation = relationship('AIConversation', back_populates='messages')
+    
+    __table_args__ = (
+        Index('idx_messages_conversation', 'conversation_id', 'created_at'),
+    )
+    
+    def __repr__(self):
+        return f"<AIMessage(id={self.id}, conversation_id={self.conversation_id}, role='{self.role}')>"
+
+
+# ==============================================================================
+# ПОИСК
+# ==============================================================================
+
+class SearchHistory(Base):
+    """История поисковых запросов."""
+    __tablename__ = 'search_history'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    query_text = Column(Text, nullable=False)
+    filters = Column(JSON)  # Дополнительные фильтры поиска
+    results_count = Column(Integer)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    
+    # Связи
+    user = relationship('User', back_populates='search_history')
+    
+    __table_args__ = (
+        Index('idx_search_history_user_created', 'user_id', 'created_at'),
+    )
+    
+    def __repr__(self):
+        return f"<SearchHistory(id={self.id}, user_id={self.user_id}, query='{self.query_text[:50]}')>"
+
+
+# ==============================================================================
+# API КЛЮЧИ И МОДЕЛИ
+# ==============================================================================
+
+class APIKey(Base):
+    """API ключи провайдеров (зашифрованные)."""
+    __tablename__ = 'api_keys'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    provider = Column(String(63), nullable=False)  # openai, anthropic, deepseek, etc.
+    key_ciphertext = Column(Text, nullable=False)  # Fernet encrypted
+    is_shared = Column(Boolean, default=False)  # Доступен всем пользователям (админский)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    
+    # Связи
+    user = relationship('User', back_populates='api_keys')
+    
+    __table_args__ = (
+        Index('idx_api_keys_user_provider', 'user_id', 'provider'),
+    )
+    
+    def __repr__(self):
+        return f"<APIKey(id={self.id}, user_id={self.user_id}, provider='{self.provider}')>"
+
+
+class UserModel(Base):
+    """Модели пользователя с настройками и ценами."""
+    __tablename__ = 'user_models'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    model_id = Column(String(127), nullable=False)  # gpt-4, claude-3, etc.
+    display_name = Column(String(255))
+    pricing = Column(JSON)  # Структура с ценами за токены
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    
+    # Связи
+    user = relationship('User', back_populates='user_models')
+    
+    __table_args__ = (
+        Index('idx_user_models_user_active', 'user_id', 'is_active'),
+    )
+    
+    def __repr__(self):
+        return f"<UserModel(id={self.id}, user_id={self.user_id}, model_id='{self.model_id}')>"
+
+
+# ==============================================================================
+# ЛОГИ И ОЧЕРЕДЬ ЗАДАЧ
+# ==============================================================================
+
+class AppLog(Base):
+    """Системные логи приложения."""
+    __tablename__ = 'app_logs'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    level = Column(SQLEnum('DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL', name='log_level'), 
+                  nullable=False)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'))
+    component = Column(String(127))  # Имя модуля/компонента
+    message = Column(Text, nullable=False)
+    context_json = Column(JSON)  # Дополнительный контекст
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    
+    __table_args__ = (
+        Index('idx_app_logs_level_created', 'level', 'created_at'),
+        Index('idx_app_logs_user_created', 'user_id', 'created_at'),
+    )
+    
+    def __repr__(self):
+        return f"<AppLog(id={self.id}, level='{self.level}', component='{self.component}')>"
+
+
+class JobQueue(Base):
+    """Очередь фоновых задач."""
+    __tablename__ = 'job_queue'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    type = Column(SQLEnum('index', 'ocr', 'embed', 'cleanup', name='job_type'), nullable=False)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'))
+    payload = Column(JSON, nullable=False)  # Параметры задачи
+    status = Column(SQLEnum('queued', 'running', 'done', 'error', name='job_status'), 
+                   default='queued', nullable=False)
+    priority = Column(Integer, default=0)
+    locked_by = Column(String(63))  # ID воркера
+    locked_at = Column(DateTime)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    __table_args__ = (
+        Index('idx_job_queue_status_priority', 'status', 'priority', 'created_at'),
+        Index('idx_job_queue_user', 'user_id'),
+    )
+    
+    def __repr__(self):
+        return f"<JobQueue(id={self.id}, type='{self.type}', status='{self.status}')>"
+
+
+# Экспорт всех моделей
+__all__ = [
+    'User',
+    'Session',
+    'Document',
+    'Chunk',
+    'AIConversation',
+    'AIMessage',
+    'SearchHistory',
+    'APIKey',
+    'UserModel',
+    'AppLog',
+    'JobQueue',
+]

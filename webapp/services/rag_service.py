@@ -308,6 +308,14 @@ class RAGService:
                 # Параметры поиска Perplexity передаём через extra_body (требование OpenAI SDK)
                 # Применяем нормализованные параметры; если их нет — включим умный поиск с дефолтами
                 apply_search_to_request(request_params, norm_search or {})
+                # Perplexity Sonar может некорректно работать с веб-поиском при принудительном JSON-формате
+                # Для стабильного поиска удаляем response_format для sonar-моделей
+                if 'sonar' in model.lower():
+                    try:
+                        request_params.pop('response_format', None)
+                        current_app.logger.info('🌐 Sonar + search: удалён response_format для корректной работы веб-поиска')
+                    except Exception:
+                        pass
                 try:
                     current_app.logger.info(f'🌐 Режим С ПОИСКОМ: extra_body = {request_params.get("extra_body")}')
                 except Exception:

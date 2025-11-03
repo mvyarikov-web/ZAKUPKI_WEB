@@ -18,9 +18,24 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 
+def _has_perplexity_key() -> bool:
+    """Возвращает True, если ключ Perplexity доступен либо в окружении,
+    либо через внутренний менеджер api_keys.
+    """
+    if os.environ.get('PPLX_API_KEY') or os.environ.get('PERPLEXITY_API_KEY'):
+        return True
+    try:
+        from utils.api_keys_manager_multiple import get_api_keys_manager_multiple
+        mgr = get_api_keys_manager_multiple()
+        key = mgr.get_key('perplexity')
+        return bool(key)
+    except Exception:
+        return False
+
+
 @pytest.mark.skipif(
-    not os.environ.get('PPLX_API_KEY') and not os.environ.get('PERPLEXITY_API_KEY'),
-    reason='Нет PPLX_API_KEY или PERPLEXITY_API_KEY в окружении'
+    not _has_perplexity_key(),
+    reason='Нет ключа Perplexity (ни в окружении, ни в менеджере api_keys)'
 )
 def test_perplexity_sonar_real_search():
     """

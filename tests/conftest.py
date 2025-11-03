@@ -1,9 +1,23 @@
 import sys
+import os
 import shutil
 import zipfile
 from pathlib import Path
 from typing import Optional, List, Tuple
 import pytest
+
+# Добавляем корневую директорию проекта в PYTHONPATH для импорта webapp
+project_root = Path(__file__).parent.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
+
+# Устанавливаем минимальные ENV переменные для тестов перед любыми импортами
+# ВАЖНО: setdefault НЕ переопределяет уже установленные переменные,
+# что позволяет запускать интеграционные тесты с реальной БД через pytest
+os.environ.setdefault('DATABASE_URL', 'sqlite:///:memory:')
+os.environ.setdefault('FERNET_ENCRYPTION_KEY', 'test_fernet_key_32_bytes_long!!')
+os.environ.setdefault('JWT_SECRET_KEY', 'test_jwt_secret_key')
+os.environ.setdefault('USE_DATABASE', 'false')
 
 try:
     import rarfile  # type: ignore

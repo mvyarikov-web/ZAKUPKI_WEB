@@ -6,7 +6,7 @@
       "description": "Быстрый мультимодальный вариант; полезно, если встречаются сканы/изображения в документах",
       "context_window_tokens": 128000,
       "price_input_per_1m": 2.5,
-      "price_output_per_1m": 10.0,
+      "price_output_per_1m": 10,
       "enabled": true,
       "timeout": 120,
       "supports_system_role": true,
@@ -29,8 +29,8 @@
       "display_name": "o1",
       "description": "Усиленное рассуждение; когда важна аккуратная логика при сложных правилах/долгом контексте",
       "context_window_tokens": 128000,
-      "price_input_per_1m": 15.0,
-      "price_output_per_1m": 60.0,
+      "price_input_per_1m": 15,
+      "price_output_per_1m": 60,
       "enabled": true,
       "timeout": 120,
       "supports_system_role": false,
@@ -65,17 +65,22 @@
       "display_name": "Perplexity Sonar",
       "description": "Быстрый, экономичный LLM с возможностью поиска в интернете",
       "context_window_tokens": 128000,
-      "price_input_per_1m": 1.0,
-      "price_output_per_1m": 1.0,
+      "price_input_per_1m": 1,
+      "price_output_per_1m": 1,
       "enabled": true,
       "timeout": 120,
       "supports_system_role": true,
       "provider": "perplexity",
-      "supports_search": true,
-      "price_per_1000_requests": 5.0,
+      "supports_search": false,
+      "price_per_1000_requests": 5,
       "search_params": {
-        "max_results": 3,
-        "search_recency_filter": "month",
+        "max_results": 8,
+        "search_domain_filter": [
+          "anekdot.ru"
+        ],
+        "search_recency_filter": "week",
+        "search_after_date": "10/27/2025",
+        "search_before_date": "11/03/2025",
         "country": "RU",
         "max_tokens_per_page": 1024
       }
@@ -85,22 +90,32 @@
       "display_name": "Perplexity Sonar Pro",
       "description": "Продвинутый LLM с веб-поиском для сложных запросов",
       "context_window_tokens": 128000,
-      "price_input_per_1m": 3.0,
-      "price_output_per_1m": 15.0,
+      "price_input_per_1m": 3,
+      "price_output_per_1m": 15,
       "enabled": true,
       "timeout": 120,
       "supports_system_role": true,
       "provider": "perplexity",
       "supports_search": true,
-      "price_per_1000_requests": 5.0,
+      "price_per_1000_requests": 5,
       "search_params": {
-        "recency_filter": "month",
-        "return_citations": true,
-        "return_images": false,
-        "return_related_questions": false,
-        "search_domain_filter": [],
-        "search_recency_filter": "month",
-        "temperature": 0.2
+        "max_results": 10,
+        "search_domain_filter": [
+          "https://www.vseinstrumenti.ru",
+          "https://www.ozon.ru",
+          "https://market.yandex.ru",
+          "https://wildberries.ru",
+          "egrul.nalog.ru",
+          "pb.nalog.ru",
+          "fedresurs.ru",
+          "bankrot.fedresurs.ru",
+          "kad.arbitr.ru",
+          "fssp.gov.ru/iss/ip",
+          "zakupki.gov.ru/epz/dishonestsupplier/search/results.html"
+        ],
+        "search_recency_filter": "year",
+        "country": "RU",
+        "max_tokens_per_page": 1024
       }
     },
     {
@@ -108,22 +123,34 @@
       "display_name": "Perplexity Sonar Reasoning",
       "description": "Быстрое пошаговое рассуждение с возможностью поиска",
       "context_window_tokens": 128000,
-      "price_input_per_1m": 1.0,
-      "price_output_per_1m": 5.0,
+      "price_input_per_1m": 1,
+      "price_output_per_1m": 5,
       "enabled": true,
       "timeout": 120,
       "supports_system_role": true,
       "provider": "perplexity",
       "supports_search": true,
-      "price_per_1000_requests": 5.0,
+      "price_per_1000_requests": 5,
       "search_params": {
-        "recency_filter": "month",
-        "return_citations": true,
-        "return_images": false,
-        "return_related_questions": false,
-        "search_domain_filter": [],
+        "max_results": 10,
+        "search_domain_filter": [
+          "https://www.vseinstrumenti.ru",
+          "https://www.ozon.ru",
+          "https://market.yandex.ru",
+          "https://wildberries.ru",
+          "egrul.nalog.ru",
+          "pb.nalog.ru",
+          "fedresurs.ru",
+          "bankrot.fedresurs.ru",
+          "kad.arbitr.ru",
+          "fssp.gov.ru/iss/ip",
+          "zakupki.gov.ru/epz/dishonestsupplier/search/results.html"
+        ],
         "search_recency_filter": "month",
-        "temperature": 0.2
+        "search_after_date": "11/01/2025",
+        "search_before_date": "11/02/2025",
+        "country": "RU",
+        "max_tokens_per_page": 1024
       }
     },
     {
@@ -131,14 +158,14 @@
       "display_name": "Perplexity Sonar Reasoning Pro",
       "description": "Топ-уровень reasoning на базе DeepSeek-R1 с CoT и поиском",
       "context_window_tokens": 128000,
-      "price_input_per_1m": 2.0,
-      "price_output_per_1m": 8.0,
+      "price_input_per_1m": 2,
+      "price_output_per_1m": 8,
       "enabled": true,
       "timeout": 120,
       "supports_system_role": true,
       "provider": "perplexity",
       "supports_search": true,
-      "price_per_1000_requests": 5.0,
+      "price_per_1000_requests": 5,
       "search_params": {
         "max_results": 10,
         "search_domain_filter": [
@@ -164,14 +191,14 @@
       "display_name": "Perplexity Sonar Deep Research",
       "description": "Длинные исчерпывающие исследования (сотни источников) с глубоким поиском",
       "context_window_tokens": 128000,
-      "price_input_per_1m": 2.0,
-      "price_output_per_1m": 8.0,
+      "price_input_per_1m": 2,
+      "price_output_per_1m": 8,
       "enabled": true,
       "timeout": 180,
       "supports_system_role": true,
       "provider": "perplexity",
       "supports_search": true,
-      "price_per_1000_requests": 5.0,
+      "price_per_1000_requests": 5,
       "search_params": {
         "max_results": 10,
         "search_domain_filter": [
@@ -195,5 +222,5 @@
       }
     }
   ],
-  "default_model": "sonar"
+  "default_model": "deepseek-chat"
 }

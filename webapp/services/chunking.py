@@ -5,7 +5,12 @@
 import re
 import hashlib
 from typing import List, Dict, Any, Optional
-import tiktoken
+
+# tiktoken может отсутствовать; используем graceful degrade
+try:
+    import tiktoken  # type: ignore
+except Exception:  # pragma: no cover
+    tiktoken = None  # fallback маркер
 
 
 class TextChunker:
@@ -28,7 +33,7 @@ class TextChunker:
         self.chunk_size_tokens = chunk_size_tokens
         self.overlap_sentences = overlap_sentences
         try:
-            self.encoding = tiktoken.get_encoding(encoding_name)
+            self.encoding = tiktoken.get_encoding(encoding_name) if tiktoken else None
         except Exception:
             # Фолбэк на примерный подсчёт
             self.encoding = None
