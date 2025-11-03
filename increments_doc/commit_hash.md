@@ -18,6 +18,25 @@ Increment: 013 (PostgreSQL миграция с pgvector, шаги 1-6)
 - Все тесты passed: test_config_env, test_alembic_setup, test_db_session, test_db_models_schema, test_alembic_migrations, test_postgres_integration (9/9)
 - Создан скрипт диагностики: scripts/check_db_status.py
 
+4. Git commit hash: cda3efe5e139a3b2e9b5f6604e313b3a7af7276a
+Дата: 04.11.2025
+Increment: 013 (Репозитории для работы с БД, шаг 7)
+- Реализованы репозитории: BaseRepository, UserRepository, DocumentRepository, ChunkRepository
+- Добавлены Python Enum в models.py: UserRole, DocumentStatus, MessageRole, LogLevel, JobType, JobStatus
+- ChunkRepository поддерживает векторный поиск через pgvector (cosine similarity)
+- Все тесты passed: test_repositories.py (13/13)
+
+5. Git commit hash: 878e83263541d1fe1e6684344f0aa5fd726cb006
+Дата: 04.11.2025
+Increment: 013 (DataAccessAdapter для dual-mode, шаги 8.1-8.2)
+- Создан webapp/services/data_access_adapter.py с классом DataAccessAdapter
+- Поддержка двух режимов: use_database=False (legacy files) и use_database=True (PostgreSQL)
+- Методы: build_index(), search_documents(), get_documents(), save_document(), delete_document()
+- Интегрирован в webapp/routes/search.py: заменены прямые вызовы DocumentProcessor/Searcher на adapter
+- Использует модульный logger для работы без Flask context
+- Базовые тесты инициализации: 4/4 passed
+- Сохранена обратная совместимость с legacy режимом
+
 Градиентный зелёный фон с тенью для блока итоговой суммы
 Увеличенный шрифт (18px, bold, тёмно-зелёный)
 Визуально выделяется в финальном отчёте анализа
