@@ -205,15 +205,19 @@
             console.log('Загружены модели:', data);
             if (data.success) {
                 models = data.models || [];
-                
+
                 // Восстановление последней выбранной модели из localStorage
                 const savedModelId = localStorage.getItem('rag_selected_model');
                 const savedSearchStates = JSON.parse(localStorage.getItem('rag_search_enabled') || '{}');
-                
-                // Восстанавливаем флаги search_enabled для каждой модели
+                const savedNewRequestStates = JSON.parse(localStorage.getItem('rag_new_request') || '{}');
+
+                // Восстанавливаем флаги search_enabled и new_request_enabled для каждой модели
                 models.forEach(m => {
                     if (savedSearchStates[m.model_id] !== undefined) {
                         m.search_enabled = savedSearchStates[m.model_id];
+                    }
+                    if (savedNewRequestStates[m.model_id] !== undefined) {
+                        m.new_request_enabled = savedNewRequestStates[m.model_id];
                     }
                 });
                 
@@ -244,134 +248,221 @@
         ragCurrentModel.textContent = `Модель: ${modelName}`;
     }
 
+    // Функция для раскрытия/скрытия параметров модели (экспорт в window для доступа из HTML)
+    window.toggleModelParams = function(expandedId) {
+        const expandedRow = document.getElementById(expandedId);
+        if (!expandedRow) return;
+        
+        if (expandedRow.style.display === 'none') {
+            expandedRow.style.display = '';
+        } else {
+            expandedRow.style.display = 'none';
+        }
+    }
+
     function renderModelsList() {
         if (!modelsList) return;
         if (!models || models.length === 0) {
-            modelsList.innerHTML = '<p>Модели не загружены</p>';
+            modelsList.innerHTML = '<tr><td colspan="6" style="padding: 40px; text-align: center; color: #9ca3af;">Модели не загружены</td></tr>';
             return;
         }
 
         let html = '';
-        models.forEach(m => {
+        models.forEach((m, index) => {
             const checked = m.model_id === selectedModelId ? 'checked' : '';
-            const status = (m.enabled === false) ? '<span style="color:#d32f2f; font-size:12px;">не активна</span>' : '<span style="color:#2e7d32; font-size:12px;">активна</span>';
-            const description = m.description ? m.description : 'Описание отсутствует';
-            const contextInfo = `${Number(m.context_window_tokens || 0).toLocaleString()} токенов`;
+            const isEnabled = m.enabled !== false;
+            const statusBadge = isEnabled 
+                ? '<span style="display:inline-block; padding:3px 8px; background:#d1fae5; color:#065f46; border-radius:12px; font-size:11px; font-weight:600;">✓ Активна</span>' 
+                : '<span style="display:inline-block; padding:3px 8px; background:#fee2e2; color:#991b1b; border-radius:12px; font-size:11px; font-weight:600;">✗ Неактивна</span>';
             
+            const contextInfo = `${Number(m.context_window_tokens || 0).toLocaleString()}`;
+            const isSearchMode = m.supports_search && (m.search_enabled || false);
+            const rowBg = index % 2 === 0 ? '#ffffff' : '#f9fafb';
+            const expandedId = `expanded-${m.model_id}`;
+            
+            // Основная строка таблицы
             html += `
-                <div style="border:1px solid #ddd; border-radius:8px; padding:16px; margin-bottom:16px; background:#fafafa;">
-                    <!-- Полоса 1: Радиокнопка и название модели -->
-                    <div style="display:flex; align-items:center; gap:12px; margin-bottom:12px;">
-                        <input type="radio" name="rag-model" value="${m.model_id}" ${checked} />
-                        <div style="flex:1;">
-                            <strong style="font-size:15px;">${m.display_name}</strong> 
-                            <span style="color:#777; font-size:12px;">(${m.model_id})</span> 
-                            · ${status}
-                            <span style="color:#666; font-size:11px; margin-left:8px;">Контекст: ${contextInfo}</span>
-                        </div>
-                    </div>
+                <tr style="background: ${rowBg}; border-bottom: 1px solid #e5e7eb; transition: background 0.2s;" 
+                    onmouseover="this.style.background='#f3f4f6'" 
+                    onmouseout="this.style.background='${rowBg}'">
+                    <!-- Колонка выбора -->
+                    <td style="padding: 12px 15px; text-align: center; vertical-align: middle;">
+                        <input type="radio" 
+                               name="rag-model" 
+                               value="${m.model_id}" 
+                               ${checked} 
+                               style="width: 18px; height: 18px; cursor: pointer;" 
+                               title="Выбрать эту модель" />
+                    </td>
                     
-                    <!-- Полоса 2: Описание модели -->
-                    <div style="margin-bottom:14px; padding:10px; background:#fff; border-left:3px solid #2196f3; border-radius:4px;">
-                        <div style="color:#555; font-size:13px; line-height:1.5;">
-                            ${description}
+                    <!-- Колонка модели (название + описание) -->
+                    <td style="padding: 12px 15px; vertical-align: middle;">
+                        <div style="font-weight: 600; font-size: 14px; color: #111827; margin-bottom: 4px;">
+                            ${m.display_name}
                         </div>
-                    </div>
+                        <div style="font-size: 12px; color: #6b7280; margin-bottom: 4px;">
+                            <code style="background: #f3f4f6; padding: 2px 6px; border-radius: 4px; font-size: 11px;">${m.model_id}</code>
+                        </div>
+                        <div style="font-size: 12px; color: #6b7280; line-height: 1.4;">
+                            ${m.description || 'Описание отсутствует'}
+                        </div>
             `;
             
-            // Если модель поддерживает поиск (sonar-модели), добавляем чекбокс
+            // Если модель поддерживает поиск, показываем чекбоксы
             if (m.supports_search) {
                 const searchEnabled = m.search_enabled || false;
+                const newRequestEnabled = m.new_request_enabled || false;
                 html += `
-                    <!-- Чекбокс "С поиском в интернете" -->
-                    <div style="margin-bottom:14px; padding:10px; background:#e8f5e9; border-left:3px solid #4caf50; border-radius:4px;">
-                        <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
-                            <input type="checkbox" 
-                                   data-search-toggle="${m.model_id}" 
-                                   ${searchEnabled ? 'checked' : ''}
-                                   style="width:18px; height:18px; cursor:pointer;" />
-                            <span style="font-weight:600; color:#2e7d32; font-size:14px;">🌐 С поиском в интернете</span>
-                        </label>
-                        <div style="margin-top:6px; font-size:12px; color:#666;">
-                            При включении этого режима модель будет искать актуальную информацию в интернете и использовать её в ответе. Тарификация изменится на стоимость за запросы.
-                        </div>
-                    </div>
-                `;
-            }
-            
-            html += `
-                    <!-- Полоса 3: Параметры (вертикально) -->
-                    <div id="model-params-${m.model_id}" style="display:flex; flex-direction:column; gap:10px; margin-bottom:14px;">
-            `;
-            
-            // Проверяем, включен ли режим поиска для этой модели
-            const isSearchMode = m.supports_search && (m.search_enabled || false);
-            
-            if (isSearchMode) {
-                // Режим поиска: показываем стоимость за запросы
-                html += `
-                        <div style="display:flex; align-items:center; gap:10px;">
-                            <input type="number" 
-                                   step="0.01" 
-                                   min="0" 
-                                   data-price-requests="${m.model_id}" 
-                                   value="${m.price_per_1000_requests || 5.0}" 
-                                   style="width:150px; padding:6px; border:1px solid #ccc; border-radius:4px; font-size:13px;" />
-                            <label style="font-size:13px; color:#555; flex:1;">Стоимость 1000 запросов ($)</label>
-                        </div>
-                `;
-            } else {
-                // Обычный режим: показываем стоимость токенов
-                html += `
-                        <div style="display:flex; align-items:center; gap:10px;">
-                            <input type="number" 
-                                   step="0.0001" 
-                                   min="0" 
-                                   data-price-in="${m.model_id}" 
-                                   value="${m.price_input_per_1m || 0}" 
-                                   style="width:150px; padding:6px; border:1px solid #ccc; border-radius:4px; font-size:13px;" />
-                            <label style="font-size:13px; color:#555; flex:1;">Стоимость входа (за 1М токенов)</label>
-                        </div>
-                        
-                        <div style="display:flex; align-items:center; gap:10px;">
-                            <input type="number" 
-                                   step="0.0001" 
-                                   min="0" 
-                                   data-price-out="${m.model_id}" 
-                                   value="${m.price_output_per_1m || 0}" 
-                                   style="width:150px; padding:6px; border:1px solid #ccc; border-radius:4px; font-size:13px;" />
-                            <label style="font-size:13px; color:#555; flex:1;">Стоимость выхода (за 1М токенов)</label>
+                        <div style="margin-top: 8px; padding: 8px; background: #ecfdf5; border-radius: 6px; border: 1px solid #a7f3d0;">
+                            <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 12px; color: #065f46;">
+                                <input type="checkbox" 
+                                       data-search-toggle="${m.model_id}" 
+                                       ${searchEnabled ? 'checked' : ''}
+                                       style="width: 16px; height: 16px; cursor: pointer;" />
+                                <span style="font-weight: 600;">🌐 С поиском в интернете</span>
+                            </label>
+                            <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 12px; color: #047857; margin-top: 6px;">
+                                <input type="checkbox" 
+                                       data-new-request-toggle="${m.model_id}" 
+                                       ${newRequestEnabled ? 'checked' : ''}
+                                       style="width: 16px; height: 16px; cursor: pointer;" />
+                                <span style="font-weight: 600;">🔄 Новый запрос (очистить контекст)</span>
+                            </label>
                         </div>
                 `;
             }
             
             html += `
-                        <div style="display:flex; align-items:center; gap:10px;">
-                            <input type="number" 
-                                   step="1" 
-                                   min="5" 
-                                   max="600" 
-                                   data-timeout="${m.model_id}" 
-                                   value="${m.timeout || 30}" 
-                                   style="width:150px; padding:6px; border:1px solid #ccc; border-radius:4px; font-size:13px;" 
-                                   title="Максимальное время ожидания ответа от модели" />
-                            <label style="font-size:13px; color:#555; flex:1;">Таймаут (секунд)</label>
-                        </div>
-                    </div>
+                    </td>
                     
-                    <!-- Кнопка удаления -->
-                    <div style="text-align:right;">
+                    <!-- Колонка статуса -->
+                    <td style="padding: 12px 15px; text-align: center; vertical-align: middle;">
+                        ${statusBadge}
+                    </td>
+                    
+                    <!-- Колонка контекста -->
+                    <td style="padding: 12px 15px; text-align: right; vertical-align: middle;">
+                        <div style="font-weight: 600; font-size: 14px; color: #374151;">
+                            ${contextInfo}
+                        </div>
+                        <div style="font-size: 11px; color: #9ca3af; margin-top: 2px;">
+                            токенов
+                        </div>
+                    </td>
+                    
+                    <!-- Колонка параметров (кнопка раскрытия) -->
+                    <td style="padding: 12px 15px; text-align: center; vertical-align: middle;">
+                        <button onclick="toggleModelParams('${expandedId}')" 
+                                style="background: #95a5a6; color: white; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 500; transition: background 0.2s;"
+                                onmouseover="this.style.background='#7f8c8d'" 
+                                onmouseout="this.style.background='#95a5a6'"
+                                title="Показать/скрыть параметры">
+                            <span style="filter: hue-rotate(200deg) saturate(2);">⚙️</span> Настройки
+                        </button>
+                    </td>
+                    
+                    <!-- Колонка действий -->
+                    <td style="padding: 12px 15px; text-align: center; vertical-align: middle;">
                         <button class="btn-delete-model" 
                                 data-model-id="${m.model_id}" 
-                                style="background:#dc3545; color:white; border:none; padding:8px 16px; border-radius:4px; cursor:pointer; font-size:13px; transition:background 0.2s;" 
-                                onmouseover="this.style.background='#c82333'" 
-                                onmouseout="this.style.background='#dc3545'"
+                                style="background: #9b2d30; color: white; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; transition: background 0.2s;"
+                                onmouseover="this.style.background='#7a2326'" 
+                                onmouseout="this.style.background='#9b2d30'"
                                 title="Удалить модель">
-                            🗑️ Удалить модель
+                            🗑️
                         </button>
-                    </div>
-                </div>`;
+                    </td>
+                </tr>
+            `;
+            
+            // Расширенная строка с параметрами (скрытая по умолчанию)
+            html += `
+                <tr id="${expandedId}" style="display: none; background: #f9fafb;">
+                    <td colspan="6" style="padding: 20px 30px;">
+                        <div style="background: white; border-radius: 8px; padding: 20px; border: 2px solid #e5e7eb;">
+                            <div style="font-weight: 600; font-size: 14px; color: #111827; margin-bottom: 15px; padding-bottom: 10px; border-bottom: 2px solid #e5e7eb;">
+                                ⚙️ Параметры модели: ${m.display_name}
+                            </div>
+                            
+                            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 15px;">
+            `;
+            
+            // Выбор полей в зависимости от режима поиска
+            if (isSearchMode) {
+                // Режим поиска: стоимость за запросы
+                html += `
+                                <div>
+                                    <label style="display: block; font-size: 12px; color: #6b7280; margin-bottom: 6px; font-weight: 500;">
+                                        💰 Стоимость 1000 запросов ($)
+                                    </label>
+                                    <input type="number" 
+                                           step="0.01" 
+                                           min="0" 
+                                           data-price-requests="${m.model_id}" 
+                                           value="${m.price_per_1000_requests || 5.0}" 
+                                           style="width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 13px;" 
+                                           placeholder="5.00" />
+                                </div>
+                `;
+            } else {
+                // Обычный режим: стоимость токенов
+                html += `
+                                <div>
+                                    <label style="display: block; font-size: 12px; color: #6b7280; margin-bottom: 6px; font-weight: 500;">
+                                        📥 Стоимость входа (за 1М токенов, $)
+                                    </label>
+                                    <input type="number" 
+                                           step="0.0001" 
+                                           min="0" 
+                                           data-price-in="${m.model_id}" 
+                                           value="${m.price_input_per_1m || 0}" 
+                                           style="width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 13px;" 
+                                           placeholder="0.0000" />
+                                </div>
+                                
+                                <div>
+                                    <label style="display: block; font-size: 12px; color: #6b7280; margin-bottom: 6px; font-weight: 500;">
+                                        📤 Стоимость выхода (за 1М токенов, $)
+                                    </label>
+                                    <input type="number" 
+                                           step="0.0001" 
+                                           min="0" 
+                                           data-price-out="${m.model_id}" 
+                                           value="${m.price_output_per_1m || 0}" 
+                                           style="width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 13px;" 
+                                           placeholder="0.0000" />
+                                </div>
+                `;
+            }
+            
+            html += `
+                                <div>
+                                    <label style="display: block; font-size: 12px; color: #6b7280; margin-bottom: 6px; font-weight: 500;">
+                                        ⏱️ Таймаут (секунд)
+                                    </label>
+                                    <input type="number" 
+                                           step="1" 
+                                           min="5" 
+                                           max="600" 
+                                           data-timeout="${m.model_id}" 
+                                           value="${m.timeout || 30}" 
+                                           style="width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 13px;" 
+                                           title="Максимальное время ожидания ответа от модели" 
+                                           placeholder="30" />
+                                </div>
+                            </div>
+                            
+                            <div style="margin-top: 12px; padding: 10px; background: #eff6ff; border-radius: 6px; border-left: 3px solid #3b82f6;">
+                                <span style="font-size: 12px; color: #1e40af;">
+                                    💡 <strong>Подсказка:</strong> Измените параметры и нажмите «Сохранить изменения» внизу окна.
+                                </span>
+                            </div>
+                        </div>
+                    </td>
+                </tr>
+            `;
         });
+        
         modelsList.innerHTML = html;
 
         // Обработчики выбора модели
@@ -405,6 +496,22 @@
                     updateRagMetrics();
                     // Обновляем видимость параметров поиска
                     toggleSearchApiParams();
+                }
+            });
+        });
+
+        // Обработчики чекбоксов "Новый запрос"
+        modelsList.querySelectorAll('input[data-new-request-toggle]').forEach(checkbox => {
+            checkbox.addEventListener('change', (e) => {
+                const modelId = e.target.getAttribute('data-new-request-toggle');
+                const model = models.find(m => m.model_id === modelId);
+                if (model) {
+                    model.new_request_enabled = e.target.checked;
+
+                    // Сохраняем состояния new_request_enabled в localStorage
+                    const savedNewRequestStates = JSON.parse(localStorage.getItem('rag_new_request') || '{}');
+                    savedNewRequestStates[modelId] = e.target.checked;
+                    localStorage.setItem('rag_new_request', JSON.stringify(savedNewRequestStates));
                 }
             });
         });
@@ -966,6 +1073,12 @@
                 
                 // Добавляем параметры в запрос
                 requestData.search_params = searchParams;
+
+                // Если включён режим "Новый запрос" для выбранной модели — добавляем флаги
+                if (model && model.new_request_enabled) {
+                    requestData.force_web_search = true;
+                    requestData.clear_document_context = true;
+                }
                 
                 // Сохраняем параметры в модель для последующего использования
                 await saveSearchApiParams(selectedModelId, searchParams);

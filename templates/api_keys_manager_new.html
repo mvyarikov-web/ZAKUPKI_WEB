@@ -397,9 +397,10 @@
                         </td>
                         <td style="text-align: center;">
                             <button 
-                                class="btn btn-danger" 
                                 onclick="deleteKey('${key.provider}', '${key.key_id}')"
-                                style="padding: 4px 12px; font-size: 12px;"
+                                style="background: #9b2d30; color: white; border: none; padding: 4px 12px; font-size: 12px; border-radius: 6px; cursor: pointer; transition: background 0.2s;"
+                                onmouseover="this.style.background='#7a2326'" 
+                                onmouseout="this.style.background='#9b2d30'"
                             >
                                 🗑️ Удалить
                             </button>

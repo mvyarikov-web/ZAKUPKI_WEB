@@ -1123,7 +1123,7 @@ section h2 {
 }
 
 .btn-danger {
-    background-color: #e74c3c;
+    background-color: #9b2d30;
     color: white;
     border: none;
     padding: 10px 20px;
@@ -1134,5 +1134,5 @@ section h2 {
 }
 
 .btn-danger:hover {
-    background-color: #c0392b;
+    background-color: #7a2326;
 }
