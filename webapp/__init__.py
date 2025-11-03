@@ -64,9 +64,9 @@ def create_app(config_name=None):
         static_folder='../static'
     )
     
-    # Загружаем конфигурацию
-    config_class = get_config(config_name)
-    app.config.from_object(config_class)
+    # Загружаем конфигурацию (singleton ConfigService)
+    config_service = get_config()
+    app.config.from_object(config_service)
     
     # Создаем необходимые директории
     os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)

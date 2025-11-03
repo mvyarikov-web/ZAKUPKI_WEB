@@ -129,6 +129,76 @@ class ConfigService:
         """Хост для прослушивания Flask сервера."""
         return os.getenv('FLASK_HOST', '127.0.0.1')
     
+    # ------------------------------------------------------------------------------
+    # Пути к директориям (для legacy file mode)
+    # ------------------------------------------------------------------------------
+    
+    @property
+    def BASE_DIR(self) -> str:
+        """Корневая директория проекта."""
+        return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    
+    @property
+    def UPLOAD_FOLDER(self) -> str:
+        """Папка для загруженных файлов (legacy mode)."""
+        return os.path.join(self.BASE_DIR, 'uploads')
+    
+    @property
+    def INDEX_FOLDER(self) -> str:
+        """Папка для индексов и технических файлов (legacy mode)."""
+        return os.path.join(self.BASE_DIR, 'index')
+    
+    @property
+    def LOGS_DIR(self) -> str:
+        """Папка для логов."""
+        return os.path.join(self.BASE_DIR, 'logs')
+    
+    @property
+    def PROMPTS_FOLDER(self) -> str:
+        """Папка для сохранённых промптов."""
+        return os.path.join(self.BASE_DIR, 'PROMPT')
+    
+    @property
+    def SEARCH_RESULTS_FILE(self) -> str:
+        """Файл с результатами поиска (legacy mode)."""
+        return os.path.join(self.INDEX_FOLDER, 'search_results.json')
+    
+    @property
+    def SECRET_KEY(self) -> str:
+        """Flask SECRET_KEY (для совместимости)."""
+        return self.flask_secret_key
+    
+    @property
+    def JSON_AS_ASCII(self) -> bool:
+        """Отключить ASCII-кодирование JSON (для кириллицы)."""
+        return False
+    
+    @property
+    def MAX_CONTENT_LENGTH(self) -> int:
+        """Максимальный размер загружаемого файла в байтах."""
+        max_mb = int(os.getenv('MAX_UPLOAD_SIZE_MB', '100'))
+        return max_mb * 1024 * 1024
+    
+    @property
+    def REQUEST_TIMEOUT(self) -> int:
+        """Таймаут обработки запроса в секундах."""
+        return int(os.getenv('REQUEST_TIMEOUT', '30'))
+    
+    @property
+    def LOG_FILE(self) -> str:
+        """Путь к основному лог-файлу."""
+        return os.path.join(self.LOGS_DIR, 'app.log')
+    
+    @property
+    def LOG_LEVEL(self) -> str:
+        """Уровень логирования (для совместимости)."""
+        return self.log_level
+    
+    @property
+    def LOG_BACKUP_COUNT(self) -> int:
+        """Количество архивных лог-файлов."""
+        return 7
+    
     @property
     def debug_mode(self) -> bool:
         """Режим отладки (детальные трейсбэки)."""
