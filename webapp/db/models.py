@@ -5,6 +5,7 @@
 
 from datetime import datetime
 from typing import Optional
+import enum
 
 from sqlalchemy import (
     Column, Integer, String, Text, Boolean, DateTime, 
@@ -14,6 +15,56 @@ from sqlalchemy.orm import relationship
 from pgvector.sqlalchemy import Vector
 
 from webapp.db.base import Base
+
+
+# ==============================================================================
+# ENUM TYPES
+# ==============================================================================
+
+class UserRole(str, enum.Enum):
+    """Роли пользователей."""
+    USER = 'user'
+    ADMIN = 'admin'
+
+
+class DocumentStatus(str, enum.Enum):
+    """Статусы обработки документов."""
+    PENDING = 'new'  # Новый/ожидает обработки
+    PROCESSING = 'parsed'  # Парсится
+    INDEXED = 'indexed'  # Проиндексирован
+    FAILED = 'error'  # Ошибка
+
+
+class MessageRole(str, enum.Enum):
+    """Роли сообщений в диалоге."""
+    USER = 'user'
+    ASSISTANT = 'assistant'
+    SYSTEM = 'system'
+
+
+class LogLevel(str, enum.Enum):
+    """Уровни логирования."""
+    DEBUG = 'DEBUG'
+    INFO = 'INFO'
+    WARNING = 'WARNING'
+    ERROR = 'ERROR'
+    CRITICAL = 'CRITICAL'
+
+
+class JobType(str, enum.Enum):
+    """Типы фоновых задач."""
+    INDEX = 'index'
+    OCR = 'ocr'
+    EMBED = 'embed'
+    CLEANUP = 'cleanup'
+
+
+class JobStatus(str, enum.Enum):
+    """Статусы выполнения задач."""
+    QUEUED = 'queued'
+    RUNNING = 'running'
+    DONE = 'done'
+    ERROR = 'error'
 
 
 # ==============================================================================

@@ -8,6 +8,16 @@
 2. Git commit hash: b085dea
 Prominent отображение стоимости в рублях
 
+3. Git commit hash: c7797d32f138dc1f71d3930c1d424b517ac17371
+Дата: 04.11.2025
+Increment: 013 (PostgreSQL миграция с pgvector, шаги 1-6)
+- Настроен ConfigService, Alembic, SQLAlchemy base layer
+- Созданы 11 моделей БД (User, Session, Document, Chunk, AIConversation и т.д.)
+- Применена миграция 14c42e5d4b45 к PostgreSQL app_db
+- Установлено расширение pgvector 0.8.1
+- Все тесты passed: test_config_env, test_alembic_setup, test_db_session, test_db_models_schema, test_alembic_migrations, test_postgres_integration (9/9)
+- Создан скрипт диагностики: scripts/check_db_status.py
+
 Градиентный зелёный фон с тенью для блока итоговой суммы
 Увеличенный шрифт (18px, bold, тёмно-зелёный)
 Визуально выделяется в финальном отчёте анализа
