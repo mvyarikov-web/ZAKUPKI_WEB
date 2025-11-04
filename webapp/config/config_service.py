@@ -279,6 +279,25 @@ class ConfigService:
         return int(os.getenv('INDEXING_TIMEOUT_SECONDS', '300'))
     
     # ------------------------------------------------------------------------------
+    # Форматы файлов
+    # ------------------------------------------------------------------------------
+    
+    @property
+    def ALLOWED_EXTENSIONS(self) -> set:
+        """Разрешённые расширения файлов для загрузки и индексации."""
+        return {'pdf', 'doc', 'docx', 'xls', 'xlsx', 'txt', 'html', 'htm', 'csv', 'tsv', 'xml', 'json'}
+    
+    @property
+    def PREVIEW_INLINE_EXTENSIONS(self) -> set:
+        """Расширения файлов, которые можно показывать inline в браузере."""
+        return {'pdf', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'}
+    
+    @property
+    def WEB_VIEWABLE_EXTENSIONS(self) -> set:
+        """Расширения файлов, которые можно просматривать в веб-интерфейсе."""
+        return {'html', 'htm', 'txt', 'csv', 'tsv', 'xml', 'json', 'pdf', 'doc', 'docx', 'xls', 'xlsx'}
+    
+    # ------------------------------------------------------------------------------
     # pgvector настройки
     # ------------------------------------------------------------------------------
     

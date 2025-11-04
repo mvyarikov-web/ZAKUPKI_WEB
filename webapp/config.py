@@ -113,7 +113,12 @@ config_by_name = {
 
 
 def get_config(config_name=None):
-    """Получить конфигурацию по имени или из переменной окружения."""
+    """Получить конфигурацию по имени или из переменной окружения.
+    
+    Returns:
+        Экземпляр класса конфигурации
+    """
     if config_name is None:
         config_name = os.environ.get('FLASK_ENV', 'default')
-    return config_by_name.get(config_name, DevConfig)
+    config_class = config_by_name.get(config_name, DevConfig)
+    return config_class()  # Возвращаем экземпляр, а не класс
