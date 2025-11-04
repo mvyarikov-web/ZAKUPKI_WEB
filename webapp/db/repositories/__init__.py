@@ -7,6 +7,7 @@ from .document_repository import DocumentRepository
 from .chunk_repository import ChunkRepository
 from .session_repository import SessionRepository
 from .api_key_repository import ApiKeyRepository
+from .search_history_repository import SearchHistoryRepository
 
 __all__ = [
     "BaseRepository",
@@ -15,4 +16,5 @@ __all__ = [
     "ChunkRepository",
     "SessionRepository",
     "ApiKeyRepository",
+    "SearchHistoryRepository",
 ]
