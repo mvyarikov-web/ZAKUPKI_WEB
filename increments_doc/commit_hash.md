@@ -98,6 +98,24 @@ Increment: 013 (Шаг 12: Индексация с pgvector)
 - Тесты: 7/7 passed (извлечение, чанкинг, SHA256, mock embeddings, индексация, переиндексация)
 - Статус: Готов к интеграции с воркером индексации и background tasks
 
+11. Git commit hash: 8116df8
+Дата: 04.11.2025
+Increment: 013 (Шаг 13: Поиск и история)
+- SearchService: гибридный поиск по документам
+  * keyword_search: полнотекстовый поиск по chunks.text (SQL LIKE)
+  * semantic_search: векторный поиск через pgvector (cosine similarity)
+  * hybrid_search: комбинация keyword + semantic с весами (default: 0.3 keyword, 0.7 semantic)
+  * make_snippet: создание сниппетов с контекстом вокруг запроса (~200 символов)
+  * generate_query_embedding: OpenAI embeddings для запроса
+  * save_to_history: запись запросов в search_history
+- SearchHistoryRepository: CRUD для истории поиска
+  * create_search_record: сохранение запроса с фильтрами и количеством результатов
+  * get_by_user/get_recent: получение истории (по дате desc)
+  * delete_old: очистка записей старше N дней
+- SearchResult: класс результата (chunk, score, snippet, document_id, document_name, to_dict())
+- Тесты: 6 passed, 2 skipped (pgvector требует PostgreSQL, тесты для keyword/history прошли)
+- Статус: Готов к интеграции с Flask роутами и UI
+
 7. Git commit hash: 451702e
 Дата: 04.11.2025
 Increment: 013 (Шаг 9: AuthService и JWT-поток аутентификации)
