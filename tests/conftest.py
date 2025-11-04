@@ -90,3 +90,15 @@ def make_root(tmp_path: Path):
     root = tmp_path / "root"
     root.mkdir()
     return root
+
+
+@pytest.fixture
+def client():
+    """Flask test client для тестов endpoints."""
+    from webapp import create_app
+    
+    app = create_app()
+    app.config['TESTING'] = True
+    
+    with app.test_client() as client:
+        yield client
