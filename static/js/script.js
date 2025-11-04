@@ -121,12 +121,80 @@ function handleFiles(e) {
 
 
 
+// --- Render Tree (Recursive) ---
+function renderTreeNode(folderName, treeNode, file_statuses, folderStates, depth = 0) {
+    const { folders = {}, files = [] } = treeNode;
+    const folderId = `folder-${folderName}-${depth}`;
+    const isExpanded = folderStates[folderId] !== false; // По умолчанию развёрнуты
+    
+    const folderDiv = document.createElement('div');
+    folderDiv.className = 'folder-container';
+    folderDiv.id = folderId;
+    folderDiv.style.marginLeft = `${depth * 20}px`; // Отступ для вложенности
+    
+    const headerDiv = document.createElement('div');
+    headerDiv.className = 'folder-header';
+    headerDiv.onclick = () => toggleFolder(folderId.replace('folder-', ''));
+    
+    // Подсчитываем общее количество файлов в папке и подпапках
+    const totalFiles = files.length + Object.values(folders).reduce((sum, subfolder) => {
+        return sum + countFilesInTree(subfolder);
+    }, 0);
+    
+    headerDiv.innerHTML = `
+        <input type="checkbox" class="folder-checkbox" title="Выбрать все файлы в папке" style="margin-right:8px;">
+        <span class="folder-icon">📁</span>
+        <span class="folder-name">${escapeHtml(folderName)}</span>
+        <span class="file-count-badge">${totalFiles}</span>
+        <span class="toggle-icon">${isExpanded ? '▼' : '▶'}</span>
+    `;
+    
+    const contentDiv = document.createElement('div');
+    contentDiv.className = 'folder-content';
+    contentDiv.style.display = isExpanded ? 'block' : 'none';
+    
+    // Добавляем файлы текущей папки
+    files.forEach(file => {
+        const fileDiv = renderFileItem(file, file_statuses);
+        contentDiv.appendChild(fileDiv);
+    });
+    
+    // Рекурсивно добавляем подпапки
+    Object.keys(folders).sort().forEach(subfolderName => {
+        const subfolderNode = folders[subfolderName];
+        const subfolderDiv = renderTreeNode(subfolderName, subfolderNode, file_statuses, folderStates, depth + 1);
+        contentDiv.appendChild(subfolderDiv);
+    });
+    
+    // Обработчик для чекбокса папки: выбрать/снять все в папке
+    const folderCheckbox = headerDiv.querySelector('.folder-checkbox');
+    if (folderCheckbox) {
+        folderCheckbox.addEventListener('click', (ev) => ev.stopPropagation());
+        folderCheckbox.addEventListener('change', (ev) => {
+            const checked = ev.target.checked;
+            const cbs = contentDiv.querySelectorAll('.file-checkbox');
+            cbs.forEach(cb => { cb.checked = checked; });
+        });
+    }
+    
+    folderDiv.appendChild(headerDiv);
+    folderDiv.appendChild(contentDiv);
+    return folderDiv;
+}
+
+function countFilesInTree(treeNode) {
+    const { folders = {}, files = [] } = treeNode;
+    return files.length + Object.values(folders).reduce((sum, subfolder) => {
+        return sum + countFilesInTree(subfolder);
+    }, 0);
+}
+
 // --- Update Files List ---
 function updateFilesList() {
     return fetch('/files_json')
         .then(res => res.json())
         .then(data => {
-            const { folders = {}, file_statuses = {} } = data;
+            const { tree = {folders: {}, files: []}, file_statuses = {} } = data;
             
             // Сохраняем состояния открытых/закрытых папок
             const folderStates = {};
@@ -141,52 +209,16 @@ function updateFilesList() {
             // Очищаем список
             filesList.innerHTML = '';
             
-            // Отображаем папки
-            Object.keys(folders).sort().forEach(folderKey => {
-                const files = folders[folderKey];
-                const folderName = folderKey === 'root' ? 'Загруженные файлы' : folderKey;
-                const folderId = `folder-${folderName}`;
-                const isExpanded = folderStates[folderId] !== false; // По умолчанию развёрнуты
-                
-                const folderDiv = document.createElement('div');
-                folderDiv.className = 'folder-container';
-                folderDiv.id = folderId;
-                
-                const headerDiv = document.createElement('div');
-                headerDiv.className = 'folder-header';
-                headerDiv.onclick = () => toggleFolder(folderName);
-                
-                headerDiv.innerHTML = `
-                    <input type="checkbox" class="folder-checkbox" title="Выбрать все файлы в папке" style="margin-right:8px;">
-                    <span class="folder-icon">📁</span>
-                    <span class="folder-name">${escapeHtml(folderName)}</span>
-                    <span class="file-count-badge">${files.length}</span>
-                    <span class="toggle-icon">${isExpanded ? '▼' : '▶'}</span>
-                `;
-                
-                const contentDiv = document.createElement('div');
-                contentDiv.className = 'folder-content';
-                contentDiv.style.display = isExpanded ? 'block' : 'none';
-                
-                // Добавляем файлы
-                files.forEach(file => {
-                    const fileDiv = renderFileItem(file, file_statuses);
-                    contentDiv.appendChild(fileDiv);
-                });
-
-                // Обработчик для чекбокса папки: выбрать/снять все в папке
-                const folderCheckbox = headerDiv.querySelector('.folder-checkbox');
-                if (folderCheckbox) {
-                    folderCheckbox.addEventListener('click', (ev) => ev.stopPropagation());
-                    folderCheckbox.addEventListener('change', (ev) => {
-                        const checked = ev.target.checked;
-                        const cbs = contentDiv.querySelectorAll('.file-checkbox');
-                        cbs.forEach(cb => { cb.checked = checked; });
-                    });
-                }
-
-                folderDiv.appendChild(headerDiv);
-                folderDiv.appendChild(contentDiv);
+            // Отображаем корневые файлы (если есть)
+            if (tree.files && tree.files.length > 0) {
+                const rootDiv = renderTreeNode('Загруженные файлы', {files: tree.files, folders: {}}, file_statuses, folderStates, 0);
+                filesList.appendChild(rootDiv);
+            }
+            
+            // Отображаем папки верхнего уровня
+            Object.keys(tree.folders).sort().forEach(folderName => {
+                const folderNode = tree.folders[folderName];
+                const folderDiv = renderTreeNode(folderName, folderNode, file_statuses, folderStates, 0);
                 filesList.appendChild(folderDiv);
             });
             

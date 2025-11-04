@@ -336,9 +336,96 @@ def clear_all():
         return jsonify({'success': False, 'error': str(e)}), 200
 
 
+def _build_tree_recursive(base_path: str, current_path: str, allowed_extensions: set, all_statuses: dict) -> tuple:
+    """
+    Рекурсивно строит дерево файлов и папок.
+    
+    Args:
+        base_path: Корневой путь (uploads/)
+        current_path: Текущая обрабатываемая папка
+        allowed_extensions: Набор поддерживаемых расширений
+        all_statuses: Словарь статусов файлов
+    
+    Returns:
+        tuple: (tree_structure, file_count)
+            tree_structure: {'folders': {}, 'files': []}
+            file_count: количество файлов
+    """
+    tree = {'folders': {}, 'files': []}
+    file_count = 0
+    
+    try:
+        items = os.listdir(current_path)
+    except (OSError, PermissionError):
+        return tree, 0
+    
+    for item in items:
+        # Пропускаем служебные файлы
+        if item == '_search_index.txt' or item.startswith('~$') or item.startswith('$'):
+            continue
+        
+        item_path = os.path.join(current_path, item)
+        rel_path = os.path.relpath(item_path, base_path)
+        
+        if os.path.isdir(item_path):
+            # Рекурсивно обрабатываем подпапку
+            subtree, subcount = _build_tree_recursive(base_path, item_path, allowed_extensions, all_statuses)
+            tree['folders'][item] = subtree
+            file_count += subcount
+        else:
+            # Это файл
+            file_info = {
+                'name': item,
+                'path': rel_path,
+                'size': os.path.getsize(item_path),
+            }
+            
+            # Проверяем поддержку формата
+            if not allowed_file(item, allowed_extensions):
+                file_info['unsupported'] = True
+                if rel_path not in all_statuses:
+                    all_statuses[rel_path] = {
+                        'status': 'unsupported',
+                        'char_count': 0,
+                        'error': 'Неподдерживаемый формат'
+                    }
+            
+            tree['files'].append(file_info)
+            file_count += 1
+    
+    return tree, file_count
+
+
 @files_bp.get('/files_json')
 def files_json():
-    """JSON-список файлов в uploads (без архивов, без вложенных подпапок)."""
+    """JSON-дерево файлов в uploads с поддержкой вложенных подпапок."""
+    uploads = current_app.config['UPLOAD_FOLDER']
+    if not os.path.exists(uploads):
+        return jsonify({'tree': {'folders': {}, 'files': []}, 'total_files': 0, 'file_statuses': {}})
+    
+    # Получаем статусы всех файлов
+    files_state = _get_files_state()
+    all_statuses = files_state.get_file_status()
+    
+    # Строим рекурсивное дерево
+    tree, total_files = _build_tree_recursive(
+        uploads,
+        uploads,
+        current_app.config['ALLOWED_EXTENSIONS'],
+        all_statuses
+    )
+    
+    return jsonify({
+        'tree': tree,
+        'total_files': total_files,
+        'file_statuses': all_statuses
+    })
+
+
+# Для обратной совместимости: старый формат (плоский)
+@files_bp.get('/files_json_legacy')
+def files_json_legacy():
+    """JSON-список файлов в uploads (старый формат без вложенных подпапок)."""
     uploads = current_app.config['UPLOAD_FOLDER']
     if not os.path.exists(uploads):
         return jsonify({'folders': {}, 'total_files': 0, 'file_statuses': {}})
@@ -350,7 +437,7 @@ def files_json():
     files_state = _get_files_state()
     all_statuses = files_state.get_file_status()
     
-    # Рекурсивно обходим папки, но только на 1 уровень вложенности
+    # Обходим только 1 уровень вложенности
     for item in os.listdir(uploads):
         item_path = os.path.join(uploads, item)
         
