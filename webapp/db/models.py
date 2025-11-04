@@ -103,6 +103,7 @@ class Session(Base):
     user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
     token_hash = Column(String(255), unique=True, nullable=False, index=True)
     expires_at = Column(DateTime, nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)
     ip_address = Column(String(45))  # IPv6 поддержка
     user_agent = Column(Text)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)

@@ -116,12 +116,17 @@ def drop_db():
     Base.metadata.drop_all(bind=engine)
 
 
+# Алиас для совместимости
+get_db_session = SessionLocal
+
+
 # Экспорт для удобного импорта
 __all__ = [
     'Base',
     'engine',
     'SessionLocal',
     'get_db',
+    'get_db_session',
     'get_db_context',
     'init_db',
     'drop_db',

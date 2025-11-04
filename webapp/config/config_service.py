@@ -200,6 +200,21 @@ class ConfigService:
         return 7
     
     @property
+    def JWT_SECRET_KEY(self) -> str:
+        """JWT секретный ключ (Flask-совместимый)."""
+        return self.jwt_secret
+    
+    @property
+    def JWT_ALGORITHM(self) -> str:
+        """JWT алгоритм (Flask-совместимый)."""
+        return self.jwt_algorithm
+    
+    @property
+    def JWT_EXPIRATION_HOURS(self) -> int:
+        """JWT время жизни в часах (Flask-совместимый)."""
+        return self.jwt_expiration_hours
+    
+    @property
     def debug_mode(self) -> bool:
         """Режим отладки (детальные трейсбэки)."""
         return os.getenv('DEBUG_MODE', 'false').lower() == 'true'
