@@ -132,6 +132,7 @@ def create_app(config_name=None):
     
     # Настраиваем хуки для логирования запросов
     from webapp.utils.logging import generate_request_id
+    from webapp.utils.db_log_handler import HTTPRequestLogHandler
     import time
     from flask import g
     
@@ -146,10 +147,21 @@ def create_app(config_name=None):
             elapsed = time.time() - g._start_time
             from flask import request
             rid_str = f'[{g.rid[:8]}]' if hasattr(g, 'rid') and g.rid else ''
+            
+            # Логируем в файл (legacy)
             app.logger.info(
                 '%s %s %s %.3fs %d',
                 rid_str, request.method, request.path, elapsed, response.status_code
             )
+            
+            # Логируем в БД (новый подход)
+            # Исключаем статические файлы и health check
+            if not request.path.startswith('/static/') and request.path != '/health':
+                try:
+                    HTTPRequestLogHandler.log_request(app, request, response, g._start_time)
+                except Exception as e:
+                    app.logger.debug(f'Ошибка записи HTTP лога в БД: {e}')
+        
         return response
     
     app.logger.info('Приложение запущено')

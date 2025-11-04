@@ -42,6 +42,14 @@ def register_error_handlers(app):
     def internal_error(e):
         """Обработчик внутренней ошибки сервера."""
         app.logger.exception('Internal server error')
+        
+        # Логируем ошибку в БД
+        try:
+            from webapp.utils.db_log_handler import ErrorLogHandler
+            ErrorLogHandler.log_error(app, e, component='error_handler')
+        except Exception as log_err:
+            app.logger.debug(f'Не удалось записать ошибку в БД: {log_err}')
+        
         if request.is_json or request.path.startswith('/api'):
             return jsonify({'error': 'Внутренняя ошибка сервера'}), 500
         
