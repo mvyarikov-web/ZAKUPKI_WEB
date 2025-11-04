@@ -48,6 +48,37 @@ Increment: 013 (Завершение шага 8: dual-mode adapter, шаги 8.3
   * Flask-атрибуты: SECRET_KEY, JSON_AS_ASCII, MAX_CONTENT_LENGTH, REQUEST_TIMEOUT
   * Логирование: LOG_FILE, LOG_LEVEL, LOG_BACKUP_COUNT
 - Исправлен webapp/__init__.py:
+
+7. Git commit hash: 451702e
+Дата: 04.11.2025
+Increment: 013 (Шаг 9: AuthService и JWT-поток аутентификации)
+Реализована полная система аутентификации с JWT токенами:
+
+**Компоненты (новые файлы):**
+- webapp/auth/jwt_manager.py: JWT генерация, верификация, хеширование токенов
+- webapp/services/auth_service.py: бизнес-логика регистрации, логина, валидации
+- webapp/db/repositories/session_repository.py: CRUD операции для сессий пользователей
+- webapp/middleware/auth_middleware.py: автоматическая валидация токенов, декоратор @require_auth
+- webapp/routes/auth.py: 5 REST эндпоинтов (register, login, logout, me, change-password)
+
+**Изменения в существующих файлах:**
+- webapp/db/models.py: добавлено поле Session.is_active (Boolean, default=True)
+- webapp/config/config_service.py: добавлены Flask-совместимые JWT свойства (JWT_SECRET_KEY, JWT_ALGORITHM, JWT_EXPIRATION_HOURS)
+- webapp/__init__.py: регистрация auth_bp blueprint и setup_auth_middleware()
+- webapp/db/base.py: добавлен alias get_db_session = SessionLocal
+- webapp/db/repositories/__init__.py: экспорт SessionRepository
+
+**Тесты:**
+- tests/test_auth_flow.py: 15 интеграционных тестов
+- tests/test_auth_minimal.py: минимальный тест регистрация+логин (PASSED)
+
+**Исправления:**
+- Убрана проверка несуществующего User.is_active в AuthService.login()
+- Добавлена конверсия role строки в UserRole enum
+- Исправлено управление сессиями БД (SessionLocal() + close в finally)
+- Контекстный менеджер get_auth_service() с автоматическим commit/rollback
+
+**Статус:** Основная функциональность протестирована и работает
   * Изменён вызов get_config() на singleton без параметров
   * Исправлено: app.config.from_object(config_service)
 - Проверен запуск приложения в обоих режимах:
