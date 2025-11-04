@@ -79,7 +79,7 @@ def create_app(config_name=None):
     os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
     os.makedirs(app.config['INDEX_FOLDER'], exist_ok=True)
     os.makedirs(app.config['LOGS_DIR'], exist_ok=True)
-    os.makedirs(app.config['PROMPTS_FOLDER'], exist_ok=True)
+    # PROMPTS_FOLDER больше не используется - промпты хранятся в БД
 
     # Таймаут для долгих запросов (например, сборка индекса)
     try:
@@ -111,6 +111,7 @@ def create_app(config_name=None):
     from webapp.routes.ai_analysis import ai_analysis_bp
     from webapp.routes.ai_rag import ai_rag_bp
     from webapp.routes.auth import auth_bp
+    from webapp.routes.prompts import prompts_bp
     
     # Используем БД-версию API ключей вместо legacy
     from webapp.routes.api_keys_db import api_keys_new_bp
@@ -123,6 +124,7 @@ def create_app(config_name=None):
     app.register_blueprint(ai_rag_bp)
     app.register_blueprint(api_keys_new_bp)
     app.register_blueprint(auth_bp)
+    app.register_blueprint(prompts_bp)
     
     # Настраиваем auth middleware
     from webapp.middleware.auth_middleware import setup_auth_middleware

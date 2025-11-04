@@ -92,6 +92,7 @@ class User(Base):
     search_history = relationship('SearchHistory', back_populates='user')
     api_keys = relationship('APIKey', back_populates='user')
     user_models = relationship('UserModel', back_populates='user')
+    prompts = relationship('Prompt', back_populates='user')
     
     def __repr__(self):
         return f"<User(id={self.id}, email='{self.email}', role='{self.role}')>"
@@ -286,6 +287,29 @@ class APIKey(Base):
         return f"<APIKey(id={self.id}, user_id={self.user_id}, provider='{self.provider}')>"
 
 
+class Prompt(Base):
+    """Промпты пользователей."""
+    __tablename__ = 'prompts'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    name = Column(String(255), nullable=False)  # Название промпта
+    content = Column(Text, nullable=False)  # Текст промпта
+    is_shared = Column(Boolean, default=False)  # Доступен всем пользователям (админский)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Связи
+    user = relationship('User', back_populates='prompts')
+    
+    __table_args__ = (
+        Index('idx_prompts_user', 'user_id'),
+    )
+    
+    def __repr__(self):
+        return f"<Prompt(id={self.id}, user_id={self.user_id}, name='{self.name}')>"
+
+
 class UserModel(Base):
     """Модели пользователя с настройками и ценами."""
     __tablename__ = 'user_models'
@@ -371,6 +395,7 @@ __all__ = [
     'SearchHistory',
     'APIKey',
     'UserModel',
+    'Prompt',
     'AppLog',
     'JobQueue',
 ]
