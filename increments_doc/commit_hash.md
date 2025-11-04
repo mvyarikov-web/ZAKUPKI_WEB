@@ -85,6 +85,19 @@ Increment: 013 (Шаг 11: Загрузка документов в БД)
 - Тесты: 8/8 passed (SHA256, валидация, CRUD, дедупликация, FileStorage)
 - Статус: Сервис готов к интеграции с роутами Flask
 
+10. Git commit hash: 7dfd04d
+Дата: 04.11.2025
+Increment: 013 (Шаг 12: Индексация с pgvector)
+- IndexingService: сервис индексации документов
+  * extract_text_from_blob: извлечение текста из bytea (UTF-8/CP1251/Latin-1)
+  * split_into_chunks: разбивка по предложениям (~2000 символов, перекрытие 50)
+  * generate_embeddings: OpenAI text-embedding-3-small (1536 dimensions)
+  * index_document: полный цикл - извлечение → чанкинг → embeddings → bulk insert в chunks
+  * index_pending_documents: пакетная обработка документов в статусе PENDING
+- ChunkRepository: методы уже были (create_many, get_by_document, delete_by_document, vector_search)
+- Тесты: 7/7 passed (извлечение, чанкинг, SHA256, mock embeddings, индексация, переиндексация)
+- Статус: Готов к интеграции с воркером индексации и background tasks
+
 7. Git commit hash: 451702e
 Дата: 04.11.2025
 Increment: 013 (Шаг 9: AuthService и JWT-поток аутентификации)
