@@ -69,6 +69,13 @@ __pycache__/
 
 # Backup files
 app_old.py
+__legacy_backup__/
+__legacy_PROMPT_backup__/
+
+# API keys and sensitive data
+api_keys.json
+**/api_keys.json
+
 # AI Analysis prompts (keep folder structure, ignore content)
 /PROMPT/*
 !/PROMPT/.gitkeep
