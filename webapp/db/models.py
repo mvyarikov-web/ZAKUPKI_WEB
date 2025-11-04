@@ -81,6 +81,7 @@ class User(Base):
     role = Column(SQLEnum('user', 'admin', name='user_role'), default='user', nullable=False)
     first_name = Column(String(100), nullable=True)  # Имя пользователя
     last_name = Column(String(100), nullable=True)   # Фамилия пользователя
+    last_folder = Column(String(500), nullable=True)  # Последняя открытая папка
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     

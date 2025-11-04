@@ -12,7 +12,8 @@
 from contextlib import contextmanager
 from flask import Blueprint, request, jsonify, current_app, g, render_template
 from webapp.services.auth_service import AuthService
-from webapp.db.base import SessionLocal
+from webapp.db.base import SessionLocal, get_db
+from webapp.db.models import User
 from webapp.middleware.auth_middleware import require_auth
 
 
@@ -434,6 +435,109 @@ def update_profile():
         
     except Exception as e:
         current_app.logger.error(f"Update profile error: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': 'Внутренняя ошибка сервера'
+        }), 500
+
+
+@auth_bp.route('/save-last-folder', methods=['POST'])
+@require_auth
+def save_last_folder():
+    """
+    Сохранить последнюю открытую папку пользователя.
+    
+    Request:
+        {
+            "folder_path": "Documents_5666261"
+        }
+    
+    Response:
+        {
+            "success": true,
+            "message": "Папка сохранена"
+        }
+    """
+    try:
+        user = g.user
+        data = request.get_json()
+        
+        if not data or 'folder_path' not in data:
+            return jsonify({
+                'success': False,
+                'error': 'Отсутствует folder_path'
+            }), 400
+        
+        folder_path = data['folder_path']
+        
+        # Валидация: длина не более 500 символов
+        if len(folder_path) > 500:
+            return jsonify({
+                'success': False,
+                'error': 'Путь к папке слишком длинный (макс 500 символов)'
+            }), 400
+        
+        db = next(get_db())
+        try:
+            # Обновляем last_folder
+            user_obj = db.query(User).filter(User.id == user.id).first()
+            if user_obj:
+                user_obj.last_folder = folder_path
+                db.commit()
+                
+                return jsonify({
+                    'success': True,
+                    'message': 'Папка сохранена'
+                }), 200
+            else:
+                return jsonify({
+                    'success': False,
+                    'error': 'Пользователь не найден'
+                }), 404
+        finally:
+            db.close()
+        
+    except Exception as e:
+        current_app.logger.error(f"Save last folder error: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': 'Внутренняя ошибка сервера'
+        }), 500
+
+
+@auth_bp.route('/get-last-folder', methods=['GET'])
+@require_auth
+def get_last_folder():
+    """
+    Получить последнюю открытую папку пользователя.
+    
+    Response:
+        {
+            "success": true,
+            "folder_path": "Documents_5666261"
+        }
+    """
+    try:
+        user = g.user
+        
+        db = next(get_db())
+        try:
+            user_obj = db.query(User).filter(User.id == user.id).first()
+            if user_obj:
+                return jsonify({
+                    'success': True,
+                    'folder_path': user_obj.last_folder
+                }), 200
+            else:
+                return jsonify({
+                    'success': False,
+                    'error': 'Пользователь не найден'
+                }), 404
+        finally:
+            db.close()
+        
+    except Exception as e:
+        current_app.logger.error(f"Get last folder error: {str(e)}")
         return jsonify({
             'success': False,
             'error': 'Внутренняя ошибка сервера'
