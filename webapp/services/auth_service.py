@@ -311,3 +311,48 @@ class AuthService:
             return True, None
         else:
             return False, 'Ошибка при обновлении пароля'
+    
+    def update_user_name(
+        self,
+        user_id: int,
+        first_name: Optional[str] = None,
+        last_name: Optional[str] = None
+    ) -> bool:
+        """
+        Обновляет имя и фамилию пользователя.
+        
+        Args:
+            user_id: ID пользователя
+            first_name: Имя (необязательно)
+            last_name: Фамилия (необязательно)
+            
+        Returns:
+            True если успешно, False иначе
+        """
+        return self.user_repo.update_user_name(user_id, first_name, last_name)
+    
+    def update_user_email(
+        self,
+        user_id: int,
+        new_email: str
+    ) -> Tuple[bool, Optional[str]]:
+        """
+        Обновляет email пользователя.
+        
+        Args:
+            user_id: ID пользователя
+            new_email: Новый email
+            
+        Returns:
+            Кортеж (успех, ошибка)
+        """
+        # Проверяем, не занят ли email
+        existing_user = self.user_repo.get_by_email(new_email)
+        if existing_user and existing_user.id != user_id:
+            return False, 'Этот email уже используется другим пользователем'
+        
+        success = self.user_repo.update_user_email(user_id, new_email)
+        if success:
+            return True, None
+        else:
+            return False, 'Ошибка при обновлении email'

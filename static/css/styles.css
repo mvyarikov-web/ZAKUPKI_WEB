@@ -1137,6 +1137,20 @@ section h2 {
     font-weight: 500;
 }
 
+.user-panel .user-info-clickable {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 6px;
+    transition: background 0.2s ease;
+}
+
+.user-panel .user-info-clickable:hover {
+    background: #f0f0f0;
+}
+
 .user-panel .logout-btn {
     background: none;
     border: none;

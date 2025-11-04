@@ -30,7 +30,9 @@ async function getCurrentUser() {
         });
         
         if (response.ok) {
-            return await response.json();
+            const data = await response.json();
+            // API возвращает {success: true, user: {...}}
+            return data.user || data;
         } else {
             // Токен невалиден
             removeAuthToken();
@@ -83,10 +85,12 @@ async function renderUserPanel() {
     const userPanel = document.createElement('div');
     userPanel.className = 'user-panel';
     userPanel.innerHTML = `
-        <span class="user-icon">👤</span>
-        <div class="user-info">
-            <span class="user-label">Пользователь</span>
-            <span class="user-email">${user.email}</span>
+        <div class="user-info-clickable" onclick="window.location.href='/auth/profile'">
+            <span class="user-icon">👤</span>
+            <div class="user-info">
+                <span class="user-label">Пользователь</span>
+                <span class="user-email">${user.email}</span>
+            </div>
         </div>
         <button class="logout-btn" onclick="logout()">
             🚪 Выход

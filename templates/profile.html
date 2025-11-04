@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Профиль пользователя</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: #f5f6fa;
+            padding: 20px;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        .header {
+            background: white;
+            padding: 20px 30px;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .header h1 {
+            font-size: 24px;
+            color: #2c3e50;
+        }
+
+        .back-link {
+            color: #3498db;
+            text-decoration: none;
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            transition: color 0.3s;
+        }
+
+        .back-link:hover {
+            color: #2980b9;
+        }
+
+        .profile-card {
+            background: white;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+
+        .profile-card h2 {
+            font-size: 18px;
+            color: #2c3e50;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #ecf0f1;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #555;
+            font-weight: 500;
+            font-size: 14px;
+        }
+
+        input[type="text"],
+        input[type="email"],
+        input[type="password"] {
+            width: 100%;
+            padding: 12px 16px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: border-color 0.3s;
+        }
+
+        input:focus {
+            outline: none;
+            border-color: #3498db;
+        }
+
+        input:disabled {
+            background: #f5f5f5;
+            cursor: not-allowed;
+        }
+
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 16px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-primary:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .btn-secondary {
+            background: #95a5a6;
+            color: white;
+        }
+
+        .btn-secondary:hover {
+            background: #7f8c8d;
+        }
+
+        .message {
+            padding: 12px 16px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            font-size: 14px;
+            display: none;
+        }
+
+        .message.error {
+            background: #fee;
+            color: #c33;
+            border: 1px solid #fcc;
+        }
+
+        .message.success {
+            background: #efe;
+            color: #3c3;
+            border: 1px solid #cfc;
+        }
+
+        .user-info-display {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+
+        .user-info-display p {
+            margin: 8px 0;
+            color: #555;
+        }
+
+        .user-info-display strong {
+            color: #2c3e50;
+        }
+
+        .divider {
+            height: 1px;
+            background: #ecf0f1;
+            margin: 30px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>👤 Профиль пользователя</h1>
+            <a href="/" class="back-link">← Вернуться на главную</a>
+        </div>
+
+        <div class="profile-card">
+            <h2>Основная информация</h2>
+            
+            <div class="user-info-display" id="userInfoDisplay">
+                <p><strong>ID:</strong> <span id="displayUserId">-</span></p>
+                <p><strong>Email:</strong> <span id="displayUserEmail">-</span></p>
+                <p><strong>Роль:</strong> <span id="displayUserRole">-</span></p>
+                <p><strong>Дата регистрации:</strong> <span id="displayUserCreated">-</span></p>
+            </div>
+
+            <div id="message" class="message"></div>
+
+            <form id="profileForm">
+                <div class="form-group">
+                    <label for="firstName">Имя</label>
+                    <input type="text" id="firstName" placeholder="Введите имя">
+                </div>
+
+                <div class="form-group">
+                    <label for="lastName">Фамилия</label>
+                    <input type="text" id="lastName" placeholder="Введите фамилию">
+                </div>
+
+                <div class="form-group">
+                    <label for="newEmail">Новый Email</label>
+                    <input type="email" id="newEmail" placeholder="Введите новый email (необязательно)">
+                </div>
+
+                <button type="submit" class="btn btn-primary" id="saveBtn">
+                    💾 Сохранить изменения
+                </button>
+            </form>
+        </div>
+
+        <div class="profile-card">
+            <h2>Изменение пароля</h2>
+            
+            <div id="passwordMessage" class="message"></div>
+
+            <form id="passwordForm">
+                <div class="form-group">
+                    <label for="currentPassword">Текущий пароль</label>
+                    <input type="password" id="currentPassword" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="newPassword">Новый пароль</label>
+                    <input type="password" id="newPassword" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="confirmPassword">Подтвердите новый пароль</label>
+                    <input type="password" id="confirmPassword" required>
+                </div>
+
+                <button type="submit" class="btn btn-primary" id="changePasswordBtn">
+                    🔒 Изменить пароль
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/auth.js') }}"></script>
+    <script>
+        // Загрузка информации о пользователе
+        async function loadUserInfo() {
+            try {
+                const user = await getCurrentUser();
+                if (!user) {
+                    window.location.href = '/auth/login_page';
+                    return;
+                }
+
+                document.getElementById('displayUserId').textContent = user.id;
+                document.getElementById('displayUserEmail').textContent = user.email;
+                document.getElementById('displayUserRole').textContent = user.role === 'admin' ? 'Администратор' : 'Пользователь';
+                
+                if (user.created_at) {
+                    const date = new Date(user.created_at);
+                    document.getElementById('displayUserCreated').textContent = date.toLocaleString('ru-RU');
+                }
+
+                // Заполняем поля формы, если есть имя/фамилия
+                if (user.first_name) document.getElementById('firstName').value = user.first_name;
+                if (user.last_name) document.getElementById('lastName').value = user.last_name;
+                
+            } catch (error) {
+                console.error('Ошибка загрузки информации:', error);
+            }
+        }
+
+        // Сообщения
+        function showMessage(text, type = 'error', elementId = 'message') {
+            const messageEl = document.getElementById(elementId);
+            messageEl.textContent = text;
+            messageEl.className = `message ${type}`;
+            messageEl.style.display = 'block';
+            setTimeout(() => {
+                messageEl.style.display = 'none';
+            }, 5000);
+        }
+
+        // Сохранение профиля
+        document.getElementById('profileForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const btn = document.getElementById('saveBtn');
+            btn.disabled = true;
+            btn.textContent = 'Сохранение...';
+
+            const firstName = document.getElementById('firstName').value.trim();
+            const lastName = document.getElementById('lastName').value.trim();
+            const newEmail = document.getElementById('newEmail').value.trim();
+
+            const data = {};
+            if (firstName) data.first_name = firstName;
+            if (lastName) data.last_name = lastName;
+            if (newEmail) data.email = newEmail;
+
+            if (Object.keys(data).length === 0) {
+                showMessage('Нет изменений для сохранения', 'error');
+                btn.disabled = false;
+                btn.textContent = '💾 Сохранить изменения';
+                return;
+            }
+
+            try {
+                const response = await fetch('/auth/update-profile', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+
+                const result = await response.json();
+
+                if (response.ok) {
+                    showMessage('Профиль успешно обновлён!', 'success');
+                    // Перезагружаем информацию
+                    setTimeout(() => loadUserInfo(), 1000);
+                    document.getElementById('newEmail').value = '';
+                } else {
+                    showMessage(result.error || 'Ошибка обновления профиля', 'error');
+                }
+            } catch (error) {
+                showMessage('Ошибка связи с сервером', 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '💾 Сохранить изменения';
+            }
+        });
+
+        // Изменение пароля
+        document.getElementById('passwordForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const btn = document.getElementById('changePasswordBtn');
+            btn.disabled = true;
+            btn.textContent = 'Изменение...';
+
+            const currentPassword = document.getElementById('currentPassword').value;
+            const newPassword = document.getElementById('newPassword').value;
+            const confirmPassword = document.getElementById('confirmPassword').value;
+
+            // Валидация
+            if (newPassword.length < 6) {
+                showMessage('Новый пароль должен содержать минимум 6 символов', 'error', 'passwordMessage');
+                btn.disabled = false;
+                btn.textContent = '🔒 Изменить пароль';
+                return;
+            }
+
+            if (newPassword !== confirmPassword) {
+                showMessage('Пароли не совпадают', 'error', 'passwordMessage');
+                btn.disabled = false;
+                btn.textContent = '🔒 Изменить пароль';
+                return;
+            }
+
+            try {
+                const response = await fetch('/auth/change-password', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        current_password: currentPassword,
+                        new_password: newPassword
+                    })
+                });
+
+                const result = await response.json();
+
+                if (response.ok) {
+                    showMessage('Пароль успешно изменён!', 'success', 'passwordMessage');
+                    document.getElementById('passwordForm').reset();
+                } else {
+                    showMessage(result.error || 'Ошибка изменения пароля', 'error', 'passwordMessage');
+                }
+            } catch (error) {
+                showMessage('Ошибка связи с сервером', 'error', 'passwordMessage');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '🔒 Изменить пароль';
+            }
+        });
+
+        // Загрузка при старте
+        loadUserInfo();
+    </script>
+</body>
+</html>

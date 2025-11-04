@@ -79,6 +79,8 @@ class User(Base):
     email = Column(String(255), unique=True, nullable=False, index=True)
     password_hash = Column(String(255), nullable=False)
     role = Column(SQLEnum('user', 'admin', name='user_role'), default='user', nullable=False)
+    first_name = Column(String(100), nullable=True)  # Имя пользователя
+    last_name = Column(String(100), nullable=True)   # Фамилия пользователя
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     

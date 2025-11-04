@@ -293,6 +293,8 @@ def get_current_user():
                 'id': user.id,
                 'email': user.email,
                 'role': user.role,
+                'first_name': user.first_name,
+                'last_name': user.last_name,
                 'created_at': user.created_at.isoformat() if user.created_at else None
             }
         }), 200
@@ -365,6 +367,70 @@ def change_password():
         
     except Exception as e:
         current_app.logger.error(f"Change password error: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': 'Внутренняя ошибка сервера'
+        }), 500
+
+
+@auth_bp.route('/profile')
+@require_auth
+def profile_page():
+    """Страница профиля пользователя"""
+    return render_template('profile.html')
+
+
+@auth_bp.route('/update-profile', methods=['POST'])
+@require_auth
+def update_profile():
+    """Обновление профиля пользователя
+    
+    Позволяет изменить:
+    - Имя (first_name)
+    - Фамилию (last_name)
+    - Email
+    """
+    try:
+        user = g.user
+        data = request.get_json()
+        
+        first_name = data.get('first_name', '').strip()
+        last_name = data.get('last_name', '').strip()
+        new_email = data.get('email', '').strip()
+        
+        with get_auth_service() as auth_service:
+            # Обновляем имя/фамилию если указаны
+            if first_name or last_name:
+                success = auth_service.update_user_name(user.id, first_name, last_name)
+                if not success:
+                    return jsonify({
+                        'success': False,
+                        'error': 'Ошибка обновления имени'
+                    }), 400
+            
+            # Обновляем email если указан
+            if new_email and new_email != user.email:
+                # Проверяем email
+                if '@' not in new_email:
+                    return jsonify({
+                        'success': False,
+                        'error': 'Некорректный формат email'
+                    }), 400
+                
+                success, error = auth_service.update_user_email(user.id, new_email)
+                if not success:
+                    return jsonify({
+                        'success': False,
+                        'error': error or 'Ошибка обновления email'
+                    }), 400
+        
+        return jsonify({
+            'success': True,
+            'message': 'Профиль успешно обновлён'
+        }), 200
+        
+    except Exception as e:
+        current_app.logger.error(f"Update profile error: {str(e)}")
         return jsonify({
             'success': False,
             'error': 'Внутренняя ошибка сервера'

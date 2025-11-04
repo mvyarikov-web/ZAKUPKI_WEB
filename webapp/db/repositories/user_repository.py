@@ -86,3 +86,46 @@ class UserRepository(BaseRepository[User]):
             Список User
         """
         return self.find_all(limit=limit, offset=offset)
+    
+    def update_user_name(
+        self,
+        user_id: int,
+        first_name: Optional[str] = None,
+        last_name: Optional[str] = None
+    ) -> bool:
+        """
+        Обновить имя и фамилию пользователя.
+        
+        Args:
+            user_id: ID пользователя
+            first_name: Имя (необязательно)
+            last_name: Фамилия (необязательно)
+            
+        Returns:
+            True если успешно, False иначе
+        """
+        update_data = {}
+        if first_name is not None:
+            update_data['first_name'] = first_name
+        if last_name is not None:
+            update_data['last_name'] = last_name
+        
+        if not update_data:
+            return True  # Нечего обновлять
+        
+        result = self.update(user_id, **update_data)
+        return result is not None
+    
+    def update_user_email(self, user_id: int, new_email: str) -> bool:
+        """
+        Обновить email пользователя.
+        
+        Args:
+            user_id: ID пользователя
+            new_email: Новый email
+            
+        Returns:
+            True если успешно, False иначе
+        """
+        result = self.update(user_id, email=new_email)
+        return result is not None
