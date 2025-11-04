@@ -8,6 +8,7 @@ from .chunk_repository import ChunkRepository
 from .session_repository import SessionRepository
 from .api_key_repository import ApiKeyRepository
 from .search_history_repository import SearchHistoryRepository
+from .app_log_repository import AppLogRepository
 
 __all__ = [
     "BaseRepository",
@@ -17,4 +18,5 @@ __all__ = [
     "SessionRepository",
     "ApiKeyRepository",
     "SearchHistoryRepository",
+    "AppLogRepository",
 ]
