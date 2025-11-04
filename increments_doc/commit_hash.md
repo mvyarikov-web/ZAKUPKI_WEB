@@ -133,6 +133,29 @@ Increment: 013 (Шаг 14: Логирование в БД)
 - Тесты: 9/9 passed (запись в БД, маскирование секретов, фильтрация, date range, очистка старых)
 - Статус: Готов к интеграции с Flask app.logger и middleware
 
+13. Git commit hash: b5d3216
+Дата: 04.11.2025
+Increment: 013 (Шаг 15: Миграционный скрипт и документация)
+- scripts/migrate_files_to_db.py: скрипт миграции данных с файлов в PostgreSQL
+  * Перенос uploads/ → documents.blob (с SHA256-дедупликацией)
+  * Перенос index/api_keys.json → api_keys (шифрование Fernet)
+  * Перенос index/models.json → ai_model_configs
+  * Создание дефолтного пользователя admin@localhost (пароль: changeme)
+  * Поддержка --dry-run режима для проверки без изменений
+  * Логирование прогресса, итоговая статистика (успехи/ошибки/пропуски)
+- docs/MIGRATION_GUIDE.md: пошаговое руководство миграции
+  * Требования: PostgreSQL 14+, pgvector, Python 3.9+, env vars (DATABASE_URL, API_ENCRYPTION_KEY)
+  * Dry-run → реальная миграция → проверка результатов
+  * Процедура отката через DELETE по временным меткам created_at
+  * Типовые проблемы и решения, советы по безопасности
+- README.md: добавлен раздел "Переход на PostgreSQL (increment 013)"
+  * Ссылка на MIGRATION_GUIDE.md
+  * Краткие шаги миграции (dry-run, env vars, запуск)
+  * Примечание про pgvector для семантического поиска
+- tests/test_health_endpoint_db.py: smoke-тест GET /health
+  * Проверка базового ответа {"status": "ok"}, HTTP 200
+- Статус: Increment 013 (шаги 1-15) завершён, готов к ручной проверке миграции
+
 7. Git commit hash: 451702e
 Дата: 04.11.2025
 Increment: 013 (Шаг 9: AuthService и JWT-поток аутентификации)
