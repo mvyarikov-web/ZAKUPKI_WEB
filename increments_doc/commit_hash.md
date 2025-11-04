@@ -49,6 +49,30 @@ Increment: 013 (Завершение шага 8: dual-mode adapter, шаги 8.3
   * Логирование: LOG_FILE, LOG_LEVEL, LOG_BACKUP_COUNT
 - Исправлен webapp/__init__.py:
 
+7. Git commit hash: 451702e + 1d47822
+Дата: 04.11.2025
+Increment: 013 (Шаг 9: AuthService и JWT-поток)
+- Создан webapp/services/auth_service.py с классом AuthService
+- Методы: register_user(), authenticate_user(), create_jwt_token(), verify_jwt_token()
+- JWT: HS256 алгоритм, 24 часа TTL, payload: user_id, role, exp
+- Пароли: bcrypt хэширование через werkzeug.security
+- UserRepository: create_user(), get_by_email(), get_by_id(), update_password()
+- Тесты: 9/9 passed (регистрация, вход, JWT валидация, ошибки дублирования)
+- Статус: Готов к интеграции с Flask routes
+
+8. Git commit hash: a2d0503
+Дата: 04.11.2025
+Increment: 013 (Шаг 10: Перенос API-ключей в БД)
+- ApiKeyRepository (210 строк): CRUD операции для api_keys
+  * create_key, get_by_provider, get_all_keys, update_key, delete_key
+  * get_by_provider_with_fallback: личный ключ → shared key
+- ApiKeyService (210 строк): Fernet шифрование + валидация
+  * encrypt_key/decrypt_key: симметричное шифрование ключей
+  * validate_key_format: правила по провайдерам (openai, anthropic, perplexity, deepseek)
+  * mask_key: маскировка для UI (показывает только последние N символов)
+- Тесты: 5/5 passed (encryption round-trip, CRUD, mask_key, validation)
+- Статус: Репозиторий и сервис готовы к интеграции с dual-mode adapter
+
 7. Git commit hash: 451702e
 Дата: 04.11.2025
 Increment: 013 (Шаг 9: AuthService и JWT-поток аутентификации)
