@@ -34,7 +34,7 @@ from cryptography.fernet import Fernet
 import bcrypt
 
 from webapp.db.models import (
-    Base, User, Document, ApiKey, AiModelConfig
+    Base, User, Document, APIKey, UserModel
 )
 
 # Настройка логирования
@@ -124,7 +124,6 @@ class FilesToDBMigrator:
         user = User(
             email='admin@localhost',
             password_hash=password_hash,
-            full_name='System Administrator',
             role='admin',
             created_at=datetime.now(timezone.utc)
         )
@@ -170,7 +169,7 @@ class FilesToDBMigrator:
                 # Проверяем дубликаты (только если есть user)
                 if user:
                     existing = self.session.query(Document).filter_by(
-                        user_id=user.id,
+                        owner_id=user.id,
                         sha256=sha256
                     ).first()
                     
@@ -197,15 +196,14 @@ class FilesToDBMigrator:
                 
                 # Создаём запись в БД
                 doc = Document(
-                    user_id=user.id,
+                    owner_id=user.id,
                     original_filename=file_path.name,
                     content_type=content_type,
                     size_bytes=len(content),
                     sha256=sha256,
                     blob=content,  # Храним прямо в БД (для больших файлов можно использовать storage_url)
-                    status='uploaded',
-                    uploaded_at=mtime,
-                    created_at=datetime.now(timezone.utc)
+                    status='new',
+                    uploaded_at=mtime
                 )
                 
                 self.session.add(doc)
@@ -272,11 +270,10 @@ class FilesToDBMigrator:
                             self.stats.api_keys_migrated += 1
                             continue
                         
-                        # Создаём запись
-                        api_key = ApiKey(
+                        # Создаём запись (APIKey не имеет display_name, только provider)
+                        api_key = APIKey(
                             user_id=user.id,
                             provider=provider,
-                            display_name=display_name,
                             key_ciphertext=ciphertext,
                             is_shared=is_shared,
                             created_at=datetime.now(timezone.utc)
@@ -342,7 +339,7 @@ class FilesToDBMigrator:
                         continue
                     
                     # Проверяем дубликат
-                    existing = self.session.query(AiModelConfig).filter_by(
+                    existing = self.session.query(UserModel).filter_by(
                         user_id=user.id,
                         model_id=model_id
                     ).first()
@@ -351,17 +348,19 @@ class FilesToDBMigrator:
                         logger.info(f"SKIP: модель {model_id} уже существует (ID={existing.id})")
                         continue
                     
-                    # Создаём запись
-                    model = AiModelConfig(
+                    # Создаём запись (UserModel использует pricing JSON)
+                    pricing_data = {
+                        'input_price_per_1k': model_info.get('input_price', 0.0),
+                        'output_price_per_1k': model_info.get('output_price', 0.0),
+                        'context_window': model_info.get('context_window', 4096)
+                    }
+                    
+                    model = UserModel(
                         user_id=user.id,
                         model_id=model_id,
-                        provider=model_info.get('provider', 'unknown'),
                         display_name=model_info.get('name', model_id),
-                        input_price_per_1k=model_info.get('input_price', 0.0),
-                        output_price_per_1k=model_info.get('output_price', 0.0),
-                        context_window=model_info.get('context_window', 4096),
+                        pricing=pricing_data,
                         is_active=model_info.get('is_active', True),
-                        is_shared=model_info.get('is_shared', False),
                         created_at=datetime.now(timezone.utc)
                     )
                     
