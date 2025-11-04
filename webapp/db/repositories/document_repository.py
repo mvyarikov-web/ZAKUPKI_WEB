@@ -183,3 +183,16 @@ class DocumentRepository(BaseRepository[Document]):
             status_val = status.value if isinstance(status, DocumentStatus) else status
             return self.count(owner_id=owner_id, status=status_val)
         return self.count(owner_id=owner_id)
+    
+    def get_by_sha256_and_owner(self, sha256: str, owner_id: int) -> Optional[Document]:
+        """
+        Найти документ по SHA256 и владельцу (для дедупликации).
+        
+        Args:
+            sha256: SHA256 хэш файла
+            owner_id: ID владельца
+            
+        Returns:
+            Document или None
+        """
+        return self.find_one(sha256=sha256, owner_id=owner_id)
