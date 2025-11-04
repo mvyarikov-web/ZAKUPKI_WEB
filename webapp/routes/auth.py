@@ -374,9 +374,12 @@ def change_password():
 
 
 @auth_bp.route('/profile')
-@require_auth
 def profile_page():
-    """Страница профиля пользователя"""
+    """Страница профиля пользователя
+    
+    Примечание: Авторизация проверяется на клиенте через auth.js,
+    так как это HTML-страница, а не API эндпоинт.
+    """
     return render_template('profile.html')
 
 

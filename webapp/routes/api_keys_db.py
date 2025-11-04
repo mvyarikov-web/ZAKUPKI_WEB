@@ -11,9 +11,12 @@ api_keys_new_bp = Blueprint('api_keys_new', __name__, url_prefix='/api_keys')
 
 
 @api_keys_new_bp.route('/manage')
-@require_auth
 def manage_page():
-    """Страница управления API ключами"""
+    """Страница управления API ключами
+    
+    Примечание: Авторизация проверяется на клиенте через auth.js,
+    так как это HTML-страница, а не API эндпоинт.
+    """
     return render_template('api_keys_manager_new.html')
 
 
