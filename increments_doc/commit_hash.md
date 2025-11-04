@@ -1,4 +1,14 @@
-1. 14dada8
+1. Git commit hash: 9685e1a9256e9fec4a2f64a62388d4fc85b04c79
+Дата: 04.11.2025 23:29 MSK
+Increment: Очистка Git истории от секретных ключей
+- Использован BFG Repo-Cleaner для удаления api_keys.json из всех коммитов
+- Удалены файлы: __legacy_backup__/api_keys.json, api_keys_manager_multiple.py, api_keys_new.py
+- Выполнен git reflog expire --expire=now --all && git gc --prune=now --aggressive
+- Принудительный push: git push origin main --force
+- ✅ История Git полностью очищена, push в GitHub успешен
+- BFG обработал 233 коммита, удалил 1 файл (api_keys.json, 3.8KB)
+
+2. 14dada8
 Исправлено отображение выбранной модели (display_name) в интерфейсе и сохранение default_model
 Добавлен курс USD/RUB в настройки моделей, расчёт стоимости в рублях
 Автоматический fallback на прямой анализ при ошибке эмбеддинга (OpenAI)
@@ -306,4 +316,11 @@ c7797d32 — Шаги 1-6 (PostgreSQL setup, модели, миграция)
 cda3efe5 — Шаг 7 (репозитории)
 a697bca3 — Шаг 8 (dual-mode adapter)
 5fa66bd7 — Документация и чек-листы ✅
-
+81e40f - feat: миграция промптов из PROMPT/ в PostgreSQL
+f38c7fa - refactor: переписан PromptManager на работу с PostgreSQL
+4542210 - feat: рекурсивное дерево файлов с поддержкой вложенных подпапок
+95dc809 - feat: сохранение последней открытой папки пользователя
+f300812 - рекурсивные чекбоксы
+7af4430 - удаление секретных ключей
+7389e5b - создание таблиц логирования
+2ef3e7a - миграция логирования на PostgreSQL ⬅️ NEW
