@@ -68,6 +68,13 @@ def create_app(config_name=None):
     config_service = get_config()
     app.config.from_object(config_service)
     
+    # Дополнительно устанавливаем property-атрибуты, которые from_object не копирует
+    app.config['use_database'] = config_service.use_database
+    app.config['ALLOWED_EXTENSIONS'] = config_service.ALLOWED_EXTENSIONS
+    app.config['PREVIEW_INLINE_EXTENSIONS'] = config_service.PREVIEW_INLINE_EXTENSIONS
+    app.config['WEB_VIEWABLE_EXTENSIONS'] = config_service.WEB_VIEWABLE_EXTENSIONS
+    app.config['FERNET_ENCRYPTION_KEY'] = config_service.fernet_key.decode('utf-8')
+    
     # Создаем необходимые директории
     os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
     os.makedirs(app.config['INDEX_FOLDER'], exist_ok=True)
@@ -103,8 +110,10 @@ def create_app(config_name=None):
     from webapp.routes.health import health_bp
     from webapp.routes.ai_analysis import ai_analysis_bp
     from webapp.routes.ai_rag import ai_rag_bp
-    from webapp.routes.api_keys_new import api_keys_new_bp
     from webapp.routes.auth import auth_bp
+    
+    # Используем БД-версию API ключей вместо legacy
+    from webapp.routes.api_keys_db import api_keys_new_bp
     
     app.register_blueprint(pages_bp)
     app.register_blueprint(files_bp)

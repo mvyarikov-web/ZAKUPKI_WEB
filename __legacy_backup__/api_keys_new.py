@@ -1,25 +1,39 @@
-"""Blueprint для управления множественными API ключами"""
-from flask import Blueprint, request, jsonify, render_template, current_app
-from utils.api_keys_manager_multiple import get_api_keys_manager_multiple
+"""Blueprint для управления API ключами через БД"""
+from flask import Blueprint, request, jsonify, render_template, current_app, g
+from webapp.services.api_keys_service import APIKeysService
+from webapp.middleware.auth_middleware import require_auth
+from webapp.db.database import get_session
+import logging
+
+logger = logging.getLogger(__name__)
 
 api_keys_new_bp = Blueprint('api_keys_new', __name__, url_prefix='/api_keys')
 
 
 @api_keys_new_bp.route('/manage')
+@require_auth
 def manage_page():
     """Страница управления API ключами"""
     return render_template('api_keys_manager_new.html')
 
 
 @api_keys_new_bp.route('/list_all', methods=['GET'])
+@require_auth
 def list_all_keys():
-    """Получить список всех ключей (множественные)"""
+    """Получить список всех ключей пользователя"""
     try:
-        manager = get_api_keys_manager_multiple()
-        result = manager.list_all_keys()
-        return jsonify(result), 200
+        user_id = g.current_user.id
+        db_session = next(get_session())
+        service = APIKeysService(db_session)
+        
+        keys_info = service.list_keys_info(user_id)
+        
+        return jsonify({
+            'success': True,
+            'keys': keys_info
+        }), 200
     except Exception as e:
-        current_app.logger.exception(f'Ошибка получения списка ключей: {e}')
+        logger.exception(f'Ошибка получения списка ключей: {e}')
         return jsonify({
             'success': False,
             'error': str(e),
@@ -28,6 +42,7 @@ def list_all_keys():
 
 
 @api_keys_new_bp.route('/add', methods=['POST'])
+@require_auth
 def add_key():
     """
     Добавить новый API ключ
@@ -36,7 +51,7 @@ def add_key():
     {
         "provider": "openai" | "deepseek" | "perplexity",
         "api_key": "sk-...",
-        "models_count": 68 (опционально)
+        "is_shared": false (опционально)
     }
     """
     try:
@@ -50,8 +65,7 @@ def add_key():
         
         provider = data.get('provider')
         api_key = data.get('api_key')
-        models_count = data.get('models_count', 0)
-        available_models = data.get('available_models', [])
+        is_shared = data.get('is_shared', False)
         
         if not provider or not api_key:
             return jsonify({
@@ -59,81 +73,94 @@ def add_key():
                 'error': 'Не указан provider или api_key'
             }), 400
         
-        manager = get_api_keys_manager_multiple()
-        result = manager.add_key(provider, api_key, models_count, available_models)
+        if provider not in ['openai', 'deepseek', 'perplexity']:
+            return jsonify({
+                'success': False,
+                'error': f'Неподдерживаемый провайдер: {provider}'
+            }), 400
         
-        if result['success']:
-            return jsonify(result), 200
+        user_id = g.current_user.id
+        db_session = next(get_session())
+        service = APIKeysService(db_session)
+        
+        # Проверяем, есть ли уже ключ для этого провайдера
+        if service.has_key(user_id, provider):
+            # Обновляем существующий
+            service.update_key(user_id, provider, api_key)
+            message = f'Ключ {provider} обновлён'
         else:
-            return jsonify(result), 400
+            # Добавляем новый
+            service.add_key(user_id, provider, api_key, is_shared)
+            message = f'Ключ {provider} добавлен'
+        
+        return jsonify({
+            'success': True,
+            'message': message,
+            'provider': provider
+        }), 200
             
     except Exception as e:
-        current_app.logger.exception(f'Ошибка добавления ключа: {e}')
+        logger.exception(f'Ошибка добавления ключа: {e}')
         return jsonify({
             'success': False,
             'error': str(e)
         }), 500
 
 
-@api_keys_new_bp.route('/set_primary', methods=['PUT'])
-def set_primary():
-    """
-    Установить ключ как основной
-    
-    Ожидает JSON:
-    {
-        "provider": "openai",
-        "key_id": "uuid"
-    }
-    """
+@api_keys_new_bp.route('/delete/<provider>', methods=['DELETE'])
+@require_auth
+def delete_key(provider: str):
+    """Удалить API ключ пользователя для провайдера"""
     try:
-        data = request.get_json()
+        user_id = g.current_user.id
+        db_session = next(get_session())
+        service = APIKeysService(db_session)
         
-        if not data:
+        success = service.delete_key(user_id, provider)
+        
+        if success:
             return jsonify({
-                'success': False,
-                'error': 'Не переданы данные'
-            }), 400
-        
-        provider = data.get('provider')
-        key_id = data.get('key_id')
-        
-        if not provider or not key_id:
-            return jsonify({
-                'success': False,
-                'error': 'Не указан provider или key_id'
-            }), 400
-        
-        manager = get_api_keys_manager_multiple()
-        result = manager.set_primary_key(provider, key_id)
-        
-        if result['success']:
-            return jsonify(result), 200
+                'success': True,
+                'message': f'Ключ {provider} удалён'
+            }), 200
         else:
-            return jsonify(result), 400
+            return jsonify({
+                'success': False,
+                'error': 'Ключ не найден'
+            }), 404
             
     except Exception as e:
-        current_app.logger.exception(f'Ошибка установки основного ключа: {e}')
+        logger.exception(f'Ошибка удаления ключа: {e}')
         return jsonify({
             'success': False,
             'error': str(e)
         }), 500
 
 
-@api_keys_new_bp.route('/delete/<provider>/<key_id>', methods=['DELETE'])
-def delete_key(provider: str, key_id: str):
-    """Удалить API ключ"""
+@api_keys_new_bp.route('/delete_by_id/<int:key_id>', methods=['DELETE'])
+@require_auth
+def delete_key_by_id(key_id: int):
+    """Удалить API ключ по ID"""
     try:
-        manager = get_api_keys_manager_multiple()
-        result = manager.delete_key(provider, key_id)
+        user_id = g.current_user.id
+        db_session = next(get_session())
+        service = APIKeysService(db_session)
         
-        if result['success']:
-            return jsonify(result), 200
+        success = service.delete_key_by_id(user_id, key_id)
+        
+        if success:
+            return jsonify({
+                'success': True,
+                'message': f'Ключ ID={key_id} удалён'
+            }), 200
         else:
-            return jsonify(result), 404
+            return jsonify({
+                'success': False,
+                'error': 'Ключ не найден или не принадлежит пользователю'
+            }), 404
             
     except Exception as e:
-        current_app.logger.exception(f'Ошибка удаления ключа: {e}')
+        logger.exception(f'Ошибка удаления ключа: {e}')
         return jsonify({
             'success': False,
             'error': str(e)

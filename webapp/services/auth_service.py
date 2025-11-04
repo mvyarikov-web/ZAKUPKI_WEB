@@ -270,9 +270,6 @@ class AuthService:
         if not user:
             return None, None, 'Пользователь не найден'
         
-        if not user.is_active:
-            return None, None, 'Аккаунт деактивирован'
-        
         return payload, user, None
     
     def change_password(

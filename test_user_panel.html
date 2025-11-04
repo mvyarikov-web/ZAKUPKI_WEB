@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Тест панели пользователя</title>
+    <link rel="stylesheet" href="static/css/styles.css">
+    <script src="static/js/auth.js"></script>
+</head>
+<body>
+    <div style="padding: 40px;">
+        <h1>Тестовая страница панели пользователя</h1>
+        <p>Если вы авторизованы, в правом верхнем углу должна появиться панель с вашим email.</p>
+        <p>Если нет — вас перенаправит на страницу логина.</p>
+        
+        <div style="margin-top: 40px;">
+            <h2>Тестовые действия</h2>
+            <button onclick="testAuthToken()">Проверить токен</button>
+            <button onclick="testGetUser()">Получить текущего пользователя</button>
+            <button onclick="logout()">Выйти</button>
+        </div>
+        
+        <div id="testResult" style="margin-top: 20px; padding: 10px; border: 1px solid #ccc;"></div>
+    </div>
+    
+    <script>
+        async function testAuthToken() {
+            const token = getAuthToken();
+            const result = document.getElementById('testResult');
+            result.innerHTML = `<strong>Токен:</strong> ${token ? 'Присутствует' : 'Отсутствует'}<br>`;
+            if (token) {
+                result.innerHTML += `<pre>${token}</pre>`;
+            }
+        }
+        
+        async function testGetUser() {
+            const result = document.getElementById('testResult');
+            result.innerHTML = 'Загрузка...';
+            
+            try {
+                const user = await getCurrentUser();
+                if (user) {
+                    result.innerHTML = `<strong>Пользователь:</strong><br><pre>${JSON.stringify(user, null, 2)}</pre>`;
+                } else {
+                    result.innerHTML = `<strong>Ошибка:</strong> пользователь не найден`;
+                }
+            } catch (error) {
+                result.innerHTML = `<strong>Ошибка:</strong> ${error.message}`;
+            }
+        }
+    </script>
+</body>
+</html>

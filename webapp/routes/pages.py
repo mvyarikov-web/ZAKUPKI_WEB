@@ -19,13 +19,6 @@ def _get_files_state():
 @pages_bp.route('/')
 def index():
     """Главная страница"""
-    # Если включен DB-режим, требуем авторизацию
-    if current_app.config.get('use_database'):
-        # Проверяем наличие токена через JavaScript
-        # Если токена нет, перенаправляем на страницу входа
-        return render_template('index_with_auth.html')
-    
-    # Legacy режим (без авторизации)
     # Загружаем сохраненные результаты поиска
     files_state = _get_files_state()
     last_search_terms = files_state.get_last_search_terms()
@@ -92,8 +85,12 @@ def index():
         current_app.logger.warning("Папка uploads не существует")
     
     current_app.logger.info(f"Всего файлов для отображения: {total_files}, папок: {len(files_by_folder)}")
+    
+    # Выбираем правильный шаблон в зависимости от режима БД
+    template_name = 'index_with_auth.html' if current_app.config.get('use_database') else 'index.html'
+    
     return render_template(
-        'index.html',
+        template_name,
         files_by_folder=files_by_folder,
         total_files=total_files,
         last_search_terms=last_search_terms,

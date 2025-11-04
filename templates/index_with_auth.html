@@ -5,47 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Пакетный анализ документов</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
-    <script>
-        // Проверка авторизации при загрузке страницы
-        (function() {
-            const token = localStorage.getItem('auth_token');
-            if (!token) {
-                // Токена нет, перенаправляем на страницу входа
-                window.location.href = '/auth/login_page';
-                return;
-            }
-            
-            // Проверяем валидность токена
-            fetch('/auth/me', {
-                headers: { 'Authorization': `Bearer ${token}` }
-            })
-            .then(response => {
-                if (!response.ok) {
-                    // Токен невалиден, удаляем и перенаправляем
-                    localStorage.removeItem('auth_token');
-                    window.location.href = '/auth/login_page';
-                }
-            })
-            .catch(() => {
-                // Ошибка проверки, перенаправляем
-                localStorage.removeItem('auth_token');
-                window.location.href = '/auth/login_page';
-            });
-        })();
-        
-        // Добавляем токен ко всем fetch-запросам
-        const originalFetch = window.fetch;
-        window.fetch = function(...args) {
-            const token = localStorage.getItem('auth_token');
-            if (token && args[1]) {
-                args[1].headers = args[1].headers || {};
-                args[1].headers['Authorization'] = `Bearer ${token}`;
-            } else if (token && !args[1]) {
-                args[1] = { headers: { 'Authorization': `Bearer ${token}` } };
-            }
-            return originalFetch.apply(this, args);
-        };
-    </script>
+    <script src="{{ url_for('static', filename='js/auth.js') }}"></script>
 </head>
 <body>
     <!-- Область для сообщений на главном экране -->

@@ -18,7 +18,7 @@ from docx.oxml.shared import OxmlElement
 from docx.oxml.ns import qn
 
 from webapp.services.rag_service import get_rag_service
-from utils.api_keys_manager_multiple import get_api_keys_manager_multiple
+from webapp.utils.api_keys_adapter import get_api_keys_manager
 from utils.token_tracker import (
     log_token_usage,
     get_token_stats,
@@ -160,7 +160,7 @@ def _get_api_client(model_id: str, default_api_key: Optional[str], timeout: int)
 
     api_keys_mgr = None
     try:
-        api_keys_mgr = get_api_keys_manager_multiple()
+        api_keys_mgr = get_api_keys_manager()
     except Exception:
         api_keys_mgr = None
 
@@ -213,7 +213,7 @@ def _direct_analyze_without_rag(
     start_time = time.time()
     try:
         # API ключ по умолчанию (уточняется в _get_api_client)
-        api_keys_mgr = get_api_keys_manager_multiple()
+        api_keys_mgr = get_api_keys_manager()
         default_api_key = (api_keys_mgr.get_key("openai") if api_keys_mgr else None) or current_app.config.get("OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY")
 
         # Тексты документов из индекса (если не подавляем)

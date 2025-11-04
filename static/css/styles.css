@@ -1098,6 +1098,79 @@ section h2 {
     transition: background-color 0.3s;
 }
 
+/* Панель пользователя в правом верхнем углу */
+.user-panel {
+    position: fixed;
+    top: 15px;
+    right: 15px;
+    z-index: 10000;
+    background: white;
+    padding: 10px 16px;
+    border-radius: 8px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    border: 1px solid #e9ecef;
+}
+
+.user-panel .user-icon {
+    font-size: 20px;
+}
+
+.user-panel .user-info {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.user-panel .user-label {
+    font-size: 11px;
+    color: #6c757d;
+    text-transform: uppercase;
+    font-weight: 600;
+}
+
+.user-panel .user-email {
+    font-size: 14px;
+    color: #2c3e50;
+    font-weight: 500;
+}
+
+.user-panel .logout-btn {
+    background: none;
+    border: none;
+    color: #e74c3c;
+    cursor: pointer;
+    padding: 6px 10px;
+    border-radius: 4px;
+    font-size: 13px;
+    transition: all 0.3s ease;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.user-panel .logout-btn:hover {
+    background: #ffebee;
+}
+
+@media (max-width: 768px) {
+    .user-panel {
+        top: 10px;
+        right: 10px;
+        padding: 8px 12px;
+    }
+    
+    .user-panel .user-label {
+        display: none;
+    }
+    
+    .user-panel .user-email {
+        font-size: 12px;
+    }
+}
+
 .btn-primary:hover {
     background-color: #2980b9;
 }
