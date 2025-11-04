@@ -1,0 +1,521 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Пакетный анализ документов</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+    <script>
+        // Проверка авторизации при загрузке страницы
+        (function() {
+            const token = localStorage.getItem('auth_token');
+            if (!token) {
+                // Токена нет, перенаправляем на страницу входа
+                window.location.href = '/auth/login_page';
+                return;
+            }
+            
+            // Проверяем валидность токена
+            fetch('/auth/me', {
+                headers: { 'Authorization': `Bearer ${token}` }
+            })
+            .then(response => {
+                if (!response.ok) {
+                    // Токен невалиден, удаляем и перенаправляем
+                    localStorage.removeItem('auth_token');
+                    window.location.href = '/auth/login_page';
+                }
+            })
+            .catch(() => {
+                // Ошибка проверки, перенаправляем
+                localStorage.removeItem('auth_token');
+                window.location.href = '/auth/login_page';
+            });
+        })();
+        
+        // Добавляем токен ко всем fetch-запросам
+        const originalFetch = window.fetch;
+        window.fetch = function(...args) {
+            const token = localStorage.getItem('auth_token');
+            if (token && args[1]) {
+                args[1].headers = args[1].headers || {};
+                args[1].headers['Authorization'] = `Bearer ${token}`;
+            } else if (token && !args[1]) {
+                args[1] = { headers: { 'Authorization': `Bearer ${token}` } };
+            }
+            return originalFetch.apply(this, args);
+        };
+    </script>
+</head>
+<body>
+    <!-- Область для сообщений на главном экране -->
+    <div id="main-message-area" class="message-area" style="display: none;"></div>
+    
+    <div class="container">
+        <header>
+            <h1>Пакетный анализ документов</h1>
+            <p>Поддерживаемые форматы: PDF, DOC, DOCX, XLS, XLSX, TXT, HTML, CSV, TSV, XML, JSON</p>
+        </header>
+
+        <main>
+            <!-- Секция "Инструменты" (объединённая панель управления) -->
+            <section class="tools-section">
+                <h2>Инструменты</h2>
+                <div class="tools-buttons" style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:15px;">
+                    <button id="selectFolderBtn" class="btn btn-secondary">
+                        <i class="icon">📁</i> Открыть папку
+                    </button>
+                    <button id="selectFilesBtn" class="btn btn-secondary">
+                        <i class="icon">�</i> Открыть файлы
+                    </button>
+                    <button id="deleteFilesBtn" class="btn btn-danger">
+                        <i class="icon">🗑️</i> Удалить все
+                    </button>
+                    <a id="viewIndexBtn" class="btn btn-secondary" href="/view_index" target="_blank">
+                        <i class="icon">📜</i> Просмотр индекса
+                    </a>
+                    <button type="button" id="aiAnalysisBtn" class="btn btn-primary">
+                        <i class="icon">🤖</i> Анализ AI
+                    </button>
+                </div>
+                <div id="indexStatus" style="font-size:14px; color:#555; margin-bottom:10px;">Сводный файл: проверяется…</div>
+                
+                <span id="selectedFolderPath" class="folder-path" style="color:#555;"></span>
+                <!-- Прогресс загрузки -->
+                <div id="uploadProgress" class="progress-container" style="display: none; margin-top:10px;">
+                    <div class="progress-bar">
+                        <div id="progressFill" class="progress-fill"></div>
+                    </div>
+                    <span id="progressText">0%</span>
+                </div>
+                <!-- Прогресс построения индекса -->
+                <div id="indexBuildProgress" class="progress-container" style="display: none; margin-top:10px;">
+                    <div class="progress-bar">
+                        <div id="indexBuildFill" class="progress-fill"></div>
+                    </div>
+                    <!-- Таймер сразу за полоской прогресса -->
+                    <div style="width: 100%; margin-top: 5px;">
+                        <span id="indexBuildTime" style="color: #666; font-size: 13px;"></span>
+                    </div>
+                    <!-- Статус ниже таймера -->
+                    <div style="width: 100%; margin-top: 2px;">
+                        <span id="indexBuildText">Построение индекса…</span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Секция поиска -->
+            <section class="search-section">
+                <h2>Поиск по содержимому</h2>
+                <div class="search-container">
+                    <input type="text" id="searchInput" placeholder="Введите ключевые слова через запятую..." value="{{ last_search_terms or '' }}">
+                    <button id="searchBtn" class="btn btn-primary">
+                        <i class="icon">🔍</i> Найти
+                    </button>
+                </div>
+            </section>
+            
+            <!-- Список файлов с метриками извлечения -->
+            <section class="files-section">
+                <h2>Файлы</h2>
+                <div id="filesList" class="files-list">
+                    {% for folder_key, folder in files_by_folder.items() %}
+                    <div class="folder-container" id="folder-{{ folder.display_name }}">
+                        <div class="folder-header" onclick="toggleFolder('{{ folder.display_name }}')">
+                            <input type="checkbox" class="folder-checkbox" title="Выбрать все файлы в папке" onclick="event.stopPropagation();">
+                            <span class="folder-icon">📁</span>
+                            <span class="folder-name">{{ folder.display_name }}</span>
+                            <span class="file-count-badge">{{ folder.files|length }}</span>
+                            <span class="toggle-icon">▼</span>
+                        </div>
+                        <div class="folder-content">
+                            {% for file in folder.files %}
+                            {% set meta = file_status.get(file.path, {}) %}
+                            {% set char_count = meta.get('char_count') %}
+                            {% set status = meta.get('status', 'not_checked') %}
+                            {% set is_unreadable = (status == 'unsupported') or (status == 'error') or (char_count is defined and char_count == 0) %}
+                            <div class="file-item-wrapper" data-file-path="{{ file.path }}">
+                                <div class="file-item{% if is_unreadable %} file-disabled{% endif %}">
+                                    <div class="file-info">
+                                        <input type="checkbox" class="file-checkbox" data-file-path="{{ file.path }}" style="margin-right: 8px;">
+                                        <span class="file-icon">📄</span>
+                                        <div class="file-details">
+                                            {% if is_unreadable %}
+                                            <span class="file-name" title="Файл недоступен для просмотра/скачивания">{{ file.name }}</span>
+                                            {% else %}
+                                            <a class="file-name result-file-link" href="{{ url_for('pages.view_file', filepath=file.path) }}{% if last_search_terms %}?q={{ last_search_terms|urlencode }}{% endif %}" target="_blank" rel="noopener">{{ file.name }}</a>
+                                            {% endif %}
+                                            <span class="file-size">{{ (file.size / 1024)|round(1) }} KB</span>
+                                            {% if char_count is not none %}
+                                            <span class="file-chars{% if char_count == 0 %} text-danger{% endif %}">Символов: {{ char_count }}</span>
+                                            {% endif %}
+                                            {% if meta.get('error') %}
+                                            <span class="file-error text-danger">{{ meta.get('error') }}</span>
+                                            {% elif status == 'unsupported' %}
+                                            <span class="file-error text-danger">Неподдерживаемый формат</span>
+                                            {% endif %}
+                                        </div>
+                                    </div>
+                                </div>
+                                <!-- FR-003, FR-004, FR-005: Контейнер для результатов поиска под файлом -->
+                                <div class="file-search-results" style="display:none;"></div>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Старое модальное окно messageModal удалено - используется MessageManager -->
+
+    <!-- Удален промежуточный экран «Настройка AI анализа» -->
+
+    <!-- Модальное окно для AI анализа -->
+    <div id="ragModal" class="modal" style="display: none;">
+        <div class="modal-content" style="max-width: 1000px;">
+            <div class="modal-header">
+                <h2>AI анализ</h2>
+                <span id="ragModalClose" class="close">&times;</span>
+            </div>
+            
+            <!-- Область для сообщений -->
+            <div id="rag-message-area" class="modal-message-area" style="display: none;"></div>
+            
+            <div class="modal-body">
+                <div style="margin-bottom: 15px;">
+                    <label for="ragPromptText"><strong>Промпт (редактируемый):</strong></label>
+                    <textarea id="ragPromptText" rows="4" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; resize: none;"></textarea>
+                    <div style="margin-top: 8px; display:flex; gap:10px; flex-wrap:wrap;">
+                        <button type="button" id="ragSavePromptBtn" class="btn btn-secondary">💾 Сохранить промпт</button>
+                        <button type="button" id="ragLoadPromptBtn" class="btn btn-secondary">📂 Загрузить промпт</button>
+                        <button type="button" id="btn-optimize-text" class="btn btn-secondary">⚡ Оптимизировать текст</button>
+                    </div>
+                </div>
+                
+                <!-- Дополнительные параметры для Perplexity Search API (показываются только при выборе соответствующей модели) -->
+                <div id="searchApiParams" style="display: none; margin-bottom: 15px; padding: 15px; background: #f9f9f9; border: 1px solid #ddd; border-radius: 4px;">
+                    <h4 style="margin-top: 0;">Параметры Search API</h4>
+                    
+                    <div style="margin-bottom: 10px;">
+                        <label for="searchMaxResults"><strong>Количество результатов (1-20):</strong></label>
+                        <input type="number" id="searchMaxResults" min="1" max="20" value="10" style="width: 100%; padding: 6px; border: 1px solid #ccc; border-radius: 3px;">
+                        <small style="color: #666;">По умолчанию: 10</small>
+                    </div>
+                    
+                    <div style="margin-bottom: 10px;">
+                        <label for="searchDomainFilter"><strong>Фильтр доменов (через запятую):</strong></label>
+                        <input type="text" id="searchDomainFilter" placeholder="example.com, site.ru" style="width: 100%; padding: 6px; border: 1px solid #ccc; border-radius: 3px;">
+                        <small style="color: #666;">Оставьте пустым для поиска по всем доменам. Для исключения используйте минус: -example.com</small>
+                    </div>
+                    
+                    <div style="margin-bottom: 10px;">
+                        <label for="searchRecency"><strong>Свежесть:</strong></label>
+                        <select id="searchRecency" style="width: 100%; padding: 6px; border: 1px solid #ccc; border-radius: 3px;">
+                            <option value="">Без фильтра</option>
+                            <option value="day">День</option>
+                            <option value="week">Неделя</option>
+                            <option value="month">Месяц</option>
+                            <option value="year">Год</option>
+                        </select>
+                    </div>
+                    
+                    <div style="margin-bottom: 10px; display: flex; gap: 10px;">
+                        <div style="flex: 1;">
+                            <label for="searchAfterDate"><strong>После даты:</strong></label>
+                            <input type="date" id="searchAfterDate" style="width: 100%; padding: 6px; border: 1px solid #ccc; border-radius: 3px;">
+                        </div>
+                        <div style="flex: 1;">
+                            <label for="searchBeforeDate"><strong>До даты:</strong></label>
+                            <input type="date" id="searchBeforeDate" style="width: 100%; padding: 6px; border: 1px solid #ccc; border-radius: 3px;">
+                        </div>
+                    </div>
+                    
+                    <div style="margin-bottom: 10px;">
+                        <label for="searchCountry"><strong>Страна (ISO код):</strong></label>
+                        <input type="text" id="searchCountry" placeholder="RU, US, DE" maxlength="2" style="width: 100%; padding: 6px; border: 1px solid #ccc; border-radius: 3px; text-transform: uppercase;">
+                        <small style="color: #666;">Двухбуквенный код страны (например: RU для России)</small>
+                    </div>
+                    
+                    <div style="margin-bottom: 10px;">
+                        <label for="searchMaxTokens"><strong>Токенов на страницу (256-4096):</strong></label>
+                        <input type="range" id="searchMaxTokens" min="256" max="4096" step="128" value="1024" style="width: calc(100% - 60px);">
+                        <span id="searchMaxTokensValue" style="margin-left: 10px; font-weight: bold;">1024</span>
+                        <br><small style="color: #666;">По умолчанию: 1024</small>
+                    </div>
+                </div>
+                
+                <div style="margin-bottom: 15px;">
+                    <label for="ragDocumentsText"><strong>Документы для анализа (редактируемый):</strong></label>
+                    <textarea id="ragDocumentsText" rows="30" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; resize: none;"></textarea>
+                </div>
+                
+                <div style="margin-bottom: 15px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                    <a href="/api_keys/manage" target="_blank" class="btn btn-primary" title="Управление API ключами">
+                        🔑 API keys
+                    </a>
+                    <a href="/ai_rag/token_report" target="_blank" class="btn btn-secondary" title="Открыть отчёт по использованию токенов">
+                        📊 Отчёт по токенам
+                    </a>
+                    <button id="ragModelBtn" class="btn btn-secondary">
+                        🎯 Модель
+                    </button>
+                    <span id="ragCurrentModel" style="font-size: 14px; color: #555;">Модель: не выбрана</span>
+                </div>
+                
+                <div id="ragInfo" style="margin: 15px 0; padding: 12px; background-color: #f8f9fa; border-radius: 4px; font-size: 13px; line-height: 1.6;">
+                    <strong>Информация о запросе:</strong><br>
+                    <span id="ragMetrics">Загрузка...</span>
+                </div>
+
+                <!-- Прогресс AI анализа -->
+                <div id="ragAnalysisProgress" class="progress-container" style="display: none; margin: 15px 0;">
+                    <div class="progress-bar">
+                        <div id="ragAnalysisFill" class="progress-fill"></div>
+                    </div>
+                    <!-- Таймер сразу за полоской прогресса -->
+                    <div style="width: 100%; margin-top: 5px;">
+                        <span id="ragAnalysisTime" style="color: #666; font-size: 13px;"></span>
+                    </div>
+                    <!-- Статус ниже таймера -->
+                    <div style="width: 100%; margin-top: 2px;">
+                        <span id="ragAnalysisStatus" style="color: #888; font-size: 12px;"></span>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer" style="display: flex; gap: 10px; justify-content: flex-end;">
+                <button type="button" id="ragCancelBtn" class="btn btn-secondary">Отмена</button>
+                <button type="button" id="ragStartBtn" class="btn btn-primary">🚀 Начать AI анализ</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Модальное окно для выбора модели и ввода цен -->
+    <div id="modelSelectModal" class="modal" style="display: none;">
+        <div class="modal-content" style="max-width: 1100px;">
+            <div class="modal-header">
+                <h2>🤖 Выбор модели и настройка цен</h2>
+                <span id="modelSelectClose" class="close">&times;</span>
+            </div>
+            <div class="modal-body">
+                <!-- Панель управления сверху -->
+                <div style="margin-bottom: 20px; padding: 15px; background: #f8f9fa; border-radius: 8px; border: 1px solid #e5e7eb;">
+                    <div style="display: flex; gap: 15px; align-items: center; flex-wrap: wrap;">
+                        <div style="display: flex; align-items: center; gap: 10px;">
+                            <span style="font-weight: 500; font-size: 14px; color: #374151;">Курс USD → RUB:</span>
+                            <input type="number" id="usdRubRate" step="0.01" min="0" placeholder="95.50" 
+                                   style="width: 120px; padding: 6px 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px;" />
+                            <span style="color: #6b7280; font-size: 12px;">Для расчёта в рублях</span>
+                        </div>
+                        <div style="margin-left: auto; display: flex; gap: 10px;">
+                            <button id="modelRefreshBtn" class="btn btn-secondary" style="font-size: 13px;">
+                                🔄 Обновить модели
+                            </button>
+                        </div>
+                    </div>
+                    <div style="margin-top: 8px; font-size: 12px; color: #6b7280;">
+                        💡 Обновление моделей из OpenAI API (при наличии ключа). Локальные цены сохраняются.
+                    </div>
+                </div>
+
+                <!-- Таблица моделей -->
+                <div style="overflow-x: auto; margin-bottom: 15px;">
+                    <table id="modelsTable" style="width: 100%; border-collapse: collapse; background: white; box-shadow: 0 1px 3px rgba(0,0,0,0.1); border-radius: 8px; overflow: hidden;">
+                        <thead style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white;">
+                            <tr>
+                                <th style="padding: 12px 15px; text-align: center; font-weight: 600; font-size: 13px; width: 50px;">Выбор</th>
+                                <th style="padding: 12px 15px; text-align: left; font-weight: 600; font-size: 13px;">Модель</th>
+                                <th style="padding: 12px 15px; text-align: center; font-weight: 600; font-size: 13px; width: 80px;">Статус</th>
+                                <th style="padding: 12px 15px; text-align: right; font-weight: 600; font-size: 13px; width: 120px;">Контекст</th>
+                                <th style="padding: 12px 15px; text-align: center; font-weight: 600; font-size: 13px; width: 100px;">Параметры</th>
+                                <th style="padding: 12px 15px; text-align: center; font-weight: 600; font-size: 13px; width: 80px;">Действия</th>
+                            </tr>
+                        </thead>
+                        <tbody id="modelsList">
+                            <!-- Список моделей будет загружен динамически -->
+                            <tr>
+                                <td colspan="6" style="padding: 40px; text-align: center; color: #9ca3af;">
+                                    Загрузка моделей...
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div style="font-size: 12px; color: #6b7280; padding: 10px; background: #f9fafb; border-radius: 6px; border-left: 3px solid #3b82f6;">
+                    <strong>ℹ️ Справка:</strong> Цены указываются за 1 млн токенов ($). Если цена = 0, стоимость не рассчитывается. 
+                    Для моделей с поиском указывается стоимость за 1000 запросов.
+                </div>
+            </div>
+            <div class="modal-footer" style="display: flex; gap: 10px; justify-content: flex-end;">
+                <button id="modelCancelBtn" class="btn btn-secondary">Отмена</button>
+                <button id="modelSaveBtn" class="btn btn-primary">💾 Сохранить изменения</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Модальное окно для добавления новых моделей -->
+    <div id="addModelsModal" class="modal" style="display: none;">
+        <div class="modal-content" style="max-width: 800px;">
+            <div class="modal-header">
+                <h2>Добавить новые модели</h2>
+                <span id="addModelsClose" class="close">&times;</span>
+            </div>
+            <div class="modal-body">
+                <div id="addModelsStatus" style="margin-bottom: 15px; padding: 10px; background: #e3f2fd; border-radius: 6px; display: none;">
+                    <span id="addModelsStatusText"></span>
+                </div>
+                <div id="newModelsList" style="margin-bottom: 15px; max-height: 400px; overflow-y: auto;">
+                    <!-- Список доступных моделей будет загружен динамически -->
+                    <p style="text-align: center; color: #777;">Загрузка...</p>
+                </div>
+                <div style="font-size: 12px; color: #777; margin-top: 10px;">
+                    Выберите модели галочками и нажмите «Добавить выбранные». Модели, уже добавленные в конфигурацию, не отображаются.
+                </div>
+            </div>
+            <div class="modal-footer" style="display: flex; gap: 10px; justify-content: flex-end;">
+                <button id="addModelsCancelBtn" class="btn btn-secondary">Отмена</button>
+                <button id="addModelsConfirmBtn" class="btn btn-primary">Добавить выбранные</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Модальное окно для результатов AI анализа -->
+    <div id="aiResultModal" class="modal" style="display: none;">
+        <div class="modal-content" style="max-width: 900px;">
+            <span class="close" id="aiResultClose">&times;</span>
+            
+            <!-- Блок для отображения ошибок (сверху) -->
+            <div id="aiResultError" style="display: none; margin: 0 0 15px 0; padding: 12px; background: #f8d7da; border: 1px solid #f5c6cb; border-radius: 6px; color: #721c24;">
+                <strong>⚠️ Ошибка:</strong>
+                <span id="aiResultErrorText"></span>
+            </div>
+            
+            <h2>Результат AI анализа</h2>
+            
+            <div id="aiResultContainer" style="margin: 20px 0;">
+                <textarea id="aiResultText" rows="15" style="width: 100%; padding: 10px; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; font-size: 14px; display: none;"></textarea>
+            </div>
+            
+            <div style="margin-top: 20px; display: flex; gap: 10px; justify-content: flex-end;">
+                <button id="openNewTabBtn" class="btn btn-secondary">
+                    🗗 Открыть в новой вкладке
+                </button>
+                <button id="exportDocxBtn" class="btn btn-secondary">
+                    📄 Сохранить как DOCX
+                </button>
+                <button id="copyResultBtn" class="btn btn-secondary">
+                    📋 Копировать в буфер
+                </button>
+                <button id="saveResultBtn" class="btn btn-secondary">
+                    💾 Сохранить в файл
+                </button>
+                <button id="closeResultBtn" class="btn btn-primary">
+                    Закрыть
+                </button>
+            </div>
+        </div>
+    </div>
+
+        <!-- Удалены AI-редактор и прогресс AI анализа -->
+
+
+    <!-- Модальное окно для выбора промпта -->
+    <div id="promptListModal" class="modal" style="display: none;">
+        <div class="modal-content" style="max-width: 600px;">
+            <span class="close" id="promptListClose">&times;</span>
+            <h2>Выбор сохранённого промпта</h2>
+            
+            <div id="promptList" style="margin: 20px 0; max-height: 400px; overflow-y: auto;">
+                <!-- Список промптов будет загружен динамически -->
+            </div>
+            
+            <div style="margin-top: 20px; display: flex; gap: 10px; justify-content: flex-end;">
+                <button id="closePromptListBtn" class="btn btn-secondary">
+                    Закрыть
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Модальное окно для предпросмотра оптимизации -->
+    <div id="modal-optimize-preview" class="modal" style="display: none;">
+        <div class="modal-content" style="max-width: 900px;">
+            <div class="modal-header">
+                <h2>Предпросмотр оптимизации текста</h2>
+                <span class="close" id="optimize-preview-close">&times;</span>
+            </div>
+            
+            <!-- Область для сообщений -->
+            <div id="optimize-message-area" class="modal-message-area" style="display: none;"></div>
+            
+            <div class="modal-body">
+                <div style="margin-bottom: 15px; padding: 10px; background: #f0f8ff; border-radius: 6px; border-left: 4px solid #2196f3;">
+                    <div style="font-size: 14px; color: #1976d2;">
+                        <strong>Метрики оптимизации:</strong>
+                    </div>
+                    <div id="optimize-metrics" style="margin-top: 8px; font-size: 13px; color: #555;">
+                        Загрузка...
+                    </div>
+                </div>
+                
+                <div style="margin-bottom: 15px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                        <label style="font-weight: 600; margin: 0;">Исходный текст с подсветкой изменений:</label>
+                        <div style="display: flex; gap: 8px; align-items: center;">
+                            <span id="highlight-counter" style="font-size: 13px; color: #666;">0 / 0</span>
+                            <button id="btn-prev-highlight" class="btn btn-sm btn-secondary" title="Предыдущая подсветка (Shift+↑)">
+                                ↑ Назад
+                            </button>
+                            <button id="btn-next-highlight" class="btn btn-sm btn-secondary" title="Следующая подсветка (Shift+↓)">
+                                ↓ Вперёд
+                            </button>
+                        </div>
+                    </div>
+                    <div id="optimize-text-preview" style="
+                        max-height: 400px;
+                        overflow-y: auto;
+                        padding: 12px;
+                        background: #f9f9f9;
+                        border: 1px solid #ddd;
+                        border-radius: 6px;
+                        font-family: 'Courier New', monospace;
+                        font-size: 13px;
+                        line-height: 1.6;
+                        white-space: pre-wrap;
+                        word-wrap: break-word;
+                        cursor: text;
+                    ">
+                        Загрузка...
+                    </div>
+                    <div style="margin-top: 8px; font-size: 12px; color: #666;">
+                        <span style="background: #fff59d; padding: 2px 6px; border-radius: 3px;">Жёлтым</span> выделены фрагменты, которые будут удалены. 
+                        <strong>Выделите мышкой</strong> любой текст, чтобы добавить подсветку, или <strong>кликните</strong> по подсветке, чтобы снять её.
+                    </div>
+                </div>
+                
+                <div style="display: flex; gap: 10px; justify-content: space-between;">
+                    <button id="btn-cancel-optimization" class="btn btn-secondary">
+                        Отмена
+                    </button>
+                    <div style="display: flex; gap: 10px;">
+                        <button id="btn-apply-optimization" class="btn btn-secondary" style="background: #dc3545; color: white;">
+                            🗑️ Удалить выделенное
+                        </button>
+                        <button id="btn-save-optimization" class="btn btn-primary">
+                            💾 Сохранить
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/message-manager.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/script.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/rag-analysis.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/text-optimizer.js') }}"></script>
+</body>
+</html>

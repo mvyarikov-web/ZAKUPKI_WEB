@@ -1,0 +1,30 @@
+{
+  "models": [
+    {
+      "model_id": "gpt-4o-mini",
+      "display_name": "GPT-4o Mini",
+      "context_window_tokens": 128000,
+      "price_input_per_1m": 0.15,
+      "price_output_per_1m": 0.6,
+      "enabled": true,
+      "supports_system_role": true,
+      "timeout": 30
+    },
+    {
+      "model_id": "deepseek-chat",
+      "display_name": "DeepSeek Chat",
+      "provider": "deepseek",
+      "enabled": true,
+      "supports_system_role": true,
+      "context_window_tokens": 128000,
+      "timeout": 60,
+      "pricing_model": "per_token",
+      "price_input_per_1m": 0.27,
+      "price_output_per_1m": 1.1,
+      "supports_search": false,
+      "search_enabled": false,
+      "price_per_1000_requests": 5.0
+    }
+  ],
+  "default_model": "deepseek-chat"
+}

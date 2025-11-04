@@ -10,13 +10,19 @@
 """
 
 from contextlib import contextmanager
-from flask import Blueprint, request, jsonify, current_app, g
+from flask import Blueprint, request, jsonify, current_app, g, render_template
 from webapp.services.auth_service import AuthService
 from webapp.db.base import SessionLocal
 from webapp.middleware.auth_middleware import require_auth
 
 
 auth_bp = Blueprint('auth', __name__, url_prefix='/auth')
+
+
+@auth_bp.route('/login_page')
+def login_page():
+    """Страница входа/регистрации."""
+    return render_template('login.html')
 
 
 @contextmanager
@@ -90,6 +96,10 @@ def register():
                 'error': 'Email и пароль обязательны'
             }), 400
         
+        # Получаем IP и User-Agent для логирования сессии
+        ip_address = request.remote_addr
+        user_agent = request.headers.get('User-Agent')
+        
         with get_auth_service() as auth_service:
             user, error = auth_service.register(email, password, role)
             
@@ -99,8 +109,25 @@ def register():
                     'error': error
                 }), 400
             
+            # Автоматически логиним пользователя после регистрации
+            token, _, login_error = auth_service.login(email, password, ip_address, user_agent)
+            
+            if login_error:
+                # Пользователь создан, но не смогли сгенерировать токен
+                return jsonify({
+                    'success': True,
+                    'user': {
+                        'id': user.id,
+                        'email': user.email,
+                        'role': user.role,
+                        'created_at': user.created_at.isoformat() if user.created_at else None
+                    },
+                    'message': 'Пользователь создан, но произошла ошибка входа. Попробуйте войти вручную.'
+                }), 201
+            
             return jsonify({
                 'success': True,
+                'token': token,
                 'user': {
                     'id': user.id,
                     'email': user.email,

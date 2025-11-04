@@ -1,10 +1,11 @@
 """Blueprint для страниц (index, view)."""
 import os
-from flask import Blueprint, render_template, jsonify, request, current_app, send_from_directory
+from flask import Blueprint, render_template, jsonify, request, current_app, send_from_directory, redirect, url_for
 from markupsafe import Markup
 from webapp.services.files import allowed_file
 from webapp.services.state import FilesState
 from webapp.services.indexing import get_index_path
+from webapp.middleware.auth_middleware import require_auth
 
 pages_bp = Blueprint('pages', __name__)
 
@@ -18,6 +19,13 @@ def _get_files_state():
 @pages_bp.route('/')
 def index():
     """Главная страница"""
+    # Если включен DB-режим, требуем авторизацию
+    if current_app.config.get('use_database'):
+        # Проверяем наличие токена через JavaScript
+        # Если токена нет, перенаправляем на страницу входа
+        return render_template('index_with_auth.html')
+    
+    # Legacy режим (без авторизации)
     # Загружаем сохраненные результаты поиска
     files_state = _get_files_state()
     last_search_terms = files_state.get_last_search_terms()
