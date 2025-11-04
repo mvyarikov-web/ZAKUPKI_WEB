@@ -201,77 +201,100 @@ class GPTAnalysisService:
 
 
 class PromptManager:
-    """Менеджер для работы с промптами."""
+    """Менеджер для работы с промптами через PostgreSQL."""
     
-    def __init__(self, prompts_folder: str):
+    def __init__(self, user_id: int):
         """
         Инициализация менеджера.
         
         Args:
-            prompts_folder: Папка для хранения промптов
+            user_id: ID пользователя для работы с его промптами
         """
-        self.prompts_folder = prompts_folder
-        os.makedirs(self.prompts_folder, exist_ok=True)
-        self.last_prompt_file = os.path.join(self.prompts_folder, '_last_prompt.txt')
+        self.user_id = user_id
+        self._last_prompt_cache = None  # Кэш последнего промпта
     
     def save_prompt(self, prompt: str, filename: Optional[str] = None) -> Tuple[bool, str]:
         """
-        Сохранить промпт в файл.
+        Сохранить промпт в БД.
         
         Args:
             prompt: Текст промпта
-            filename: Имя файла (если None, генерируется автоматически)
+            filename: Имя промпта (если None, генерируется автоматически)
             
         Returns:
             tuple: (success, message)
         """
         try:
+            from webapp.db.base import get_db
+            from webapp.services.prompt_service import PromptService
+            
             if not filename:
                 timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-                filename = f'prompt_{timestamp}.txt'
+                filename = f'prompt_{timestamp}'
             
-            # Обеспечиваем расширение .txt
-            if not filename.endswith('.txt'):
-                filename += '.txt'
+            # Убираем расширение .txt, если есть
+            if filename.endswith('.txt'):
+                filename = filename[:-4]
             
-            filepath = os.path.join(self.prompts_folder, filename)
-            
-            with open(filepath, 'w', encoding='utf-8') as f:
-                f.write(prompt)
-            
-            # Сохраняем как последний использованный
-            with open(self.last_prompt_file, 'w', encoding='utf-8') as f:
-                f.write(prompt)
-            
-            return True, f'Промпт сохранён: {filename}'
+            db = next(get_db())
+            try:
+                service = PromptService(db)
+                
+                # Проверяем, есть ли уже промпт с таким именем
+                existing = service.get_prompt_by_name(self.user_id, filename)
+                if existing:
+                    # Обновляем существующий
+                    service.update_prompt(existing['id'], self.user_id, content=prompt)
+                    message = f'Промпт обновлён: {filename}'
+                else:
+                    # Создаём новый
+                    service.create_prompt(self.user_id, filename, prompt, is_shared=False)
+                    message = f'Промпт сохранён: {filename}'
+                
+                # Сохраняем как последний использованный
+                self._last_prompt_cache = prompt
+                
+                return True, message
+            finally:
+                db.close()
             
         except Exception as e:
             return False, f'Ошибка при сохранении промпта: {e}'
     
     def load_prompt(self, filename: str) -> Tuple[bool, str, Optional[str]]:
         """
-        Загрузить промпт из файла.
+        Загрузить промпт из БД.
         
         Args:
-            filename: Имя файла
+            filename: Имя промпта (с .txt или без)
             
         Returns:
             tuple: (success, message, prompt_text)
         """
         try:
-            filepath = os.path.join(self.prompts_folder, filename)
+            from webapp.db.base import get_db
+            from webapp.services.prompt_service import PromptService
             
-            if not os.path.exists(filepath):
-                return False, f'Файл не найден: {filename}', None
+            # Убираем расширение .txt, если есть
+            if filename.endswith('.txt'):
+                filename = filename[:-4]
             
-            with open(filepath, 'r', encoding='utf-8') as f:
-                prompt = f.read()
-            
-            # Сохраняем как последний использованный
-            with open(self.last_prompt_file, 'w', encoding='utf-8') as f:
-                f.write(prompt)
-            
-            return True, 'Промпт загружен', prompt
+            db = next(get_db())
+            try:
+                service = PromptService(db)
+                prompt_data = service.get_prompt_by_name(self.user_id, filename)
+                
+                if not prompt_data:
+                    return False, f'Промпт не найден: {filename}', None
+                
+                prompt = prompt_data['content']
+                
+                # Сохраняем как последний использованный
+                self._last_prompt_cache = prompt
+                
+                return True, 'Промпт загружен', prompt
+            finally:
+                db.close()
             
         except Exception as e:
             return False, f'Ошибка при загрузке промпта: {e}', None
@@ -284,9 +307,24 @@ class PromptManager:
             Текст промпта или промпт по умолчанию
         """
         try:
-            if os.path.exists(self.last_prompt_file):
-                with open(self.last_prompt_file, 'r', encoding='utf-8') as f:
-                    return f.read()
+            # Сначала проверяем кэш
+            if self._last_prompt_cache:
+                return self._last_prompt_cache
+            
+            # Пробуем загрузить промпт "_last_prompt" из БД
+            from webapp.db.base import get_db
+            from webapp.services.prompt_service import PromptService
+            
+            db = next(get_db())
+            try:
+                service = PromptService(db)
+                prompt_data = service.get_prompt_by_name(self.user_id, '_last_prompt')
+                
+                if prompt_data:
+                    self._last_prompt_cache = prompt_data['content']
+                    return self._last_prompt_cache
+            finally:
+                db.close()
         except Exception:
             pass
         
@@ -298,13 +336,21 @@ class PromptManager:
         Получить список сохранённых промптов.
         
         Returns:
-            Список имён файлов
+            Список имён промптов (без служебных, начинающихся с _)
         """
         try:
-            files = []
-            for filename in os.listdir(self.prompts_folder):
-                if filename.endswith('.txt') and not filename.startswith('_'):
-                    files.append(filename)
-            return sorted(files, reverse=True)
+            from webapp.db.base import get_db
+            from webapp.services.prompt_service import PromptService
+            
+            db = next(get_db())
+            try:
+                service = PromptService(db)
+                prompts = service.get_user_prompts(self.user_id, include_shared=True)
+                
+                # Фильтруем служебные промпты (_last_prompt и т.д.)
+                names = [p['name'] for p in prompts if not p['name'].startswith('_')]
+                return sorted(names, reverse=True)
+            finally:
+                db.close()
         except Exception:
             return []

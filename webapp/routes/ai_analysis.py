@@ -361,8 +361,16 @@ def save_prompt():
         prompt = data['prompt']
         filename = data.get('filename')
         
-        prompts_folder = current_app.config.get('PROMPTS_FOLDER', 'PROMPT')
-        manager = PromptManager(prompts_folder)
+        # TODO: добавить @require_auth и использовать g.user.id
+        # Пока используем admin (user_id=5) для обратной совместимости
+        from flask import g
+        user_id = getattr(g, 'user', None)
+        if user_id:
+            user_id = user_id.id
+        else:
+            user_id = 5  # fallback на admin
+        
+        manager = PromptManager(user_id)
         
         success, message = manager.save_prompt(prompt, filename)
         
@@ -394,8 +402,15 @@ def load_prompt(filename):
         JSON с текстом промпта
     """
     try:
-        prompts_folder = current_app.config.get('PROMPTS_FOLDER', 'PROMPT')
-        manager = PromptManager(prompts_folder)
+        # TODO: добавить @require_auth и использовать g.user.id
+        from flask import g
+        user_id = getattr(g, 'user', None)
+        if user_id:
+            user_id = user_id.id
+        else:
+            user_id = 5  # fallback на admin
+        
+        manager = PromptManager(user_id)
         
         success, message, prompt = manager.load_prompt(filename)
         
@@ -427,8 +442,15 @@ def get_last_prompt():
         JSON с текстом промпта
     """
     try:
-        prompts_folder = current_app.config.get('PROMPTS_FOLDER', 'PROMPT')
-        manager = PromptManager(prompts_folder)
+        # TODO: добавить @require_auth и использовать g.user.id
+        from flask import g
+        user_id = getattr(g, 'user', None)
+        if user_id:
+            user_id = user_id.id
+        else:
+            user_id = 5  # fallback на admin
+        
+        manager = PromptManager(user_id)
         
         prompt = manager.get_last_prompt()
         
@@ -451,11 +473,18 @@ def list_prompts():
     Получить список сохранённых промптов.
     
     Returns:
-        JSON со списком файлов
+        JSON со списком промптов
     """
     try:
-        prompts_folder = current_app.config.get('PROMPTS_FOLDER', 'PROMPT')
-        manager = PromptManager(prompts_folder)
+        # TODO: добавить @require_auth и использовать g.user.id
+        from flask import g
+        user_id = getattr(g, 'user', None)
+        if user_id:
+            user_id = user_id.id
+        else:
+            user_id = 5  # fallback на admin
+        
+        manager = PromptManager(user_id)
         
         prompts = manager.list_prompts()
         
