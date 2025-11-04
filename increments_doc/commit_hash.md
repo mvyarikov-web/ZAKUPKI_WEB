@@ -73,6 +73,18 @@ Increment: 013 (Шаг 10: Перенос API-ключей в БД)
 - Тесты: 5/5 passed (encryption round-trip, CRUD, mask_key, validation)
 - Статус: Репозиторий и сервис готовы к интеграции с dual-mode adapter
 
+9. Git commit hash: 73b1ab9
+Дата: 04.11.2025
+Increment: 013 (Шаг 11: Загрузка документов в БД)
+- DocumentUploadService: сервис загрузки документов
+  * validate_file: проверка размера (<100MB), расширений, MIME-типов
+  * calculate_sha256: расчёт хэша для дедупликации
+  * check_duplicate: проверка по SHA256 + owner_id
+  * save_document/save_from_werkzeug: сохранение в bytea (<10MB) или подготовка к S3 (>50MB)
+- DocumentRepository: добавлен get_by_sha256_and_owner для дедупликации
+- Тесты: 8/8 passed (SHA256, валидация, CRUD, дедупликация, FileStorage)
+- Статус: Сервис готов к интеграции с роутами Flask
+
 7. Git commit hash: 451702e
 Дата: 04.11.2025
 Increment: 013 (Шаг 9: AuthService и JWT-поток аутентификации)
