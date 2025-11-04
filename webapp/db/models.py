@@ -385,6 +385,58 @@ class JobQueue(Base):
         return f"<JobQueue(id={self.id}, type='{self.type}', status='{self.status}')>"
 
 
+class HTTPRequestLog(Base):
+    """Логи HTTP запросов к API."""
+    __tablename__ = 'http_request_logs'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'))
+    method = Column(String(10), nullable=False)  # GET, POST, PUT, DELETE, etc.
+    path = Column(String(500), nullable=False)  # URL path
+    query_params = Column(JSON)  # Query parameters
+    request_body = Column(Text)  # Request body (может быть большим)
+    response_status = Column(Integer)  # HTTP status code
+    response_time_ms = Column(Integer)  # Время обработки в миллисекундах
+    ip_address = Column(String(45))  # IPv4 или IPv6
+    user_agent = Column(String(500))
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    
+    __table_args__ = (
+        Index('idx_http_logs_user_created', 'user_id', 'created_at'),
+        Index('idx_http_logs_path_created', 'path', 'created_at'),
+        Index('idx_http_logs_status', 'response_status'),
+    )
+    
+    def __repr__(self):
+        return f"<HTTPRequestLog(id={self.id}, method='{self.method}', path='{self.path}', status={self.response_status})>"
+
+
+class ErrorLog(Base):
+    """Логи ошибок и исключений."""
+    __tablename__ = 'error_logs'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'))
+    error_type = Column(String(255), nullable=False)  # Тип исключения (ValueError, HTTPError, etc.)
+    error_message = Column(Text, nullable=False)  # Сообщение об ошибке
+    stack_trace = Column(Text)  # Полный traceback
+    component = Column(String(127))  # Модуль/компонент где произошла ошибка
+    request_path = Column(String(500))  # URL если ошибка в HTTP-обработчике
+    request_data = Column(JSON)  # Данные запроса
+    context_json = Column(JSON)  # Дополнительный контекст
+    is_resolved = Column(Boolean, default=False)  # Флаг для отслеживания исправления
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    
+    __table_args__ = (
+        Index('idx_error_logs_type_created', 'error_type', 'created_at'),
+        Index('idx_error_logs_component', 'component'),
+        Index('idx_error_logs_unresolved', 'is_resolved', 'created_at'),
+    )
+    
+    def __repr__(self):
+        return f"<ErrorLog(id={self.id}, type='{self.error_type}', component='{self.component}', resolved={self.is_resolved})>"
+
+
 # Экспорт всех моделей
 __all__ = [
     'User',
@@ -399,4 +451,6 @@ __all__ = [
     'Prompt',
     'AppLog',
     'JobQueue',
+    'HTTPRequestLog',
+    'ErrorLog',
 ]
