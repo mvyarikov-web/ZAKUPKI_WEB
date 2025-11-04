@@ -15,7 +15,7 @@ from webapp.models.rag_models import RAGDatabase
 from webapp.services.chunking import chunk_document, TextChunker
 from webapp.services.embeddings import get_embeddings_service
 from document_processor.core import DocumentProcessor
-from utils.api_keys_manager_multiple import get_api_keys_manager_multiple
+from webapp.utils.api_keys_adapter import get_api_keys_manager
 from webapp.services.search.manager import (
     normalize_search_params,
     is_search_enabled,
@@ -612,7 +612,7 @@ class RAGService:
         Returns:
             Настроенный клиент OpenAI
         """
-        api_keys_mgr = get_api_keys_manager_multiple()
+        api_keys_mgr = get_api_keys_manager()
         # Выбираем таймаут: из models.json или из конфигурации/дефолта
         timeout = self._get_model_timeout(model)
         

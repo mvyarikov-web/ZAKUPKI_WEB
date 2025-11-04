@@ -66,8 +66,15 @@ async function renderUserPanel() {
     
     if (!user) {
         // Если пользователь не авторизован и это не страница логина, перенаправляем
-        if (!window.location.pathname.includes('/auth/login_page')) {
-            window.location.href = '/auth/login_page';
+        const currentPath = window.location.pathname;
+        const isLoginPage = currentPath.includes('/auth/login_page') || currentPath === '/auth/login_page';
+        const isAuthRoute = currentPath.startsWith('/auth/');
+        
+        if (!isLoginPage && !isAuthRoute) {
+            // Небольшая задержка перед редиректом для завершения других операций
+            setTimeout(() => {
+                window.location.href = '/auth/login_page';
+            }, 100);
         }
         return;
     }

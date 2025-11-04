@@ -265,9 +265,10 @@
                     // Сохраняем токен
                     localStorage.setItem('auth_token', data.token);
                     showMessage('Успешный вход! Перенаправление...', 'success');
+                    // Используем replace вместо href для предотвращения возврата назад
                     setTimeout(() => {
-                        window.location.href = '/';
-                    }, 1000);
+                        window.location.replace('/');
+                    }, 500);
                 } else {
                     showMessage(data.error || 'Ошибка входа');
                 }
@@ -319,9 +320,10 @@
                     // Сохраняем токен
                     localStorage.setItem('auth_token', data.token);
                     showMessage('Регистрация успешна! Перенаправление...', 'success');
+                    // Используем replace вместо href для предотвращения возврата назад
                     setTimeout(() => {
-                        window.location.href = '/';
-                    }, 1000);
+                        window.location.replace('/');
+                    }, 500);
                 } else {
                     showMessage(data.error || 'Ошибка регистрации');
                 }
@@ -333,23 +335,28 @@
             }
         });
 
-        // Проверка, если уже авторизован
-        const token = localStorage.getItem('auth_token');
-        if (token) {
-            fetch('/auth/me', {
-                headers: { 'Authorization': `Bearer ${token}` }
-            })
-            .then(response => {
-                if (response.ok) {
-                    // Уже авторизован, перенаправляем
-                    window.location.href = '/';
-                }
-            })
-            .catch(() => {
-                // Токен недействителен, остаёмся на странице логина
-                localStorage.removeItem('auth_token');
-            });
-        }
+        // Проверка, если уже авторизован (с задержкой для стабильности)
+        window.addEventListener('load', () => {
+            const token = localStorage.getItem('auth_token');
+            if (token) {
+                fetch('/auth/me', {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                })
+                .then(response => {
+                    if (response.ok) {
+                        // Уже авторизован, перенаправляем
+                        window.location.replace('/');
+                    } else {
+                        // Токен недействителен, остаёмся на странице логина
+                        localStorage.removeItem('auth_token');
+                    }
+                })
+                .catch(() => {
+                    // Токен недействителен, остаёмся на странице логина
+                    localStorage.removeItem('auth_token');
+                });
+            }
+        });
     </script>
 </body>
 </html>
