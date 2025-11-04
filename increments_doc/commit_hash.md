@@ -116,6 +116,23 @@ Increment: 013 (Шаг 13: Поиск и история)
 - Тесты: 6 passed, 2 skipped (pgvector требует PostgreSQL, тесты для keyword/history прошли)
 - Статус: Готов к интеграции с Flask роутами и UI
 
+12. Git commit hash: 70bc19f
+Дата: 04.11.2025
+Increment: 013 (Шаг 14: Логирование в БД)
+- DatabaseLogHandler: кастомный logging.Handler для записи в app_logs
+  * emit: записывает логи в БД через AppLogRepository
+  * mask_secrets: маскирует секреты через regex (API-ключи, пароли, токены, email)
+  * Паттерны: sk-proj-****, sk-ant-****, pplx-****, password:****, Bearer ****, ***@domain.com
+  * Поддерживает extra_json для контекста и user_id для привязки к пользователю
+- AppLogRepository: CRUD для app_logs таблицы
+  * create_log: создание записи (level, message, component, user_id, context_json)
+  * get_logs: фильтрация по level/user_id/component/date range с пагинацией
+  * get_errors: получение ERROR и CRITICAL логов
+  * delete_old: очистка записей старше N дней (с опциональным фильтром по level)
+  * count_by_level: статистика по уровням логирования
+- Тесты: 9/9 passed (запись в БД, маскирование секретов, фильтрация, date range, очистка старых)
+- Статус: Готов к интеграции с Flask app.logger и middleware
+
 7. Git commit hash: 451702e
 Дата: 04.11.2025
 Increment: 013 (Шаг 9: AuthService и JWT-поток аутентификации)
