@@ -166,20 +166,62 @@ function renderTreeNode(folderName, treeNode, file_statuses, folderStates, depth
         contentDiv.appendChild(subfolderDiv);
     });
     
-    // Обработчик для чекбокса папки: выбрать/снять все в папке
+    // Обработчик для чекбокса папки: выбрать/снять все в папке (включая вложенные папки)
     const folderCheckbox = headerDiv.querySelector('.folder-checkbox');
     if (folderCheckbox) {
         folderCheckbox.addEventListener('click', (ev) => ev.stopPropagation());
         folderCheckbox.addEventListener('change', (ev) => {
             const checked = ev.target.checked;
-            const cbs = contentDiv.querySelectorAll('.file-checkbox');
-            cbs.forEach(cb => { cb.checked = checked; });
+            // Выбираем все файлы
+            const fileCbs = contentDiv.querySelectorAll('.file-checkbox');
+            fileCbs.forEach(cb => { cb.checked = checked; });
+            // Выбираем все вложенные папки (рекурсивно)
+            const folderCbs = contentDiv.querySelectorAll('.folder-checkbox');
+            folderCbs.forEach(cb => { cb.checked = checked; });
+            
+            // Если снимаем галку, проверяем родительскую папку
+            if (!checked) {
+                updateParentCheckbox(folderDiv);
+            }
         });
     }
     
     folderDiv.appendChild(headerDiv);
     folderDiv.appendChild(contentDiv);
     return folderDiv;
+}
+
+// Функция для обновления галки родительской папки
+function updateParentCheckbox(folderElement) {
+    // Ищем родительский folder-container
+    const parentContent = folderElement.parentElement;
+    if (!parentContent || !parentContent.classList.contains('folder-content')) {
+        return; // Нет родителя или достигли корня
+    }
+    
+    const parentFolder = parentContent.parentElement;
+    if (!parentFolder || !parentFolder.classList.contains('folder-container')) {
+        return;
+    }
+    
+    // Ищем чекбокс родительской папки
+    const parentCheckbox = parentFolder.querySelector(':scope > .folder-header > .folder-checkbox');
+    if (!parentCheckbox) {
+        return;
+    }
+    
+    // Проверяем, есть ли хотя бы один отмеченный элемент в родительской папке
+    const checkedFiles = parentContent.querySelectorAll('.file-checkbox:checked');
+    const checkedFolders = parentContent.querySelectorAll('.folder-checkbox:checked');
+    
+    const hasCheckedItems = checkedFiles.length > 0 || checkedFolders.length > 0;
+    
+    // Если нет отмеченных элементов, снимаем галку с родителя
+    if (!hasCheckedItems && parentCheckbox.checked) {
+        parentCheckbox.checked = false;
+        // Рекурсивно проверяем родителя родителя
+        updateParentCheckbox(parentFolder);
+    }
 }
 
 function countFilesInTree(treeNode) {
@@ -315,6 +357,24 @@ function renderFileItem(file, file_statuses) {
     resultsContainer.className = 'file-search-results';
     resultsContainer.style.display = 'none';
     wrapper.appendChild(resultsContainer);
+    
+    // Добавляем обработчик для чекбокса файла
+    const fileCheckbox = fileDiv.querySelector('.file-checkbox');
+    if (fileCheckbox) {
+        fileCheckbox.addEventListener('change', (ev) => {
+            // Если снимаем галку, проверяем родительскую папку
+            if (!ev.target.checked) {
+                // Ищем родительский folder-content
+                const parentContent = wrapper.closest('.folder-content');
+                if (parentContent) {
+                    const parentFolder = parentContent.parentElement;
+                    if (parentFolder && parentFolder.classList.contains('folder-container')) {
+                        updateParentCheckbox(parentFolder);
+                    }
+                }
+            }
+        });
+    }
     
     return wrapper;
 }
