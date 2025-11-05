@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Административная панель — Управление хранилищем</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+    <style>
+        .admin-section {
+            background: white;
+            margin-bottom: 20px;
+            padding: 25px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        .admin-section h2 {
+            color: #2c3e50;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #ecf0f1;
+        }
+        .stat-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 15px;
+        }
+        .stat-card {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 6px;
+            border-left: 4px solid #3498db;
+        }
+        .stat-card.warning {
+            border-left-color: #f39c12;
+        }
+        .stat-card.danger {
+            border-left-color: #e74c3c;
+        }
+        .stat-label {
+            font-size: 13px;
+            color: #7f8c8d;
+            margin-bottom: 5px;
+        }
+        .stat-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #2c3e50;
+        }
+        .admin-controls {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            flex-wrap: wrap;
+            margin-top: 15px;
+        }
+        .btn-admin {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.3s;
+        }
+        .btn-admin.primary {
+            background: #3498db;
+            color: white;
+        }
+        .btn-admin.primary:hover {
+            background: #2980b9;
+        }
+        .btn-admin.danger {
+            background: #e74c3c;
+            color: white;
+        }
+        .btn-admin.danger:hover {
+            background: #c0392b;
+        }
+        .btn-admin.success {
+            background: #27ae60;
+            color: white;
+        }
+        .btn-admin.success:hover {
+            background: #229954;
+        }
+        .btn-admin.warning {
+            background: #f39c12;
+            color: white;
+        }
+        .btn-admin.warning:hover {
+            background: #e67e22;
+        }
+        .switch-container {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .switch {
+            position: relative;
+            display: inline-block;
+            width: 50px;
+            height: 24px;
+        }
+        .switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #ccc;
+            transition: .4s;
+            border-radius: 24px;
+        }
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 18px;
+            width: 18px;
+            left: 3px;
+            bottom: 3px;
+            background-color: white;
+            transition: .4s;
+            border-radius: 50%;
+        }
+        input:checked + .slider {
+            background-color: #27ae60;
+        }
+        input:checked + .slider:before {
+            transform: translateX(26px);
+        }
+        .log-area {
+            background: #2c3e50;
+            color: #ecf0f1;
+            padding: 15px;
+            border-radius: 6px;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            max-height: 300px;
+            overflow-y: auto;
+            margin-top: 15px;
+        }
+        .log-entry {
+            margin-bottom: 8px;
+            padding: 5px;
+            border-left: 3px solid #3498db;
+            padding-left: 10px;
+        }
+        .log-entry.info { border-left-color: #3498db; }
+        .log-entry.warning { border-left-color: #f39c12; }
+        .log-entry.error { border-left-color: #e74c3c; }
+        .candidates-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 15px;
+        }
+        .candidates-table th,
+        .candidates-table td {
+            padding: 10px;
+            text-align: left;
+            border-bottom: 1px solid #ecf0f1;
+        }
+        .candidates-table th {
+            background: #f8f9fa;
+            font-weight: bold;
+            color: #2c3e50;
+        }
+        .candidates-table tr:hover {
+            background: #f8f9fa;
+        }
+        .message-box {
+            padding: 12px 15px;
+            border-radius: 5px;
+            margin-top: 15px;
+            display: none;
+        }
+        .message-box.info {
+            background: #e3f2fd;
+            color: #1976d2;
+            border-left: 4px solid #2196f3;
+        }
+        .message-box.success {
+            background: #e8f5e9;
+            color: #388e3c;
+            border-left: 4px solid #4caf50;
+        }
+        .message-box.error {
+            background: #ffebee;
+            color: #d32f2f;
+            border-left: 4px solid #f44336;
+        }
+        .message-box.warning {
+            background: #fff3e0;
+            color: #f57c00;
+            border-left: 4px solid #ff9800;
+        }
+        .loading {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid #f3f3f3;
+            border-top: 2px solid #3498db;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>⚙️ Административная панель</h1>
+            <p>Управление хранилищем и индексацией документов</p>
+            <a href="/" class="btn btn-secondary" style="margin-top: 15px;">← Вернуться на главную</a>
+        </header>
+
+        <main>
+            <!-- Статистика хранилища -->
+            <div class="admin-section">
+                <h2>📊 Статистика хранилища</h2>
+                <div class="stat-grid" id="statsGrid">
+                    <div class="stat-card">
+                        <div class="stat-label">Всего документов</div>
+                        <div class="stat-value" id="statTotalDocs">—</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Видимые</div>
+                        <div class="stat-value" id="statVisibleDocs">—</div>
+                    </div>
+                    <div class="stat-card warning">
+                        <div class="stat-label">Удалённые (мягко)</div>
+                        <div class="stat-value" id="statDeletedDocs">—</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Всего чанков</div>
+                        <div class="stat-value" id="statTotalChunks">—</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Пользователей</div>
+                        <div class="stat-value" id="statTotalUsers">—</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Чанков на документ (ср.)</div>
+                        <div class="stat-value" id="statAvgChunks">—</div>
+                    </div>
+                </div>
+                <div class="admin-controls">
+                    <button class="btn-admin primary" onclick="loadStats()">🔄 Обновить статистику</button>
+                </div>
+                <div id="statsMessage" class="message-box"></div>
+            </div>
+
+            <!-- Garbage Collection -->
+            <div class="admin-section">
+                <h2>🗑️ Garbage Collection</h2>
+                <p style="color: #7f8c8d; margin-bottom: 15px;">
+                    Удаление старых и редко используемых документов на основе retention score
+                </p>
+                <div class="admin-controls">
+                    <button class="btn-admin warning" onclick="loadCandidates()">👀 Показать кандидатов на удаление</button>
+                    <button class="btn-admin primary" onclick="runGC(true)">🧪 Тестовый прогон (dry-run)</button>
+                    <button class="btn-admin danger" onclick="runGC(false)">⚠️ Запустить GC (реальное удаление)</button>
+                </div>
+                <div id="gcMessage" class="message-box"></div>
+                <div id="candidatesContainer" style="display: none; margin-top: 20px;">
+                    <h3>Кандидаты на удаление</h3>
+                    <table class="candidates-table" id="candidatesTable">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Файл</th>
+                                <th>Владелец</th>
+                                <th>Retention Score</th>
+                                <th>Обращений</th>
+                                <th>Последний доступ</th>
+                            </tr>
+                        </thead>
+                        <tbody id="candidatesBody">
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Экстренная блокировка загрузок -->
+            <div class="admin-section">
+                <h2>🚨 Экстренное управление</h2>
+                <p style="color: #7f8c8d; margin-bottom: 15px;">
+                    Блокировка загрузок при критических ситуациях (превышение квоты, атака и т.д.)
+                </p>
+                <div class="switch-container">
+                    <label class="switch">
+                        <input type="checkbox" id="uploadsToggle" onchange="toggleUploads()">
+                        <span class="slider"></span>
+                    </label>
+                    <span id="uploadsStatus">Загрузки: проверка...</span>
+                </div>
+                <div id="uploadsMessage" class="message-box"></div>
+            </div>
+
+            <!-- Аудит логов -->
+            <div class="admin-section">
+                <h2>📝 Логи аудита</h2>
+                <p style="color: #7f8c8d; margin-bottom: 15px;">
+                    Последние 50 записей о работе GC и управлении хранилищем
+                </p>
+                <div class="admin-controls">
+                    <button class="btn-admin primary" onclick="loadAuditLog()">🔄 Обновить логи</button>
+                </div>
+                <div class="log-area" id="auditLog">
+                    <div class="log-entry info">Логи загружаются...</div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        // Глобальное состояние
+        let uploadsEnabled = true;
+
+        // Загрузка статистики при открытии страницы
+        document.addEventListener('DOMContentLoaded', function() {
+            loadStats();
+            checkUploadsStatus();
+            loadAuditLog();
+        });
+
+        // Показать сообщение
+        function showMessage(elementId, message, type) {
+            const el = document.getElementById(elementId);
+            el.textContent = message;
+            el.className = `message-box ${type}`;
+            el.style.display = 'block';
+            setTimeout(() => {
+                el.style.display = 'none';
+            }, 5000);
+        }
+
+        // Загрузка статистики
+        async function loadStats() {
+            try {
+                showMessage('statsMessage', 'Загрузка статистики...', 'info');
+                const response = await fetch('/admin/storage/stats');
+                if (!response.ok) throw new Error('Ошибка загрузки статистики');
+                
+                const data = await response.json();
+                document.getElementById('statTotalDocs').textContent = data.total_documents || 0;
+                document.getElementById('statVisibleDocs').textContent = data.visible_documents || 0;
+                document.getElementById('statDeletedDocs').textContent = data.deleted_documents || 0;
+                document.getElementById('statTotalChunks').textContent = data.total_chunks || 0;
+                document.getElementById('statTotalUsers').textContent = data.total_users || 0;
+                document.getElementById('statAvgChunks').textContent = 
+                    data.avg_chunks_per_document ? data.avg_chunks_per_document.toFixed(1) : '0.0';
+                
+                showMessage('statsMessage', 'Статистика обновлена', 'success');
+            } catch (error) {
+                console.error('Ошибка загрузки статистики:', error);
+                showMessage('statsMessage', 'Ошибка: ' + error.message, 'error');
+            }
+        }
+
+        // Загрузка кандидатов на удаление
+        async function loadCandidates() {
+            try {
+                showMessage('gcMessage', 'Поиск кандидатов на удаление...', 'info');
+                const response = await fetch('/admin/gc/candidates?threshold=-1.0&limit=100');
+                if (!response.ok) throw new Error('Ошибка загрузки кандидатов');
+                
+                const data = await response.json();
+                const tbody = document.getElementById('candidatesBody');
+                tbody.innerHTML = '';
+                
+                if (data.candidates && data.candidates.length > 0) {
+                    data.candidates.forEach(candidate => {
+                        const row = document.createElement('tr');
+                        row.innerHTML = `
+                            <td>${candidate.document_id}</td>
+                            <td title="${candidate.file_path}">${candidate.file_path.substring(0, 40)}...</td>
+                            <td>${candidate.owner_id}</td>
+                            <td>${candidate.retention_score.toFixed(2)}</td>
+                            <td>${candidate.access_count || 0}</td>
+                            <td>${candidate.last_accessed_at ? new Date(candidate.last_accessed_at).toLocaleDateString('ru') : 'никогда'}</td>
+                        `;
+                        tbody.appendChild(row);
+                    });
+                    document.getElementById('candidatesContainer').style.display = 'block';
+                    showMessage('gcMessage', `Найдено ${data.candidates.length} кандидатов на удаление`, 'success');
+                } else {
+                    document.getElementById('candidatesContainer').style.display = 'none';
+                    showMessage('gcMessage', 'Кандидатов на удаление не найдено', 'info');
+                }
+            } catch (error) {
+                console.error('Ошибка загрузки кандидатов:', error);
+                showMessage('gcMessage', 'Ошибка: ' + error.message, 'error');
+            }
+        }
+
+        // Запуск GC
+        async function runGC(dryRun) {
+            if (!dryRun && !confirm('Вы уверены? Это удалит документы из БД (мягкое удаление).')) {
+                return;
+            }
+            
+            try {
+                const mode = dryRun ? 'тестовый режим' : 'реальное удаление';
+                showMessage('gcMessage', `Запуск GC (${mode})...`, 'info');
+                
+                const response = await fetch('/admin/gc/run', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        dry_run: dryRun,
+                        threshold: -1.0,
+                        batch_size: 100
+                    })
+                });
+                
+                if (!response.ok) throw new Error('Ошибка выполнения GC');
+                
+                const data = await response.json();
+                const msg = `GC завершён. Удалено документов: ${data.deleted_count}, чанков: ${data.deleted_chunks}. ` +
+                           `Освобождено места: ${(data.freed_space_bytes / 1024 / 1024).toFixed(2)} МБ. ` +
+                           `Время: ${data.execution_time_seconds.toFixed(2)} сек.`;
+                showMessage('gcMessage', msg, 'success');
+                
+                // Обновляем статистику
+                await loadStats();
+            } catch (error) {
+                console.error('Ошибка запуска GC:', error);
+                showMessage('gcMessage', 'Ошибка: ' + error.message, 'error');
+            }
+        }
+
+        // Проверка статуса загрузок
+        async function checkUploadsStatus() {
+            try {
+                const response = await fetch('/admin/config');
+                if (response.ok) {
+                    const data = await response.json();
+                    uploadsEnabled = !data.uploads_disabled;
+                    updateUploadsUI();
+                }
+            } catch (error) {
+                console.error('Ошибка проверки статуса загрузок:', error);
+            }
+        }
+
+        // Переключение загрузок
+        async function toggleUploads() {
+            const toggle = document.getElementById('uploadsToggle');
+            const newState = toggle.checked;
+            
+            try {
+                showMessage('uploadsMessage', 'Изменение настроек...', 'info');
+                const response = await fetch('/admin/uploads/toggle', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({disable: !newState})
+                });
+                
+                if (!response.ok) throw new Error('Ошибка изменения настроек');
+                
+                const data = await response.json();
+                uploadsEnabled = !data.uploads_disabled;
+                updateUploadsUI();
+                
+                const msg = uploadsEnabled ? 'Загрузки разрешены' : 'Загрузки заблокированы';
+                showMessage('uploadsMessage', msg, 'success');
+            } catch (error) {
+                console.error('Ошибка переключения загрузок:', error);
+                toggle.checked = uploadsEnabled;
+                showMessage('uploadsMessage', 'Ошибка: ' + error.message, 'error');
+            }
+        }
+
+        // Обновление UI статуса загрузок
+        function updateUploadsUI() {
+            const toggle = document.getElementById('uploadsToggle');
+            const status = document.getElementById('uploadsStatus');
+            toggle.checked = uploadsEnabled;
+            status.textContent = uploadsEnabled ? 
+                '✅ Загрузки разрешены' : 
+                '🚫 Загрузки заблокированы';
+            status.style.color = uploadsEnabled ? '#27ae60' : '#e74c3c';
+        }
+
+        // Загрузка логов аудита
+        async function loadAuditLog() {
+            try {
+                const response = await fetch('/admin/audit_log?limit=50');
+                if (!response.ok) throw new Error('Ошибка загрузки логов');
+                
+                const data = await response.json();
+                const logArea = document.getElementById('auditLog');
+                logArea.innerHTML = '';
+                
+                if (data.logs && data.logs.length > 0) {
+                    data.logs.forEach(log => {
+                        const entry = document.createElement('div');
+                        entry.className = `log-entry ${log.level || 'info'}`;
+                        const timestamp = new Date(log.timestamp).toLocaleString('ru');
+                        entry.textContent = `[${timestamp}] ${log.message}`;
+                        logArea.appendChild(entry);
+                    });
+                } else {
+                    logArea.innerHTML = '<div class="log-entry info">Логи отсутствуют</div>';
+                }
+            } catch (error) {
+                console.error('Ошибка загрузки логов:', error);
+                const logArea = document.getElementById('auditLog');
+                logArea.innerHTML = `<div class="log-entry error">Ошибка загрузки: ${error.message}</div>`;
+            }
+        }
+    </script>
+</body>
+</html>

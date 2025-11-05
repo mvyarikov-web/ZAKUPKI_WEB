@@ -81,6 +81,21 @@ async function renderUserPanel() {
         return;
     }
     
+    // Определяем отображаемое имя пользователя
+    let displayName;
+    const firstName = user.first_name ? user.first_name.trim() : '';
+    const lastName = user.last_name ? user.last_name.trim() : '';
+    
+    if (firstName && lastName) {
+        displayName = `${firstName} ${lastName}`;
+    } else if (lastName) {
+        displayName = lastName;
+    } else if (firstName) {
+        displayName = firstName;
+    } else {
+        displayName = user.email;
+    }
+    
     // Создаём панель пользователя
     const userPanel = document.createElement('div');
     userPanel.className = 'user-panel';
@@ -89,7 +104,7 @@ async function renderUserPanel() {
             <span class="user-icon">👤</span>
             <div class="user-info">
                 <span class="user-label">Пользователь</span>
-                <span class="user-email">${user.email}</span>
+                <span class="user-email">${displayName}</span>
             </div>
         </div>
         <button class="logout-btn" onclick="logout()">

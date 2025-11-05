@@ -26,7 +26,7 @@
                         <i class="icon">📁</i> Открыть папку
                     </button>
                     <button id="selectFilesBtn" class="btn btn-secondary">
-                        <i class="icon">�</i> Открыть файлы
+                        <i class="icon">📄</i> Открыть файлы
                     </button>
                     <button id="deleteFilesBtn" class="btn btn-danger">
                         <i class="icon">🗑️</i> Удалить все
@@ -37,6 +37,9 @@
                     <button type="button" id="aiAnalysisBtn" class="btn btn-primary">
                         <i class="icon">🤖</i> Анализ AI
                     </button>
+                    <a id="adminPanelBtn" class="btn btn-warning" href="/admin/storage" target="_blank" style="display:none;">
+                        <i class="icon">⚙️</i> Админ-панель
+                    </a>
                 </div>
                 <div id="indexStatus" style="font-size:14px; color:#555; margin-bottom:10px;">Сводный файл: проверяется…</div>
                 
@@ -477,5 +480,15 @@
     <script src="{{ url_for('static', filename='js/script.js') }}"></script>
     <script src="{{ url_for('static', filename='js/rag-analysis.js') }}"></script>
     <script src="{{ url_for('static', filename='js/text-optimizer.js') }}"></script>
+    <script>
+        // Показываем кнопку админ-панели (TODO: добавить проверку прав через API)
+        document.addEventListener('DOMContentLoaded', function() {
+            const adminBtn = document.getElementById('adminPanelBtn');
+            if (adminBtn) {
+                // Пока показываем всем, позже добавим middleware для проверки роли
+                adminBtn.style.display = 'inline-flex';
+            }
+        });
+    </script>
 </body>
 </html>

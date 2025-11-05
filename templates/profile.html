@@ -92,6 +92,30 @@
             transition: border-color 0.3s;
         }
 
+        .password-wrapper {
+            position: relative;
+        }
+
+        .password-wrapper input {
+            padding-right: 45px;
+        }
+
+        .toggle-password {
+            position: absolute;
+            right: 12px;
+            top: 50%;
+            transform: translateY(-50%);
+            cursor: pointer;
+            font-size: 18px;
+            color: #666;
+            user-select: none;
+            transition: color 0.3s;
+        }
+
+        .toggle-password:hover {
+            color: #3498db;
+        }
+
         input:focus {
             outline: none;
             border-color: #3498db;
@@ -252,17 +276,26 @@
             <form id="passwordForm">
                 <div class="form-group">
                     <label for="currentPassword">Текущий пароль</label>
-                    <input type="password" id="currentPassword" required>
+                    <div class="password-wrapper">
+                        <input type="password" id="currentPassword" required>
+                        <span class="toggle-password" data-target="currentPassword">👁️</span>
+                    </div>
                 </div>
 
                 <div class="form-group">
                     <label for="newPassword">Новый пароль</label>
-                    <input type="password" id="newPassword" required>
+                    <div class="password-wrapper">
+                        <input type="password" id="newPassword" required>
+                        <span class="toggle-password" data-target="newPassword">👁️</span>
+                    </div>
                 </div>
 
                 <div class="form-group">
                     <label for="confirmPassword">Подтвердите новый пароль</label>
-                    <input type="password" id="confirmPassword" required>
+                    <div class="password-wrapper">
+                        <input type="password" id="confirmPassword" required>
+                        <span class="toggle-password" data-target="confirmPassword">👁️</span>
+                    </div>
                 </div>
 
                 <button type="submit" class="btn btn-primary" id="changePasswordBtn">
@@ -457,6 +490,22 @@
                 btn.disabled = false;
                 btn.textContent = '🔒 Изменить пароль';
             }
+        });
+
+        // Обработка показа/скрытия паролей
+        document.querySelectorAll('.toggle-password').forEach(toggle => {
+            toggle.addEventListener('click', function() {
+                const targetId = this.getAttribute('data-target');
+                const input = document.getElementById(targetId);
+                
+                if (input.type === 'password') {
+                    input.type = 'text';
+                    this.textContent = '🙈';
+                } else {
+                    input.type = 'password';
+                    this.textContent = '👁️';
+                }
+            });
         });
 
         // Загрузка при старте

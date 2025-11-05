@@ -140,6 +140,45 @@ def delete_key(provider: str):
         }), 500
 
 
+@api_keys_new_bp.route('/delete/<provider>/<key_id>', methods=['DELETE'])
+@require_auth
+def delete_key_combined(provider: str, key_id: str):
+    """Удалить API ключ пользователя по провайдеру и ID (для совместимости с frontend)"""
+    try:
+        user_id = g.user.id
+        db_session = SessionLocal()
+        service = APIKeysService(db_session)
+        
+        # Преобразуем key_id в int
+        try:
+            key_id_int = int(key_id)
+        except ValueError:
+            return jsonify({
+                'success': False,
+                'error': 'Неверный формат ID ключа'
+            }), 400
+        
+        success = service.delete_key_by_id(user_id, key_id_int)
+        
+        if success:
+            return jsonify({
+                'success': True,
+                'message': f'Ключ {provider} (ID={key_id}) удалён'
+            }), 200
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'Ключ не найден или не принадлежит пользователю'
+            }), 404
+            
+    except Exception as e:
+        logger.exception(f'Ошибка удаления ключа: {e}')
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
 @api_keys_new_bp.route('/delete_by_id/<int:key_id>', methods=['DELETE'])
 @require_auth
 def delete_key_by_id(key_id: int):

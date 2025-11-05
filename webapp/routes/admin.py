@@ -248,36 +248,83 @@ def get_user_quota(user_id: int):
         return jsonify({'error': str(e)}), 500
 
 
+@admin_bp.get('/config')
+def get_admin_config():
+    """
+    Получить текущую конфигурацию административных параметров.
+    
+    Returns:
+        JSON: {"uploads_disabled": bool, ...}
+    """
+    try:
+        config = get_config()
+        return jsonify({
+            'uploads_disabled': config.uploads_disabled,
+            'user_quota_bytes': config.user_quota_bytes,
+            'db_storage_limit_bytes': config.db_storage_limit_bytes,
+            'chunk_size_tokens': config.chunk_size_tokens,
+            'chunk_overlap_tokens': config.chunk_overlap_tokens
+        })
+    except Exception as e:
+        current_app.logger.exception('Ошибка получения конфигурации')
+        return jsonify({'error': str(e)}), 500
+
+
 @admin_bp.get('/audit_log')
 def get_audit_log():
     """
     Получить последние записи из лога аудита.
     
     Query params:
-    - lines: int (default: 100, max: 1000)
+    - limit: int (default: 100, max: 1000)
     
     Returns:
-        JSON: {"lines": [...]}
+        JSON: {"logs": [{"timestamp": "...", "level": "info", "message": "..."}], ...}
     """
     try:
         config = get_config()
-        lines_count = int(request.args.get('lines', 100))
-        lines_count = min(lines_count, 1000)
+        limit = int(request.args.get('limit', 100))
+        limit = min(limit, 1000)
         
         import os
+        import re
+        from datetime import datetime
+        
         log_path = config.storage_audit_log
         
         if not os.path.exists(log_path):
-            return jsonify({'lines': [], 'message': 'Лог-файл не существует'})
+            return jsonify({'logs': [], 'message': 'Лог-файл не существует'})
         
-        # Читаем последние N строк (простая реализация)
+        # Читаем последние N строк
         with open(log_path, 'r', encoding='utf-8') as f:
             all_lines = f.readlines()
-            last_lines = all_lines[-lines_count:] if len(all_lines) > lines_count else all_lines
+            last_lines = all_lines[-limit:] if len(all_lines) > limit else all_lines
+        
+        # Парсим строки лога
+        logs = []
+        log_pattern = re.compile(r'(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s+(\w+)\s+(.+)')
+        
+        for line in last_lines:
+            match = log_pattern.match(line.strip())
+            if match:
+                timestamp_str, level, message = match.groups()
+                logs.append({
+                    'timestamp': timestamp_str,
+                    'level': level.lower(),
+                    'message': message
+                })
+            else:
+                # Строки без стандартного формата
+                logs.append({
+                    'timestamp': datetime.now().isoformat(),
+                    'level': 'info',
+                    'message': line.strip()
+                })
         
         return jsonify({
-            'lines': [line.strip() for line in last_lines],
-            'total_lines': len(all_lines)
+            'logs': logs,
+            'total_lines': len(all_lines),
+            'returned': len(logs)
         })
     except Exception as e:
         current_app.logger.exception('Ошибка чтения лога аудита')
