@@ -38,7 +38,7 @@ def test_pdf_reader_vector_basic(tmp_path):
     assert 'attempts' in result
     
     # OCR не должен использоваться при ocr='off'
-    assert result['ocr_used'] == False
+    assert not result['ocr_used']
     assert isinstance(result['elapsed_ms'], int)
     assert isinstance(result['attempts'], list)
 
@@ -63,7 +63,7 @@ def test_pdf_analyzer_basic(tmp_path):
     assert 'size' in info
     
     # Должен определить как PDF
-    assert info['is_pdf'] == True
+    assert info['is_pdf']
 
 
 @pytest.mark.timeout(5)
@@ -150,7 +150,7 @@ def test_backward_compatibility_pdf_utils(tmp_path):
     # Анализ PDF
     info = analyze_pdf(str(pdf_path))
     assert 'is_pdf' in info
-    assert info['is_pdf'] == True
+    assert info['is_pdf']
     
     # Извлечение текста
     result = extract_text_pdf(str(pdf_path), budget_seconds=2.0)

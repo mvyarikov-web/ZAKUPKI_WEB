@@ -1,9 +1,8 @@
 """
 Сервис поиска с поддержкой keyword, semantic и hybrid режимов.
 """
-from typing import List, Tuple, Optional, Dict
+from typing import List, Optional, Dict
 import openai
-from sqlalchemy import or_
 
 from webapp.db.repositories import ChunkRepository, SearchHistoryRepository
 from webapp.db.models import Chunk

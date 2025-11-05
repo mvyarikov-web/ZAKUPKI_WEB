@@ -7,7 +7,7 @@
 - извлечение факта использования поиска из ответа API.
 """
 from __future__ import annotations
-from typing import Any, Dict, Optional, Tuple, List
+from typing import Any, Dict, Optional, List
 import re
 from urllib.parse import urlparse
 

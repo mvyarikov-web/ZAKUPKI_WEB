@@ -4,9 +4,8 @@
 """
 import psycopg2
 from psycopg2.extras import execute_values
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional
 import json
-from datetime import datetime
 
 
 class DatabaseConnection:

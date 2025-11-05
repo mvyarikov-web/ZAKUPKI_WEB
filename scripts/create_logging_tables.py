@@ -16,7 +16,7 @@ from pathlib import Path
 # Добавляем корень проекта в путь
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from webapp.db.base import Base, engine
+from webapp.db.base import engine
 from webapp.db.models import HTTPRequestLog, ErrorLog
 
 
@@ -27,7 +27,7 @@ def create_logging_tables():
     
     # Проверяем соединение
     try:
-        with engine.connect() as conn:
+        with engine.connect():
             print(f"✅ Подключение к БД установлено: {engine.url}")
     except Exception as e:
         print(f"❌ Ошибка подключения к БД: {e}")
@@ -69,7 +69,7 @@ def show_table_info():
             # Показываем индексы
             indexes = inspector.get_indexes(table_name)
             if indexes:
-                print(f"   Индексы:")
+                print("   Индексы:")
                 for idx in indexes:
                     print(f"   - {idx['name']}: {idx['column_names']}")
             

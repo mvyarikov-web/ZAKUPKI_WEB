@@ -86,7 +86,7 @@ def main():
             sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
             from webapp.config import Config
             api_key = Config.OPENAI_API_KEY
-        except Exception as e:
+        except Exception:
             pass
     
     if not api_key:
@@ -131,7 +131,7 @@ def main():
             tokens = result['tokens']
             recommended_timeout = recommend_timeout(elapsed)
             
-            print(f"  ✅ Успешно!")
+            print("  ✅ Успешно!")
             print(f"  ⏱️  Время ответа: {elapsed:.2f} сек")
             print(f"  🔢 Токены: {tokens}")
             print(f"  💡 Рекомендуемый таймаут: {recommended_timeout} сек")
@@ -159,7 +159,7 @@ def main():
             # Проверяем, доступна ли модель вообще
             if 'does not exist' in error.lower() or 'model_not_found' in error.lower():
                 print(f"  ⚠️  Модель {model_id} не существует в OpenAI API!")
-                print(f"  💡 Рекомендуется удалить эту модель или заменить на актуальную")
+                print("  💡 Рекомендуется удалить эту модель или заменить на актуальную")
             
             results.append({
                 'model_id': model_id,

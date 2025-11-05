@@ -1,6 +1,5 @@
 """Утилиты для предобработки изображений перед OCR (increment-013)."""
 import logging
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 

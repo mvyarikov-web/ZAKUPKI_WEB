@@ -80,10 +80,8 @@ class TrafficLightLogic:
         if not file_colors:
             return cls.GRAY
         
-        has_red = cls.RED in file_colors
         has_green = cls.GREEN in file_colors  
         has_yellow = cls.YELLOW in file_colors
-        has_gray = cls.GRAY in file_colors
         
         # Приоритет: зелёный -> жёлтый -> красный -> серый
         # 1. Если есть хотя бы один зелёный файл - папка зелёная

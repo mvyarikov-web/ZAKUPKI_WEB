@@ -1,10 +1,9 @@
 """Blueprint для страниц (index, view)."""
 import os
-from flask import Blueprint, render_template, jsonify, request, current_app, send_from_directory, redirect, url_for
+from flask import Blueprint, render_template, jsonify, request, current_app, send_from_directory
 from markupsafe import Markup
 from webapp.services.files import allowed_file
 from webapp.services.state import FilesState
-from webapp.services.indexing import get_index_path
 from webapp.middleware.auth_middleware import require_auth
 
 pages_bp = Blueprint('pages', __name__)
@@ -114,7 +113,7 @@ def view_file(filepath: str):
     
     try:
         decoded_filepath = unquote(filepath)
-        current_app.logger.info(f"Просмотр файла: {decoded_filepath}, пользователь: {g.user.get('id')}")
+        current_app.logger.info(f"Просмотр файла: {decoded_filepath}, пользователь: {getattr(g.user, 'id', None)}")
         
         # Проверка безопасности пути
         if not is_safe_subpath(current_app.config['UPLOAD_FOLDER'], decoded_filepath):
@@ -125,7 +124,7 @@ def view_file(filepath: str):
             doc_repo = DocumentRepository(session)
             chunk_repo = ChunkRepository(session)
             
-            document = doc_repo.get_by_path(storage_url=decoded_filepath, owner_id=g.user['id'])
+            document = doc_repo.get_by_path(storage_url=decoded_filepath, owner_id=getattr(g.user, 'id', None))
             
             if not document:
                 current_app.logger.warning(f"Документ не найден в БД: {decoded_filepath}")
@@ -133,20 +132,24 @@ def view_file(filepath: str):
             
             # Проверяем статус документа
             if document.status != 'indexed':
-                return render_template('view.html',
-                                     title=os.path.basename(decoded_filepath),
-                                     content=Markup('<div class="error-message">Документ ещё не проиндексирован</div>'),
-                                     keywords=[])
+                return render_template(
+                    'view.html',
+                    title=os.path.basename(decoded_filepath),
+                    content=Markup('<div class="error-message">Документ ещё не проиндексирован</div>'),
+                    keywords=[]
+                )
             
             # Получаем чанки документа из БД
             chunks = chunk_repo.get_by_document(document_id=document.id)
             
             if not chunks:
                 current_app.logger.warning(f"Чанки не найдены для документа: {decoded_filepath}")
-                return render_template('view.html',
-                                     filename=os.path.basename(decoded_filepath),
-                                     content=Markup('<div class="error-message">Не удалось извлечь текст документа</div>'),
-                                     keywords=[])
+                return render_template(
+                    'view.html',
+                    title=os.path.basename(decoded_filepath),
+                    content=Markup('<div class="error-message">Не удалось извлечь текст документа</div>'),
+                    keywords=[]
+                )
             
             # Собираем текст из чанков
             text = '\n\n'.join([chunk.text for chunk in chunks])
@@ -168,10 +171,12 @@ def view_file(filepath: str):
                           .replace('&lt;mark&gt;', '<mark>')
                           .replace('&lt;/mark&gt;', '</mark>'))
         
-        return render_template('view.html',
-                             filename=os.path.basename(decoded_filepath),
-                             content=safe_text,
-                             keywords=keywords)
+        return render_template(
+            'view.html',
+            title=os.path.basename(decoded_filepath),
+            content=safe_text,
+            keywords=keywords
+        )
     
     except Exception as e:
         current_app.logger.exception('view_file error')

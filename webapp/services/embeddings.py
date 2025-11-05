@@ -1,6 +1,6 @@
 """Сервис для работы с эмбеддингами OpenAI."""
 import os
-from typing import List, Dict, Any, Optional
+from typing import List, Optional
 import openai
 from flask import current_app
 

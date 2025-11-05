@@ -10,14 +10,12 @@
 """
 
 import pytest
-import os
-from datetime import datetime, timedelta
+from datetime import datetime
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 from webapp import create_app
-from webapp.db.base import Base, get_db_session
-from webapp.db.models import User, Session as SessionModel
+from webapp.db.base import Base
 from webapp.db.repositories import UserRepository, SessionRepository
 
 

@@ -1,5 +1,5 @@
 """Blueprint для управления API ключами через БД"""
-from flask import Blueprint, request, jsonify, render_template, current_app, g
+from flask import Blueprint, request, jsonify, render_template, g
 from webapp.services.api_keys_service import APIKeysService
 from webapp.middleware.auth_middleware import require_auth
 from webapp.db.base import SessionLocal

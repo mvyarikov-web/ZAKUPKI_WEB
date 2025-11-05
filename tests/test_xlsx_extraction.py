@@ -11,7 +11,7 @@ def test_xlsx_text_present_in_index(tmp_path, make_xlsx):
     (root / xlsx_path.name).write_bytes(xlsx_path.read_bytes())
 
     dp = DocumentProcessor()
-    index_path = dp.create_search_index(str(root))
+    dp.create_search_index(str(root))
 
     text = (root / "_search_index.txt").read_text(encoding="utf-8", errors="ignore")
     assert "Лист:" in text  # заголовок листа присутствует

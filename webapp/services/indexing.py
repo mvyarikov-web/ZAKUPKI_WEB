@@ -95,7 +95,7 @@ def search_in_index(index_path: str, keywords: list, context: int = 80):
         processor = DocumentProcessor()
         results = processor.search_keywords(index_path, keywords, context=context)
         return results
-    except Exception as e:
+    except Exception:
         current_app.logger.exception('Ошибка поиска')
         raise
 

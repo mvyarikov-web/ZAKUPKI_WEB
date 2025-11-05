@@ -2,7 +2,7 @@
 import re
 import os
 import logging
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional
 from document_processor.analysis.schemas import (
     Procurement, Item, Party, Address, Terms, AnalysisResult
 )

@@ -1,7 +1,5 @@
 """Тесты для утилит работы с виртуальными путями архивов."""
-import io
 import zipfile
-import pytest
 from pathlib import Path
 from webapp.services.archives import (
     parse_virtual_path,

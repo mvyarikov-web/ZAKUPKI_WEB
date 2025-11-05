@@ -5,8 +5,6 @@
 Конфигурируется через config_service.py.
 """
 
-import logging
-from datetime import datetime
 from typing import Optional
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -187,7 +185,6 @@ def _run_gc_task(threshold_score: float = -10.0, max_deletions: int = 100):
         threshold_score: Порог retention score
         max_deletions: Максимальное количество удалений
     """
-    from flask import current_app
     from webapp.models.rag_models import RAGDatabase
     from webapp.services.gc_service import run_garbage_collection
     

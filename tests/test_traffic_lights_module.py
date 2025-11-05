@@ -4,7 +4,6 @@
 """
 import pytest
 import requests
-import time
 
 
 def test_traffic_lights_module_integration():

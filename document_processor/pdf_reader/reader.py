@@ -1,13 +1,11 @@
 """Модуль чтения PDF-документов (векторные и сканы)."""
-import os
 import time
 import logging
 import unicodedata
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from .analyzer import PdfAnalyzer
-from .exceptions import OcrNotAvailableError
 
 # Импорты PDF-библиотек (опциональные)
 try:

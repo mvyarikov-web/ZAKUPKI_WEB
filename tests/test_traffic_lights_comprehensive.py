@@ -60,14 +60,14 @@ class TestFileTrafficLights:
         Тест проверки индексации файла.
         """
         # Проиндексированные файлы
-        assert TrafficLightLogic.is_file_indexed('contains_keywords', 100) == True
-        assert TrafficLightLogic.is_file_indexed('no_keywords', 50) == True
-        assert TrafficLightLogic.is_file_indexed('processing', 200) == True
+        assert TrafficLightLogic.is_file_indexed('contains_keywords', 100)
+        assert TrafficLightLogic.is_file_indexed('no_keywords', 50)
+        assert TrafficLightLogic.is_file_indexed('processing', 200)
         
         # Неиндексированные файлы
-        assert TrafficLightLogic.is_file_indexed('error', 100) == False
-        assert TrafficLightLogic.is_file_indexed('unsupported', 50) == False
-        assert TrafficLightLogic.is_file_indexed('processing', 0) == False
+        assert not TrafficLightLogic.is_file_indexed('error', 100)
+        assert not TrafficLightLogic.is_file_indexed('unsupported', 50)
+        assert not TrafficLightLogic.is_file_indexed('processing', 0)
 
 
 class TestFolderTrafficLights:

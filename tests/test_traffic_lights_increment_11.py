@@ -6,8 +6,6 @@
 import pytest
 import tempfile
 import os
-import json
-from unittest.mock import patch
 
 
 class TestTrafficLightsIncrement11:

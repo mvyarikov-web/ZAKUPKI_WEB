@@ -1,4 +1,3 @@
-import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -29,7 +28,7 @@ def test_rar_archive_full_indexing(tmp_path: Path):
 
     # Индексация
     dp = DocumentProcessor()
-    index_path = dp.create_search_index(str(root))
+    dp.create_search_index(str(root))
 
     text = (root / "_search_index.txt").read_text(encoding="utf-8", errors="ignore")
     assert "rar://data.rar!/docs/readme.txt" in text

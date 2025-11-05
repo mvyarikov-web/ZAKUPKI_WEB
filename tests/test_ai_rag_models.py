@@ -4,7 +4,6 @@ import os
 import sys
 import tempfile
 import pytest
-from pathlib import Path
 
 # Добавляем корень проекта в путь
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -33,7 +32,7 @@ def app_with_models_config(app):
     # Очистка
     try:
         os.unlink(tmp_path)
-    except:
+    except Exception:
         pass
 
 

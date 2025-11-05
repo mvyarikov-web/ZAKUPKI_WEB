@@ -1,9 +1,9 @@
 """
 Базовый репозиторий с общими CRUD операциями.
 """
-from typing import TypeVar, Generic, Type, Optional, List, Any, Dict
+from typing import TypeVar, Generic, Type, Optional, List
 from sqlalchemy.orm import Session
-from sqlalchemy import select, update, delete, func
+from sqlalchemy import select, func
 from webapp.db.base import Base
 
 ModelType = TypeVar("ModelType", bound=Base)

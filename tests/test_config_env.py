@@ -6,7 +6,6 @@
 import os
 import pytest
 import tempfile
-from pathlib import Path
 from webapp.config import ConfigService
 
 

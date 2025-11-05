@@ -4,7 +4,6 @@
 Цель: повторить точные параметры запросов из программы и сравнить ответы.
 """
 import pytest
-import os
 from openai import OpenAI
 
 
@@ -178,7 +177,7 @@ def test_sonar_with_exact_params():
     # Для обычного Sonar допускаем отказ, но логируем
     if found_refusals:
         print(f"⚠️ SONAR: Найдены фразы отказа: {found_refusals}")
-        print(f"   Возможно, обычный Sonar требует других параметров")
+        print("   Возможно, обычный Sonar требует других параметров")
     else:
         print(f"✅ SONAR: Успешно вернул анекдоты ({len(answer)} символов)")
         

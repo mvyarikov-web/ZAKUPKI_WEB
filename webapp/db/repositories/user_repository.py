@@ -3,7 +3,6 @@
 """
 from typing import Optional
 from sqlalchemy.orm import Session
-from sqlalchemy import select
 from webapp.db.models import User
 from webapp.db.repositories.base_repository import BaseRepository
 
@@ -128,4 +127,18 @@ class UserRepository(BaseRepository[User]):
             True если успешно, False иначе
         """
         result = self.update(user_id, email=new_email)
+        return result is not None
+    
+    def update_last_folder(self, user_id: int, folder_path: str) -> bool:
+        """
+        Обновить последнюю открытую папку пользователя.
+        
+        Args:
+            user_id: ID пользователя
+            folder_path: Путь к последней открытой папке
+            
+        Returns:
+            True если успешно, False иначе
+        """
+        result = self.update(user_id, last_folder=folder_path)
         return result is not None

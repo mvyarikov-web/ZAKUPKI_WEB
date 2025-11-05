@@ -6,7 +6,7 @@ import datetime
 from functools import wraps
 from flask import request, jsonify, g, current_app
 from webapp.db.models import User
-from webapp.db.session import get_session
+from webapp.db import get_db as get_session
 
 
 def generate_token(user_id: int, email: str) -> str:
@@ -158,7 +158,7 @@ def optional_auth(f):
                             g.current_user = user
                     finally:
                         session.close()
-                except:
+                except Exception:
                     pass  # Игнорируем ошибки, продолжаем без авторизации
         
         return f(*args, **kwargs)

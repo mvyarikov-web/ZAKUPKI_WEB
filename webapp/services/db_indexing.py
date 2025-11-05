@@ -11,10 +11,10 @@ import os
 import hashlib
 import time
 from typing import List, Dict, Any, Optional, Tuple
-from datetime import datetime
 from flask import current_app
 from webapp.models.rag_models import RAGDatabase
 from webapp.services.chunking import chunk_document
+from document_processor.extractors.text_extractor import extract_text
 
 
 def calculate_file_hash(file_path: str) -> str:
@@ -169,19 +169,23 @@ def find_changed_files(
     try:
         with db.db.connect() as conn:
             with conn.cursor() as cur:
-                # Получаем sha256 всех файлов владельца в этой папке
+                # Получаем sha256 всех видимых документов владельца.
+                # Используем storage_url, так как он хранит относительный путь в uploads.
                 cur.execute("""
-                    SELECT original_filename, sha256
+                    SELECT storage_url, sha256
                     FROM documents
-                    WHERE owner_id = %s AND is_visible = TRUE
-                    AND original_filename LIKE %s;
-                """, (owner_id, f"{folder_path}%"))
-                
-                existing_hashes = {row[0]: row[1] for row in cur.fetchall()}
+                    WHERE owner_id = %s AND is_visible = TRUE;
+                """, (owner_id,))
+                existing_hashes = {row[0]: row[1] for row in cur.fetchall() if row[0]}
         
         # Сравниваем хеши
         for file_path, file_info in current_files.items():
-            existing_hash = existing_hashes.get(file_path)
+            # Преобразуем абсолютный путь файла к относительному пути внутри папки индексации
+            try:
+                rel_path = os.path.relpath(file_path, folder_path)
+            except Exception:
+                rel_path = os.path.basename(file_path)
+            existing_hash = existing_hashes.get(rel_path)
             current_hash = file_info.get('sha256')
             
             if existing_hash != current_hash:
@@ -235,21 +239,23 @@ def index_document_to_db(
                     current_app.logger.info(f'Документ {file_path} уже проиндексирован (дедупликация)')
                     return existing_doc[0], indexing_cost
         
-        # 2. Читаем и чанкуем файл
-        # TODO: здесь нужна интеграция с extractors для извлечения текста
-        # Пока упрощённая версия для демонстрации
+        # 2. Извлекаем текст через общий экстрактор и чанкуем
+        content = ""
         try:
-            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                content = f.read()
+            content = extract_text(file_path) or ""
         except Exception as e:
-            current_app.logger.warning(f'Ошибка чтения {file_path}: {e}')
-            content = ""
+            current_app.logger.warning(f'Ошибка извлечения текста {file_path}: {e}')
         
         if not content:
+            try:
+                ext = os.path.splitext(file_path)[1].lower()
+            except Exception:
+                ext = ''
+            current_app.logger.info(f'Пропуск индексации: пустой контент после чтения (возможно, неподдерживаемый формат) file={file_path}, ext={ext}')
             indexing_cost = time.time() - start_time
             return 0, indexing_cost
         
-        # 3. Чанкуем текст
+    # 3. Чанкуем текст
         chunks = chunk_document(
             content,
             file_path=file_path,
@@ -258,28 +264,46 @@ def index_document_to_db(
         )
         
         if not chunks:
+            current_app.logger.info(f'Чанкование вернуло 0 чанков: {file_path}')
             indexing_cost = time.time() - start_time
             return 0, indexing_cost
         
         # 4. Добавляем документ в БД
+        # Сохраняем относительный путь (storage_url) для последующего отображения через /view
+        uploads_root = current_app.config.get('UPLOAD_FOLDER')
+        try:
+            if uploads_root:
+                # Если файл лежит в пределах uploads, сохраняем относительный путь
+                abs_file = os.path.abspath(file_path)
+                abs_root = os.path.abspath(uploads_root)
+                if os.path.commonpath([abs_file, abs_root]) == abs_root:
+                    storage_url = os.path.relpath(abs_file, abs_root)
+                else:
+                    storage_url = os.path.basename(file_path)
+            else:
+                storage_url = os.path.basename(file_path)
+        except Exception:
+            storage_url = os.path.basename(file_path)
         with db.db.connect() as conn:
             with conn.cursor() as cur:
                 cur.execute("""
                     INSERT INTO documents (
-                        owner_id, original_filename, content_type, size_bytes, sha256,
+                        owner_id, original_filename, storage_url, content_type, size_bytes, sha256,
                         status, uploaded_at, indexed_at, is_visible, access_count, indexing_cost_seconds
                     ) VALUES (
-                        %s, %s, %s, %s, %s, 'indexed', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, TRUE, 0, %s
+                        %s, %s, %s, %s, %s, %s, 'indexed', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, TRUE, 0, %s
                     )
                     ON CONFLICT (owner_id, sha256) WHERE is_visible = TRUE
                     DO UPDATE SET
                         original_filename = EXCLUDED.original_filename,
+                        storage_url = EXCLUDED.storage_url,
                         indexed_at = CURRENT_TIMESTAMP,
                         indexing_cost_seconds = EXCLUDED.indexing_cost_seconds
                     RETURNING id;
                 """, (
                     owner_id,
                     os.path.basename(file_path),
+                    storage_url,
                     file_info.get('content_type', 'text/plain'),
                     file_info.get('size', 0),
                     file_info['sha256'],
@@ -326,17 +350,22 @@ def index_document_to_db(
         indexing_cost = time.time() - start_time
         with db.db.connect() as conn:
             with conn.cursor() as cur:
-                cur.execute("""
+                cur.execute(
+                    """
                     UPDATE documents
                     SET indexing_cost_seconds = %s
                     WHERE id = %s;
-                """, (indexing_cost, doc_id))
+                    """,
+                    (indexing_cost, doc_id)
+                )
             conn.commit()
         
-        current_app.logger.info(f'Документ {file_path} проиндексирован: {len(chunks)} чанков, {indexing_cost:.2f}с')
+        current_app.logger.info(
+            f'Документ {file_path} проиндексирован: {len(chunks)} чанков, {indexing_cost:.2f}с'
+        )
         return doc_id, indexing_cost
         
-    except Exception as e:
+    except Exception:
         indexing_cost = time.time() - start_time
         current_app.logger.exception(f'Ошибка индексации {file_path}')
         return 0, indexing_cost
@@ -506,7 +535,7 @@ def restore_soft_deleted_document(db: RAGDatabase, document_id: int, new_owner_i
             conn.commit()
         current_app.logger.info(f'Восстановлен документ #{document_id} для owner_id={new_owner_id}')
         return True
-    except Exception as e:
+    except Exception:
         current_app.logger.exception(f'Ошибка восстановления документа #{document_id}')
         return False
 
@@ -526,17 +555,27 @@ def copy_chunks_between_users(db: RAGDatabase, source_doc_id: int, target_doc_id
     try:
         with db.db.connect() as conn:
             with conn.cursor() as cur:
-                cur.execute("""
-                    INSERT INTO chunks (document_id, chunk_idx, text)
-                    SELECT %s, chunk_idx, text
-                    FROM chunks
-                    WHERE document_id = %s;
-                """, (target_doc_id, source_doc_id))
+                # Копируем чанки, заполняя owner_id целевого документа и сохраняя text_sha256/tokens, если они есть
+                cur.execute(
+                    """
+                    INSERT INTO chunks (document_id, owner_id, chunk_idx, text, text_sha256, tokens)
+                    SELECT %s AS document_id,
+                           d.owner_id AS owner_id,
+                           c.chunk_idx,
+                           c.text,
+                           c.text_sha256,
+                           c.tokens
+                    FROM chunks c
+                    JOIN documents d ON d.id = %s
+                    WHERE c.document_id = %s;
+                    """,
+                    (target_doc_id, target_doc_id, source_doc_id)
+                )
                 count = cur.rowcount
             conn.commit()
         current_app.logger.info(f'Скопировано {count} чанков: doc#{source_doc_id} → doc#{target_doc_id}')
         return count
-    except Exception as e:
+    except Exception:
         current_app.logger.exception(f'Ошибка копирования чанков: doc#{source_doc_id} → doc#{target_doc_id}')
         return 0
 
@@ -601,13 +640,27 @@ def handle_duplicate_upload(
     else:
         # Сценарий 3: существует у другого пользователя → создаём новую запись, копируем чанки
         try:
+            # Рассчитываем storage_url (относительный путь в пределах uploads)
+            uploads_root = current_app.config.get('UPLOAD_FOLDER')
+            try:
+                if uploads_root:
+                    abs_file = os.path.abspath(file_path)
+                    abs_root = os.path.abspath(uploads_root)
+                    if os.path.commonpath([abs_file, abs_root]) == abs_root:
+                        storage_url = os.path.relpath(abs_file, abs_root)
+                    else:
+                        storage_url = os.path.basename(file_path)
+                else:
+                    storage_url = os.path.basename(file_path)
+            except Exception:
+                storage_url = os.path.basename(file_path)
             with db.db.connect() as conn:
                 with conn.cursor() as cur:
                     cur.execute("""
-                        INSERT INTO documents (owner_id, original_filename, sha256, is_visible, indexing_cost_seconds)
-                        VALUES (%s, %s, %s, TRUE, 0.0)
+                        INSERT INTO documents (owner_id, original_filename, storage_url, sha256, is_visible, indexing_cost_seconds)
+                        VALUES (%s, %s, %s, %s, TRUE, 0.0)
                         RETURNING id;
-                    """, (owner_id, filename, sha256_hash))
+                    """, (owner_id, filename, storage_url, sha256_hash))
                     new_doc_id = cur.fetchone()[0]
                 conn.commit()
             

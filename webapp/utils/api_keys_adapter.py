@@ -4,7 +4,7 @@
 """
 import logging
 from typing import Optional
-from flask import g, current_app
+from flask import g
 
 from webapp.services.api_keys_service import APIKeysService
 from webapp.db.base import SessionLocal

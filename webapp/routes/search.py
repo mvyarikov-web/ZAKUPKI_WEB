@@ -1,7 +1,6 @@
 """Blueprint для поиска и индексации."""
 import os
 import re
-import shutil
 import json
 import html as htmllib
 from datetime import datetime, timedelta
@@ -121,7 +120,7 @@ def _search_in_db(db: RAGDatabase, owner_id: int, keywords: list, exclude_mode: 
                     
                     results = list(file_matches.values())
                     
-    except Exception as e:
+    except Exception:
         current_app.logger.exception("Ошибка поиска в БД")
         raise
     
@@ -300,81 +299,6 @@ def build_index_route():
             'stats': stats
         })
         
-        # Обновим количество распознанных символов по каждому файлу (включая виртуальные из архивов) и статусы ошибок/неподдержки
-        try:
-            # char_counts уже получены из adapter.build_index()
-            counts = char_counts
-            
-            # Список всех реальных файлов в uploads
-            all_files: list[str] = []
-            for root, dirs, files in os.walk(uploads):
-                for fname in files:
-                    if fname == '_search_index.txt' or fname.startswith('~$') or fname.startswith('$'):
-                        continue
-                    rel_path = os.path.relpath(os.path.join(root, fname), uploads)
-                    all_files.append(rel_path)
-            
-            files_state = _get_files_state()
-            new_statuses = {}
-            
-            # Обрабатываем реальные файлы
-            for rel_path in all_files:
-                ext_ok = allowed_file(rel_path, current_app.config['ALLOWED_EXTENSIONS'])
-                entry = files_state.get_file_status(rel_path).copy()
-                
-                if not ext_ok:
-                    # Неподдерживаемый формат
-                    entry.update({
-                        'status': 'unsupported',
-                        'error': 'Неподдерживаемый формат',
-                        'char_count': 0,
-                        'processed_at': datetime.now().isoformat()
-                    })
-                else:
-                    cc = counts.get(rel_path)
-                    if cc is None:
-                        # Поддерживаемый, но нет записи в индексе — ошибка чтения/индексации
-                        entry.update({
-                            'status': entry.get('status', 'error' if entry.get('status') in (None, 'not_checked') else entry.get('status')),
-                            'error': entry.get('error') or 'Ошибка чтения или не проиндексирован',
-                            'char_count': 0,
-                            'processed_at': datetime.now().isoformat()
-                        })
-                    else:
-                        # Есть счётчик символов — не трогаем статус поиска, только дополняем метрикой
-                        entry.update({
-                            'char_count': cc,
-                            'processed_at': datetime.now().isoformat()
-                        })
-                        # если 0 символов, оставим это как индикатор качества (UI подсветит)
-                
-                new_statuses[rel_path] = entry
-            
-            # Обрабатываем виртуальные файлы из архивов (те, что есть в индексе, но не в all_files)
-            for indexed_path, char_count in counts.items():
-                if indexed_path not in all_files and '://' in indexed_path:
-                    # Это виртуальный файл из архива
-                    entry = files_state.get_file_status(indexed_path).copy()
-                    entry.update({
-                        'char_count': char_count,
-                        'processed_at': datetime.now().isoformat()
-                    })
-                    # Если статус не установлен, устанавливаем в not_checked
-                    if not entry.get('status'):
-                        entry['status'] = 'not_checked'
-                    new_statuses[indexed_path] = entry
-            
-            # Атомарно сохраняем все статусы
-            files_state.update_file_statuses(new_statuses)
-        except Exception:
-            current_app.logger.exception('Не удалось обновить char_count по индексу')
-        
-            return jsonify({
-                'success': True, 
-                'index_path': index_path, 
-                'size': size,
-                'mode': 'legacy_file'
-            })
     
     except Exception as e:
         current_app.logger.exception("Ошибка при сборке индекса")
@@ -564,13 +488,13 @@ def view_index():
         
         # Добавляем метаинформацию в начало
         metadata = [
-            f"# Сводный индекс поиска",
+            "# Сводный индекс поиска",
             f"# Размер: {len(content)} байт",
             f"# Обновлён: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-            f"#",
-            f"# Формат: групповая структура (increment-014)",
-            f"# Группы: FAST (TXT,CSV,HTML) → MEDIUM (DOCX,XLSX,PDF) → SLOW (OCR)",
-            f"#",
+            "#",
+            "# Формат: групповая структура (increment-014)",
+            "# Группы: FAST (TXT,CSV,HTML) → MEDIUM (DOCX,XLSX,PDF) → SLOW (OCR)",
+            "#",
             ""
         ]
         

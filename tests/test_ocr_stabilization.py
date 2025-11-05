@@ -1,9 +1,6 @@
 """Тесты для стабилизации OCR (increment-013, Этап 1)."""
-import os
 import pytest
-from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock
-import time
+from unittest.mock import Mock, patch
 
 
 @pytest.mark.timeout(10)
@@ -25,7 +22,7 @@ def test_ocr_preprocess_disabled_by_default():
     """Проверка, что предобработка отключена по умолчанию."""
     from webapp.config import Config
     
-    assert Config.OCR_PREPROCESS_ENABLED == False
+    assert not Config.OCR_PREPROCESS_ENABLED
 
 
 @pytest.mark.timeout(10)
@@ -69,7 +66,7 @@ def test_ocr_per_page_error_handling(tmp_path, monkeypatch):
     assert "Текст страницы 1" in text
     assert "Текст страницы 3" in text
     assert len(attempts) == 1
-    assert attempts[0]['ok'] == True
+    assert attempts[0]['ok']
 
 
 @pytest.mark.timeout(10)
@@ -90,7 +87,7 @@ def test_ocr_dependencies_not_available(tmp_path, monkeypatch):
     # Должны получить пустой текст и попытку с ошибкой
     assert text == ''
     assert len(attempts) == 1
-    assert attempts[0]['ok'] == False
+    assert not attempts[0]['ok']
     assert 'not available' in attempts[0]['error']
 
 
@@ -157,7 +154,7 @@ def test_preprocess_image_graceful_fail(tmp_path):
     
     # OCR должен продолжить работу с исходным изображением
     assert "Текст после OCR" in text
-    assert attempts[0]['ok'] == True
+    assert attempts[0]['ok']
 
 
 @pytest.mark.timeout(10)
@@ -208,9 +205,9 @@ def test_config_values_added():
     
     # Проверка дефолтных значений
     assert Config.OCR_TIMEOUT_PER_PAGE == 30
-    assert Config.OCR_PREPROCESS_ENABLED == False
-    assert Config.OCR_USE_OSD == False
-    assert Config.OCR_PARALLEL_PAGES == False
+    assert not Config.OCR_PREPROCESS_ENABLED
+    assert not Config.OCR_USE_OSD
+    assert not Config.OCR_PARALLEL_PAGES
     assert Config.OCR_MAX_WORKERS == 4
 
 

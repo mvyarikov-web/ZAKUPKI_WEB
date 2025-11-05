@@ -4,7 +4,6 @@
 import logging
 import re
 from typing import Optional
-from sqlalchemy.orm import Session
 
 from webapp.db.repositories import AppLogRepository
 
@@ -116,7 +115,7 @@ class DatabaseLogHandler(logging.Handler):
             
             session.close()
             
-        except Exception as e:
+        except Exception:
             # Не падаем при ошибках логирования
             self.handleError(record)
     

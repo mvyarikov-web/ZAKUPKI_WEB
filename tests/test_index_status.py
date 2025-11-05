@@ -1,9 +1,6 @@
 """Тесты для менеджера прогресса индексации (increment-013, Этап 4)."""
-import os
 import json
 import pytest
-from pathlib import Path
-import time
 
 
 @pytest.mark.timeout(30)
@@ -87,7 +84,7 @@ def test_flask_index_status_endpoint(tmp_path):
         response = client.get('/index_status')
         assert response.status_code == 200
         data = response.get_json()
-        assert data['exists'] == False
+        assert not data['exists']
         
         # Тест 2: С файлом статуса прогресса
         status_path = tmp_path / 'index' / 'status.json'
@@ -114,15 +111,13 @@ def test_flask_index_status_endpoint(tmp_path):
         assert data['progress']['total'] == 10
         assert data['progress']['processed'] == 5
         assert data['progress']['current_file'] == 'test.pdf'
-        assert data['progress']['ocr_active'] == True
+        assert data['progress']['ocr_active']
 
 
 @pytest.mark.timeout(30)
 def test_status_updates_during_processing(tmp_path):
     """Проверка, что статус обновляется в процессе обработки файлов."""
     from document_processor.search.indexer import Indexer
-    from unittest.mock import patch
-    import time
     
     root = tmp_path / "uploads"
     root.mkdir()

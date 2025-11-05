@@ -4,11 +4,10 @@
 """
 import logging
 from typing import Optional, List, Dict, Any
-from datetime import datetime
 from cryptography.fernet import Fernet
 from flask import current_app
 
-from webapp.db.models import APIKey, User
+from webapp.db.models import APIKey
 from webapp.db.base import SessionLocal
 
 logger = logging.getLogger(__name__)
@@ -92,7 +91,7 @@ class APIKeysService:
         if not key:
             key = self.db_session.query(APIKey).filter(
                 APIKey.provider == provider,
-                APIKey.is_shared == True
+                APIKey.is_shared
             ).first()
         
         if key:
@@ -138,7 +137,7 @@ class APIKeysService:
         # Общие ключи (если у пользователя нет личного для этого провайдера)
         personal_providers = {k.provider for k in personal_keys}
         shared_keys = self.db_session.query(APIKey).filter(
-            APIKey.is_shared == True,
+            APIKey.is_shared,
             ~APIKey.provider.in_(personal_providers)
         ).all()
         

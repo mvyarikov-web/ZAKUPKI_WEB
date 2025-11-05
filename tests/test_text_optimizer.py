@@ -2,7 +2,7 @@
 Тесты для сервиса оптимизации текста
 """
 import pytest
-from webapp.services.text_optimizer import TextOptimizer, OptimizationResult
+from webapp.services.text_optimizer import TextOptimizer
 
 
 class TestTextOptimizer:

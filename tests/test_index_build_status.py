@@ -5,7 +5,6 @@
 import pytest
 import time
 import json
-from pathlib import Path
 
 
 def test_index_build_and_status(tmp_path):
@@ -133,7 +132,7 @@ def test_index_status_endpoint_error_handling(tmp_path):
         
         # Не должно быть ошибки даже при отсутствии файлов
         assert 'error' not in data, f"Не должно быть ошибки: {data}"
-        assert data.get('exists') == False, "Индекс не должен существовать для пустой папки"
+        assert not data.get('exists'), "Индекс не должен существовать для пустой папки"
 
 
 def test_index_status_without_datetime_error(tmp_path):

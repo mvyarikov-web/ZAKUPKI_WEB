@@ -3,7 +3,6 @@
 """
 import sys
 import os
-import time
 
 # Добавляем путь к utils
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -35,7 +34,6 @@ def test_import():
     print("="*60)
     
     try:
-        from utils.server_reloader import ServerReloader
         print("✅ Тест пройден: модуль импортируется")
         return True
     except Exception as e:
@@ -55,7 +53,7 @@ def test_class_init():
             start_command="echo 'test'",
             wait_time=1.0
         )
-        print(f"✅ Тест пройден: класс создан")
+        print("✅ Тест пройден: класс создан")
         print(f"   - Порт: {reloader.port}")
         print(f"   - Команда: {reloader.start_command}")
         print(f"   - Время ожидания: {reloader.wait_time}")

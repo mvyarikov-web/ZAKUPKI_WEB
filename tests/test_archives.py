@@ -15,7 +15,7 @@ def test_zip_archive_indexing(tmp_path: Path):
         z.writestr('docs/note.docx', b'PK\x03\x04')  # заглушка, будет пропущен/пустой
 
     dp = DocumentProcessor()
-    index_path = dp.create_search_index(str(root))
+    dp.create_search_index(str(root))
 
     text = (root / '_search_index.txt').read_text(encoding='utf-8', errors='ignore')
     assert 'zip://a.zip!/docs/readme.txt' in text
@@ -54,7 +54,7 @@ def test_nested_zip_archive_indexing(tmp_path: Path):
     # Индексируем с archive_depth=1 (позволяем один уровень вложенности)
     from document_processor.search.indexer import Indexer
     indexer = Indexer(archive_depth=1)
-    index_path = indexer.create_index(str(root))
+    indexer.create_index(str(root))
     
     text = (root / '_search_index.txt').read_text(encoding='utf-8', errors='ignore')
     
@@ -80,7 +80,7 @@ def test_corrupted_zip_archive(tmp_path: Path):
     (root / 'good.txt').write_text('нормальный файл', encoding='utf-8')
     
     dp = DocumentProcessor()
-    index_path = dp.create_search_index(str(root))
+    dp.create_search_index(str(root))
     
     text = (root / '_search_index.txt').read_text(encoding='utf-8', errors='ignore')
     

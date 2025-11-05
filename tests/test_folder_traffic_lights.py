@@ -8,7 +8,6 @@
 """
 import os
 import tempfile
-import json
 import pytest
 
 from webapp import create_app

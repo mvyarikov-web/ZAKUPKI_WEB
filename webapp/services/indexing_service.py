@@ -93,7 +93,6 @@ class IndexingService:
             return []
         
         chunks = []
-        overlap = IndexingService.CHUNK_OVERLAP
         
         # Разбиваем по предложениям для более естественных границ
         sentences = text.split('. ')

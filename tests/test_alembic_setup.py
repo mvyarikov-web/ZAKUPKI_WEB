@@ -3,7 +3,6 @@
 Проверяет корректность конфигурации и возможность подключения к БД.
 """
 
-import os
 import pytest
 from pathlib import Path
 

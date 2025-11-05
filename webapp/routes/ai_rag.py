@@ -511,7 +511,7 @@ def _direct_analyze_without_rag(
                             ),
                         }), 429
                     ratio = target_total / max(1, total_requested)
-                    new_doc_token_limit = max(1, int(doc_tokens_now * ratio))
+                    max(1, int(doc_tokens_now * ratio))
                     new_output_limit = max(64, int(reserve_for_output * ratio))
                     _time.sleep(1)
                     if is_new_family:

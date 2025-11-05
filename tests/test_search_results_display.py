@@ -1,9 +1,6 @@
 """Тест отображения результатов поиска под файлами"""
-import os
-import tempfile
 import pytest
 from webapp import create_app
-from document_processor import DocumentProcessor
 
 
 @pytest.fixture

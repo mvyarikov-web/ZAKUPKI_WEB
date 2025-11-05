@@ -1,28 +1,29 @@
 """
-Модуль для отслеживания использования токенов AI-моделей
+Модуль для отслеживания использования токенов AI-моделей.
+
+Изменения (инкремент 015 CLEAN):
+- Убрана запись в локальный файл index/token_usage.json
+- Добавлена запись в БД (таблица TokenUsage) при доступности БД
+- При недоступности БД — in-memory буфер (процессный), чтобы не терять данные
 """
+from __future__ import annotations
+
 import json
-import os
 from datetime import datetime
+from typing import Dict, Optional, List
 from pathlib import Path
-from typing import Dict, List, Optional
 import logging
+import os
 
 logger = logging.getLogger(__name__)
-
-# Путь к файлу со статистикой токенов
-TOKEN_STATS_FILE = Path(__file__).parent.parent / 'index' / 'token_usage.json'
 
 # Курс доллара к рублю (можно обновлять периодически)
 USD_TO_RUB = 95.0  # Примерный курс
 
+# Признак использования БД (для ранней инициализации вне Flask контекста)
+USE_DATABASE = os.environ.get('USE_DATABASE', 'false').lower() in ('true', '1', 'yes', 'on')
 
-def ensure_stats_file():
-    """Создаёт файл статистики, если его нет"""
-    if not TOKEN_STATS_FILE.exists():
-        TOKEN_STATS_FILE.parent.mkdir(parents=True, exist_ok=True)
-        with open(TOKEN_STATS_FILE, 'w', encoding='utf-8') as f:
-            json.dump({'records': []}, f, ensure_ascii=False, indent=2)
+_MEM_BUFFER: List[Dict] = []  # процессный буфер на случай отсутствия БД
 
 
 def _load_models_config() -> Dict:
@@ -94,41 +95,80 @@ def log_token_usage(
         metadata: Дополнительная информация (файлы, промпт и т.д.)
     """
     try:
-        ensure_stats_file()
-        
         # Рассчитываем стоимость
         cost_info = _calculate_cost(model_id, prompt_tokens, completion_tokens)
-        
-        # Читаем текущую статистику
-        with open(TOKEN_STATS_FILE, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-        
-        # Добавляем новую запись
+
         record = {
             'timestamp': datetime.now().isoformat(),
             'model_id': model_id,
             'prompt_tokens': prompt_tokens,
             'completion_tokens': completion_tokens,
             'total_tokens': total_tokens,
-            'duration_seconds': duration_seconds,
+            'duration_seconds': float(duration_seconds) if duration_seconds is not None else None,
             'cost_usd': cost_info['cost_usd'],
             'cost_rub': cost_info['cost_rub'],
             'input_cost_usd': cost_info['input_cost_usd'],
             'output_cost_usd': cost_info['output_cost_usd'],
             'metadata': metadata or {}
         }
-        
-        data['records'].append(record)
-        
-        # Сохраняем обновлённую статистику
-        with open(TOKEN_STATS_FILE, 'w', encoding='utf-8') as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-        
+
+        # Пытаемся записать в БД
+        if USE_DATABASE:
+            try:
+                from webapp.db import get_db, TokenUsage  # type: ignore
+                # Берём первую сессию из генератора
+                db = next(get_db())
+                try:
+                    # Создаём таблицу при первом использовании (если миграции не запускались)
+                    try:
+                        bind = db.get_bind()
+                        TokenUsage.__table__.create(bind=bind, checkfirst=True)
+                    except Exception:
+                        pass
+                    # user_id может быть в metadata
+                    user_id = None
+                    if metadata and isinstance(metadata, dict):
+                        user_id = metadata.get('user_id')
+                    # Конвертируем денежные значения в целые (центы/копейки)
+                    cents = lambda x: int(round(float(x) * 100))
+                    kopecks = lambda x: int(round(float(x) * 100))
+                    obj = TokenUsage(
+                        user_id=user_id,
+                        model_id=model_id,
+                        prompt_tokens=prompt_tokens,
+                        completion_tokens=completion_tokens,
+                        total_tokens=total_tokens,
+                        duration_seconds=int(duration_seconds) if duration_seconds is not None else None,
+                        cost_usd=cents(cost_info['cost_usd']),
+                        cost_rub=kopecks(cost_info['cost_rub']),
+                        input_cost_usd=cents(cost_info['input_cost_usd']),
+                        output_cost_usd=cents(cost_info['output_cost_usd']),
+                        metadata=metadata or {},
+                    )
+                    db.add(obj)
+                    db.commit()
+                except Exception:
+                    db.rollback()
+                    raise
+                finally:
+                    db.close()
+            except Exception as db_err:
+                logger.debug(f"DB недоступна для записи TokenUsage, используем память: {db_err}")
+                _MEM_BUFFER.append(record)
+        else:
+            # В файловый режим не пишем — только память
+            _MEM_BUFFER.append(record)
+
+        # Информативный лог
+        try:
+            rub_str = f"{record['cost_rub']:.2f} ₽"
+        except Exception:
+            rub_str = "? ₽"
+        dur_str = f", {duration_seconds:.2f}s" if duration_seconds else ""
         logger.info(
-            f"Записано использование токенов: {model_id} - {total_tokens} токенов, "
-            f"{cost_info['cost_rub']:.2f} ₽, {duration_seconds:.2f}s" if duration_seconds else ""
+            f"Токены: {model_id} - {total_tokens} токенов, {rub_str}{dur_str}"
         )
-        
+
     except Exception as e:
         logger.error(f"Ошибка записи статистики токенов: {e}")
 
@@ -150,18 +190,60 @@ def get_token_stats(
         Dict с агрегированной статистикой по моделям
     """
     try:
-        ensure_stats_file()
+        records: List[Dict]
+        if USE_DATABASE:
+            try:
+                from webapp.db import get_db, TokenUsage  # type: ignore
+                db = next(get_db())
+                try:
+                    # Создаём таблицу при первом использовании (если миграции не запускались)
+                    try:
+                        bind = db.get_bind()
+                        TokenUsage.__table__.create(bind=bind, checkfirst=True)
+                    except Exception:
+                        pass
+                    q = db.query(TokenUsage)
+                    # Фильтры по датам
+                    if start_date:
+                        from datetime import datetime as _dt
+                        start_dt = _dt.fromisoformat(start_date)
+                        q = q.filter(TokenUsage.created_at >= start_dt)
+                    if end_date:
+                        from datetime import datetime as _dt
+                        end_dt = _dt.fromisoformat(end_date + 'T23:59:59')
+                        q = q.filter(TokenUsage.created_at <= end_dt)
+                    if model_id:
+                        q = q.filter(TokenUsage.model_id == model_id)
+                    rows = q.all()
+                    records = []
+                    for r in rows:
+                        # Обратно преобразуем денежные значения из целых
+                        rec = {
+                            'timestamp': r.created_at.isoformat(),
+                            'model_id': r.model_id,
+                            'prompt_tokens': r.prompt_tokens,
+                            'completion_tokens': r.completion_tokens,
+                            'total_tokens': r.total_tokens,
+                            'duration_seconds': r.duration_seconds,
+                            'cost_usd': (r.cost_usd or 0) / 100.0,
+                            'cost_rub': (r.cost_rub or 0) / 100.0,
+                            'input_cost_usd': (r.input_cost_usd or 0) / 100.0,
+                            'output_cost_usd': (r.output_cost_usd or 0) / 100.0,
+                            'metadata': r.metadata or {},
+                        }
+                        records.append(rec)
+                finally:
+                    db.close()
+            except Exception as db_err:
+                logger.debug(f"DB недоступна для чтения TokenUsage, используем память: {db_err}")
+                records = list(_MEM_BUFFER)
+        else:
+            records = list(_MEM_BUFFER)
         
-        with open(TOKEN_STATS_FILE, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-        
-        records = data.get('records', [])
-        
-        # Фильтрация по датам
+        # Фильтрация по датам для in-memory/пост-обработки
         if start_date:
             start_dt = datetime.fromisoformat(start_date)
             records = [r for r in records if datetime.fromisoformat(r['timestamp']) >= start_dt]
-        
         if end_date:
             end_dt = datetime.fromisoformat(end_date + 'T23:59:59')
             records = [r for r in records if datetime.fromisoformat(r['timestamp']) <= end_dt]

@@ -1,0 +1,4 @@
+[tool.deptry.per_rule_ignores]
+DEP001 = ["spacy", "textract", "cv2"]
+DEP002 = ["pytest-timeout", "docx2txt"]
+DEP003 = ["psutil", "numpy"]

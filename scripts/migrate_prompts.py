@@ -2,7 +2,6 @@
 Миграция промптов из файлов PROMPT/ в БД для пользователя admin (user_id=5).
 """
 
-import os
 import sys
 from pathlib import Path
 from datetime import datetime
@@ -11,9 +10,9 @@ from datetime import datetime
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from webapp.db.base import engine, Base
-from webapp.db.models import Prompt
-from sqlalchemy.orm import Session
+from webapp.db.base import engine, Base  # noqa: E402
+from webapp.db.models import Prompt  # noqa: E402
+from sqlalchemy.orm import Session  # noqa: E402
 
 
 def create_prompts_table():

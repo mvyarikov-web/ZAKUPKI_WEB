@@ -1,5 +1,3 @@
-import os
-import types
 
 
 def test_extract_pdf_fallback_pypdf(monkeypatch, tmp_path):

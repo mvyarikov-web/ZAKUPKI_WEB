@@ -31,7 +31,7 @@ def _load_env():
 
 _load_env()
 
-from webapp.services.gpt_analysis import GPTAnalysisService
+from webapp.services.gpt_analysis import GPTAnalysisService  # noqa: E402
 
 
 def test_openai_api_key_exists():
@@ -62,7 +62,7 @@ def test_openai_api_connection():
     test_prompt = "Ответь одним словом на русском языке: какой сегодня день недели?"
     test_text = ""  # Пустой текст, только промпт
     
-    print(f"\n→ Отправка тестового запроса к OpenAI API...")
+    print("\n→ Отправка тестового запроса к OpenAI API...")
     success, message, response = service.analyze_text(
         text=test_text,
         prompt=test_prompt,
@@ -73,16 +73,16 @@ def test_openai_api_connection():
     if not success:
         # Если получили 429 (Too Many Requests) - это означает, что ключ валиден, но превышена квота
         if '429' in message or 'Too Many Requests' in message or 'quota' in message.lower():
-            print(f"\n⚠️ API ключ валиден, но превышена квота запросов")
+            print("\n⚠️ API ключ валиден, но превышена квота запросов")
             print(f"  Сообщение: {message}")
-            print(f"✓ Ключ настроен корректно (проверка пройдена)")
+            print("✓ Ключ настроен корректно (проверка пройдена)")
             pytest.skip("Превышена квота API, но ключ валиден")
         else:
             pytest.fail(f"Запрос к API не удался: {message}")
     
     assert response, "API вернул пустой ответ"
     
-    print(f"\n✓ API ответил успешно!")
+    print("\n✓ API ответил успешно!")
     print(f"  Вопрос: {test_prompt}")
     print(f"  Ответ: {response}")
     
@@ -94,9 +94,9 @@ def test_openai_api_connection():
     contains_day = any(day in response_lower for day in days)
     
     if contains_day:
-        print(f"✓ Ответ содержит день недели")
+        print("✓ Ответ содержит день недели")
     else:
-        print(f"⚠️ Ответ не содержит явного дня недели, но запрос прошёл успешно")
+        print("⚠️ Ответ не содержит явного дня недели, но запрос прошёл успешно")
 
 
 @pytest.mark.skipif(
@@ -111,7 +111,7 @@ def test_openai_service_initialization():
     assert service.api_url == "https://api.openai.com/v1/chat/completions", "Неверный URL API"
     assert service.model == "gpt-3.5-turbo", "Неверная модель по умолчанию"
     
-    print(f"\n✓ Сервис инициализирован корректно")
+    print("\n✓ Сервис инициализирован корректно")
     print(f"  URL: {service.api_url}")
     print(f"  Model: {service.model}")
     print(f"  Max tokens: {service.max_tokens}")

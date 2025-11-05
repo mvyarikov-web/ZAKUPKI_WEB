@@ -1,7 +1,5 @@
 """Тесты для Flask API с режимом исключения (exclude_mode)."""
-import os
 import pytest
-from pathlib import Path
 
 
 @pytest.fixture

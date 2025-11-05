@@ -4,7 +4,6 @@
 """
 
 from datetime import datetime
-from typing import Optional
 import enum
 
 from sqlalchemy import (
@@ -437,6 +436,36 @@ class ErrorLog(Base):
         return f"<ErrorLog(id={self.id}, type='{self.error_type}', component='{self.component}', resolved={self.is_resolved})>"
 
 
+# ==============================================================================
+# ИСПОЛЬЗОВАНИЕ ТОКЕНОВ МОДЕЛЕЙ (СТАТИСТИКА)
+# ==============================================================================
+
+class TokenUsage(Base):
+    """Статистика использования токенов по моделям (замена файлового token_usage.json)."""
+    __tablename__ = 'token_usage'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'))
+    model_id = Column(String(127), nullable=False, index=True)
+    prompt_tokens = Column(Integer, default=0, nullable=False)
+    completion_tokens = Column(Integer, default=0, nullable=False)
+    total_tokens = Column(Integer, default=0, nullable=False)
+    duration_seconds = Column(Integer)  # округляем до int для простоты агрегаций
+    cost_usd = Column(Integer)  # храним в центах для точности; на уровне сервиса преобразуем
+    cost_rub = Column(Integer)  # храним в копейках
+    input_cost_usd = Column(Integer)  # центы
+    output_cost_usd = Column(Integer)  # центы
+    metadata = Column(JSON)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+    __table_args__ = (
+        Index('idx_token_usage_model_created', 'model_id', 'created_at'),
+        Index('idx_token_usage_user_created', 'user_id', 'created_at'),
+    )
+
+    def __repr__(self):
+        return f"<TokenUsage(id={self.id}, model_id='{self.model_id}', total_tokens={self.total_tokens})>"
+
 # Экспорт всех моделей
 __all__ = [
     'User',
@@ -453,4 +482,5 @@ __all__ = [
     'JobQueue',
     'HTTPRequestLog',
     'ErrorLog',
+    'TokenUsage',
 ]

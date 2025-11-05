@@ -23,7 +23,7 @@ def initialize_rag_database(database_url: str):
     print("=" * 60)
     
     try:
-        print(f"\n1. Подключение к базе данных...")
+        print("\n1. Подключение к базе данных...")
         db = RAGDatabase(database_url)
         
         print("   ✓ Подключение установлено")

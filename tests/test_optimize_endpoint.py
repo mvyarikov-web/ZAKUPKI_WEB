@@ -50,7 +50,7 @@ def test_optimize_preview_endpoint(client):
     assert response.status_code == 200
     data = json.loads(response.data)
     
-    assert data['success'] == True
+    assert data['success']
     assert 'optimized_text' in data
     assert 'change_spans' in data
     assert 'chars_before' in data
@@ -81,7 +81,7 @@ def test_optimize_empty_text(client):
     
     assert response.status_code == 400
     data = json.loads(response.data)
-    assert data['success'] == False
+    assert not data['success']
     assert 'Нет текста' in data['message']
 
 
@@ -119,7 +119,7 @@ def test_optimize_too_large_text(client):
     
     assert response.status_code == 400
     data = json.loads(response.data)
-    assert data['success'] == False
+    assert not data['success']
     assert 'слишком большой' in data['message'].lower()
 
 
@@ -145,7 +145,7 @@ def test_optimize_with_technical_data_preservation(client):
     
     assert response.status_code == 200
     data = json.loads(response.data)
-    assert data['success'] == True
+    assert data['success']
     
     optimized = data['optimized_text']
     

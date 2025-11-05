@@ -1,7 +1,5 @@
 import os
 from pathlib import Path
-import io
-import pytest
 
 from document_processor import DocumentProcessor
 from document_processor.search.searcher import Searcher

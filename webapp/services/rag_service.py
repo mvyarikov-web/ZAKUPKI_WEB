@@ -114,7 +114,7 @@ class RAGService:
             text = self.doc_processor.extract_text(full_path)
             
             if not text or not text.strip():
-                return False, f"Не удалось извлечь текст из файла", None
+                return False, "Не удалось извлечь текст из файла", None
             
             # Вычисляем хеш файла
             file_hash = self._calculate_file_hash(full_path)
@@ -124,7 +124,7 @@ class RAGService:
             # Проверяем, не индексирован ли уже документ с таким же хешем
             existing_doc = self.db.get_document_by_path(file_path)
             if existing_doc and existing_doc.get('file_hash') == file_hash:
-                return True, f"Документ уже проиндексирован", {
+                return True, "Документ уже проиндексирован", {
                     'document_id': existing_doc['id'],
                     'chunks_count': 0,
                     'skipped': True
@@ -179,7 +179,7 @@ class RAGService:
             # Сохраняем чанки в базу
             self.db.add_chunks(chunks_with_embeddings)
             
-            return True, f"Документ проиндексирован успешно", {
+            return True, "Документ проиндексирован успешно", {
                 'document_id': doc_id,
                 'chunks_count': len(chunks_with_embeddings),
                 'skipped': False
@@ -371,9 +371,9 @@ class RAGService:
                         current_app.logger.info(f'🔍 Search usage: num_search_queries={num_queries}, search_context_size={context_size}')
                 
                 if search_used:
-                    current_app.logger.info(f'✅ Поиск БЫЛ использован')
+                    current_app.logger.info('✅ Поиск БЫЛ использован')
                 else:
-                    current_app.logger.info(f'📝 Поиск НЕ использован (только знания модели)')
+                    current_app.logger.info('📝 Поиск НЕ использован (только знания модели)')
                 
                 # Пробуем залогировать источники, если провайдер вернул их в совместимом виде
                 try:
@@ -561,7 +561,7 @@ class RAGService:
         
         # Агрегация вердикта по монтажу
         installation = response.get('installation', {})
-        verdict = installation.get('verdict', 'unknown')
+        installation.get('verdict', 'unknown')
         
         # Если хоть где-то уверенное "да", то true
         # Если везде "нет", то false

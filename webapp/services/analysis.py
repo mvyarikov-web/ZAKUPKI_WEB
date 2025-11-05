@@ -4,7 +4,7 @@ import json
 from datetime import datetime
 from flask import current_app
 from typing import Dict, Any, Optional, Tuple
-from document_processor.analysis import Extractor, AnalysisResult
+from document_processor.analysis import Extractor
 
 
 def run_analysis(index_path: str) -> Tuple[bool, str, Optional[Dict[str, Any]]]:
@@ -32,7 +32,7 @@ def run_analysis(index_path: str) -> Tuple[bool, str, Optional[Dict[str, Any]]]:
         # Преобразуем в словарь
         result_dict = result.to_dict()
         
-        current_app.logger.info(f'Анализ завершён: извлечено полей с данными')
+        current_app.logger.info('Анализ завершён: извлечено полей с данными')
         
         return True, 'Анализ успешно выполнен', result_dict
         

@@ -1,7 +1,7 @@
 """Утилиты для работы с виртуальными путями архивов."""
 import os
 import zipfile
-from typing import Optional, List, Tuple, Dict, Any
+from typing import Optional, List, Tuple, Dict
 from dataclasses import dataclass
 
 

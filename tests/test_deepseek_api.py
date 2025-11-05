@@ -59,7 +59,7 @@ def test_deepseek_chat_connection():
         assert hasattr(response, 'usage'), "Ответ не содержит информацию об usage"
         assert response.usage.total_tokens > 0, "Количество токенов должно быть больше 0"
         
-        print(f"\n✅ DeepSeek Chat успешно подключен!")
+        print("\n✅ DeepSeek Chat успешно подключен!")
         print(f"   Ответ: {message_content[:100]}")
         print(f"   Токены: {response.usage.total_tokens}")
         
@@ -111,7 +111,7 @@ def test_deepseek_reasoner_connection():
         assert hasattr(response, 'usage'), "Ответ не содержит информацию об usage"
         assert response.usage.total_tokens > 0, "Количество токенов должно быть больше 0"
         
-        print(f"\n✅ DeepSeek Reasoner успешно подключен!")
+        print("\n✅ DeepSeek Reasoner успешно подключен!")
         if message_content:
             print(f"   Ответ: {message_content[:100]}")
         if reasoning_content:
@@ -153,7 +153,7 @@ def test_deepseek_token_counting():
         assert usage.total_tokens == usage.prompt_tokens + usage.completion_tokens, \
             "Общее количество токенов не соответствует сумме входных и выходных"
         
-        print(f"\n✅ Подсчёт токенов работает корректно!")
+        print("\n✅ Подсчёт токенов работает корректно!")
         print(f"   Входные: {usage.prompt_tokens}")
         print(f"   Выходные: {usage.completion_tokens}")
         print(f"   Всего: {usage.total_tokens}")

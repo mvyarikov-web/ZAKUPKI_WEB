@@ -1,7 +1,6 @@
 """
 Тест для проверки новой логики светофоров файлов и папок.
 """
-import pytest
 
 
 def test_traffic_light_logic_mock():

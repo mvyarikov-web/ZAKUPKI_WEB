@@ -1,7 +1,5 @@
 """Быстрый интеграционный тест для проверки счетчиков совпадений."""
-import pytest
 import tempfile
-import os
 from pathlib import Path
 from webapp import create_app
 from webapp.services.indexing import build_search_index

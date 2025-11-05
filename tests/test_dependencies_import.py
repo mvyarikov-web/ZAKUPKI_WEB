@@ -8,7 +8,6 @@ import pytest
 
 def test_sqlalchemy_import():
     """Проверка импорта SQLAlchemy 2.0+."""
-    import sqlalchemy
     from sqlalchemy import __version__
     
     # SQLAlchemy 2.0.x
@@ -18,7 +17,6 @@ def test_sqlalchemy_import():
 
 def test_alembic_import():
     """Проверка импорта Alembic."""
-    import alembic
     from alembic import __version__
     
     # Alembic 1.13.x

@@ -15,7 +15,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 config = context.config
 
 # Загружаем DATABASE_URL из переменных окружения
-from webapp.config import get_config
+from webapp.config import get_config  # noqa: E402
 app_config = get_config()
 config.set_main_option('sqlalchemy.url', app_config.database_url)
 
@@ -26,7 +26,7 @@ if config.config_file_name is not None:
 
 # add your model's MetaData object here
 # for 'autogenerate' support
-from webapp.db.base import Base
+from webapp.db.base import Base  # noqa: E402
 target_metadata = Base.metadata
 
 # other values from the config, defined by the needs of env.py,

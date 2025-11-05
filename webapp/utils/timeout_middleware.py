@@ -5,7 +5,6 @@
 """
 from __future__ import annotations
 
-import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from typing import Callable, Iterable, Tuple, List
 

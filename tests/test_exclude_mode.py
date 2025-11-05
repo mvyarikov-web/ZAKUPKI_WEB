@@ -1,5 +1,4 @@
 """Тесты для режима исключения (exclude_mode) в поиске."""
-import os
 from pathlib import Path
 import pytest
 from document_processor import DocumentProcessor
@@ -113,7 +112,7 @@ def test_exclude_mode_with_deduplication():
         assert len(exclude_results) == 1
         result = exclude_results[0]
         assert 'без ключевых слов' in result.get('title', '')
-        assert result.get('exclude_mode') == True
+        assert result.get('exclude_mode')
         assert result.get('keyword') == ""
         assert result.get('position') == 0
         

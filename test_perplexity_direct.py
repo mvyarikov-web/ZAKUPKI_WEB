@@ -14,7 +14,7 @@ def test_perplexity_api(api_key: str):
     from openai import OpenAI
     
     print(f"🔑 Тестирование ключа: {api_key[:8]}...{api_key[-4:]}")
-    print(f"🌐 Подключение к: https://api.perplexity.ai")
+    print("🌐 Подключение к: https://api.perplexity.ai")
     
     try:
         client = OpenAI(
@@ -77,7 +77,7 @@ if __name__ == "__main__":
     
     if success:
         print(f"\n✅ Успех! Рабочая модель: {working_model}")
-        print(f"💡 Используйте эту модель в качестве test_model в конфигурации")
+        print("💡 Используйте эту модель в качестве test_model в конфигурации")
         sys.exit(0)
     else:
         print("\n❌ Тест не пройден")

@@ -7,9 +7,7 @@
 - Relationships между моделями
 """
 
-import pytest
 from datetime import datetime
-from sqlalchemy.orm import Session as SQLSession
 
 from webapp.db import (
     Base,

@@ -87,7 +87,7 @@ def test_ui_real_search_with_new_request():
     print("🧪 РЕАЛЬНЫЙ ТЕСТ: UI-путь с force_web_search=True")
     print("=" * 80)
     
-    print(f"\n📋 Отправляю запрос:")
+    print("\n📋 Отправляю запрос:")
     print(f"  • URL: {BASE_URL}/ai_rag/analyze")
     print(f"  • model_id: {request_data['model_id']}")
     print(f"  • force_web_search: {request_data['force_web_search']}")
@@ -109,7 +109,7 @@ def test_ui_real_search_with_new_request():
     # Парсим ответ
     data = response.json()
     
-    print(f"\n📦 Структура ответа:")
+    print("\n📦 Структура ответа:")
     print(f"  • success: {data.get('success')}")
     print(f"  • message: {data.get('message', '')[:100]}")
     
@@ -149,22 +149,22 @@ def test_ui_real_search_with_new_request():
     
     found_indicators = [ind for ind in search_indicators if ind in answer_lower]
     
-    print(f"\n🔎 Признаки успешного поиска:")
+    print("\n🔎 Признаки успешного поиска:")
     if found_indicators:
         print(f"  ✅ Найдены: {', '.join(found_indicators)}")
     else:
-        print(f"  ⚠️  Не найдены явные признаки анекдотов")
+        print("  ⚠️  Не найдены явные признаки анекдотов")
     
     # Usage
     usage = result.get('usage', {})
-    print(f"\n📊 Usage:")
+    print("\n📊 Usage:")
     print(f"  • total_tokens: {usage.get('total_tokens')}")
     
     # Финальная проверка
     assert len(found_indicators) > 0, "Ответ не содержит упоминания анекдотов или психологии"
     
-    print(f"\n✅ УСПЕХ: Модель выполнила реальный веб-поиск!")
-    print(f"Ответ содержит релевантную информацию с сайта.")
+    print("\n✅ УСПЕХ: Модель выполнила реальный веб-поиск!")
+    print("Ответ содержит релевантную информацию с сайта.")
     
     return True
 

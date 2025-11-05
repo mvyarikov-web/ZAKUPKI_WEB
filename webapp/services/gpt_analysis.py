@@ -1,8 +1,7 @@
 """Сервис для работы с OpenAI GPT API."""
 import os
-import json
 import requests
-from typing import Dict, Any, Optional, Tuple, List
+from typing import Optional, Tuple, List
 from datetime import datetime
 from flask import current_app
 

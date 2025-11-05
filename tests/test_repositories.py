@@ -8,7 +8,7 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from webapp.db.base import Base
-from webapp.db.models import User, Document, Chunk, UserRole, DocumentStatus
+from webapp.db.models import UserRole, DocumentStatus
 from webapp.db.repositories import UserRepository, DocumentRepository, ChunkRepository
 
 

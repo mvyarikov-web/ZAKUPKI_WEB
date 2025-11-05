@@ -1,6 +1,5 @@
 """Тесты для групповой индексации (increment-014)."""
 import os
-import tempfile
 import pytest
 from document_processor.search.indexer import Indexer
 from document_processor.search.searcher import Searcher
@@ -196,7 +195,7 @@ def test_grouped_index_status_tracking(tmp_path):
     # Создаём структуру для статуса
     index_folder = tmp_path / "index"
     index_folder.mkdir()
-    status_path = index_folder / "status.json"
+    index_folder / "status.json"
     
     # Создаём тестовые файлы
     (test_dir / "fast.txt").write_text("текст", encoding='utf-8')
@@ -213,7 +212,7 @@ def test_grouped_index_status_tracking(tmp_path):
     idx_folder.mkdir()
     
     indexer = Indexer()
-    index_path = indexer.create_index(str(uploads), use_groups=True)
+    indexer.create_index(str(uploads), use_groups=True)
     
     # Проверяем, что статус был создан
     status_file = idx_folder / "status.json"

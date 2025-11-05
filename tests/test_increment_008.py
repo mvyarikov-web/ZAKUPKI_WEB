@@ -6,7 +6,6 @@ FR-003, FR-004, FR-005: Результаты поиска под файлами
 FR-006, FR-007, FR-008: Панель "Инструменты"
 FR-010: Автотесты
 """
-import os
 import pytest
 from webapp.services.state import FilesState
 
@@ -128,7 +127,7 @@ def test_empty_file_view_returns_message(tmp_path, flask_app):
         # Устанавливаем char_count=0 через FilesState
         # Смотрим на структуру: set_file_status создаёт {'status': ..., 'result': {...}}
         # А get_file_status возвращает всё поле result как плоский dict
-        files_state = FilesState(str(results_file))
+        FilesState(str(results_file))
         
         # Прямо записываем в файл нужную структуру
         import json

@@ -54,7 +54,7 @@ def main():
                     print(f"🔖 Alembic: {migration[0]}")
                 else:
                     print("⚠️  Миграции не применены")
-            except:
+            except Exception:
                 print("⚠️  Таблица alembic_version отсутствует")
         
         # Таблицы
@@ -83,7 +83,7 @@ def main():
         print("=" * 60)
         
     except Exception as e:
-        print(f"\n❌ Ошибка подключения к БД:")
+        print("\n❌ Ошибка подключения к БД:")
         print(f"   {str(e)}")
         sys.exit(1)
 

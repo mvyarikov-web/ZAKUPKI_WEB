@@ -9,7 +9,7 @@ def test_txt_cp1251_and_cp866(tmp_path: Path):
     (root / 'cp1251.txt').write_bytes('Привет, мир!'.encode('cp1251', errors='ignore'))
     (root / 'cp866.txt').write_bytes('Привет, мир!'.encode('cp866', errors='ignore'))
 
-    index_path = DocumentProcessor().create_search_index(str(root))
+    DocumentProcessor().create_search_index(str(root))
     text = (root / '_search_index.txt').read_text(encoding='utf-8', errors='ignore')
 
     assert 'Привет' in text

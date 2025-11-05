@@ -317,7 +317,12 @@ function renderFileItem(file, file_statuses) {
     if (isUnreadable) {
         fileLink = `<span class="file-name" title="Файл недоступен для просмотра/скачивания">${escapeHtml(file.name)}</span>`;
     } else {
-        fileLink = `<a class="file-name result-file-link" href="/view/${encodeURIComponent(file.path)}" target="_blank" rel="noopener">${escapeHtml(file.name)}</a>`;
+        // Добавляем токен в URL для авторизации (используем auth.js:getAuthToken)
+        const token = (typeof getAuthToken === 'function') ? getAuthToken() : (localStorage.getItem('auth_token') || localStorage.getItem('authToken'));
+        const viewUrl = token ?
+            `/view/${encodeURIComponent(file.path)}?token=${encodeURIComponent(token)}` :
+            `/view/${encodeURIComponent(file.path)}`;
+        fileLink = `<a class="file-name result-file-link" href="${viewUrl}" target="_blank" rel="noopener">${escapeHtml(file.name)}</a>`;
     }
     
     let charCountHtml = '';
@@ -975,6 +980,9 @@ function toggleFolder(folderName) {
         folderContainer.classList.remove('collapsed');
         // Сохраняем состояние в localStorage
         localStorage.setItem('folder-' + folderName, 'expanded');
+        
+        // Сохраняем последнюю открытую папку на сервере
+        saveLastFolder(folderName);
     } else {
         folderContainer.classList.add('collapsed');
         // Сохраняем состояние в localStorage
@@ -982,19 +990,71 @@ function toggleFolder(folderName) {
     }
 }
 
+// Сохранить последнюю открытую папку на сервере
+async function saveLastFolder(folderPath) {
+    try {
+        const token = localStorage.getItem('authToken');
+        if (!token) return; // Пропускаем, если нет токена
+        
+        const response = await fetch('/auth/save-last-folder', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify({ folder_path: folderPath })
+        });
+        
+        if (!response.ok) {
+            console.warn('Failed to save last folder:', await response.text());
+        }
+    } catch (error) {
+        console.error('Error saving last folder:', error);
+    }
+}
+
 // --- Restore Folder States ---
-function restoreFolderStates() {
+async function restoreFolderStates() {
+    // Сначала загружаем last_folder с сервера
+    let lastFolderFromServer = null;
+    try {
+        const token = localStorage.getItem('authToken');
+        if (token) {
+            const response = await fetch('/auth/get-last-folder', {
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                }
+            });
+            if (response.ok) {
+                const data = await response.json();
+                if (data.success && data.folder_path) {
+                    lastFolderFromServer = data.folder_path;
+                }
+            }
+        }
+    } catch (error) {
+        console.error('Error loading last folder:', error);
+    }
+    
     const folderContainers = document.querySelectorAll('.folder-container');
     folderContainers.forEach(container => {
         const folderHeader = container.querySelector('.folder-header');
         if (folderHeader) {
             const folderName = folderHeader.querySelector('.folder-name').textContent;
-            const savedState = localStorage.getItem('folder-' + folderName);
             
-            if (savedState === 'collapsed') {
-                container.classList.add('collapsed');
-            } else {
+            // Если это последняя открытая папка с сервера - раскрываем её
+            if (lastFolderFromServer && folderName === lastFolderFromServer) {
                 container.classList.remove('collapsed');
+                localStorage.setItem('folder-' + folderName, 'expanded');
+            } else {
+                // Иначе восстанавливаем из localStorage
+                const savedState = localStorage.getItem('folder-' + folderName);
+                
+                if (savedState === 'collapsed') {
+                    container.classList.add('collapsed');
+                } else {
+                    container.classList.remove('collapsed');
+                }
             }
         }
     });
@@ -1130,6 +1190,13 @@ function applyQueryToViewLinks() {
     anchors.forEach(a => {
         try {
             const url = new URL(a.getAttribute('href'), window.location.origin);
+            // Проставляем токен авторизации в query, если он есть
+            try {
+                const token = (typeof getAuthToken === 'function') ? getAuthToken() : (localStorage.getItem('auth_token') || localStorage.getItem('authToken'));
+                if (token) {
+                    url.searchParams.set('token', token);
+                }
+            } catch (_) {}
             if (terms.length > 0) {
                 url.searchParams.set('q', terms.join(','));
             } else {

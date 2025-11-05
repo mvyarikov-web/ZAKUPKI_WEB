@@ -36,7 +36,7 @@ class PromptRepository:
             query = query.filter(
                 or_(
                     Prompt.user_id == user_id,
-                    Prompt.is_shared == True
+                    Prompt.is_shared
                 )
             )
         else:
@@ -116,4 +116,4 @@ class PromptRepository:
     
     def get_shared(self) -> List[Prompt]:
         """Получить все общие (is_shared=True) промпты."""
-        return self.db.query(Prompt).filter(Prompt.is_shared == True).order_by(Prompt.name).all()
+        return self.db.query(Prompt).filter(Prompt.is_shared).order_by(Prompt.name).all()

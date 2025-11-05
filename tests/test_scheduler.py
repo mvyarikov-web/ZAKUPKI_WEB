@@ -11,7 +11,7 @@
 
 import pytest
 import time
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock
 from webapp.services.scheduler import (
     init_scheduler,
     start_scheduler,
@@ -41,7 +41,7 @@ def clean_scheduler():
     yield
     try:
         stop_scheduler(None)
-    except:
+    except Exception:
         pass
 
 

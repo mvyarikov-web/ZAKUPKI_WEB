@@ -204,7 +204,7 @@ class ServerReloader:
                 return process
             else:
                 stdout, stderr = process.communicate()
-                self.logger.error(f"❌ Сервер завершился сразу после запуска")
+                self.logger.error("❌ Сервер завершился сразу после запуска")
                 if stderr:
                     self.logger.error(f"Ошибка: {stderr}")
                 return None

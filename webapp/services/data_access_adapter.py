@@ -14,7 +14,6 @@ from sqlalchemy.orm import Session
 
 from document_processor import DocumentProcessor
 from document_processor.search.searcher import Searcher
-from webapp.db.base import get_db_context
 from webapp.db.repositories.document_repository import DocumentRepository
 from webapp.db.repositories.chunk_repository import ChunkRepository
 from webapp.services.indexing import parse_index_char_counts

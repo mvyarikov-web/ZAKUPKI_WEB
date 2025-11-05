@@ -3,7 +3,6 @@
 Скрипт для тестирования валидации API ключей и отображения аналитики
 """
 
-import json
 from utils.api_keys_manager_multiple import get_api_keys_manager_multiple
 
 def test_validation():
@@ -35,7 +34,7 @@ def test_validation():
             # Валидируем ключ
             success, result = manager.validate_key(provider, api_key)
             
-            print(f"\nРезультат валидации:")
+            print("\nРезультат валидации:")
             print(f"  Успешно: {success}")
             
             if success:
@@ -44,7 +43,7 @@ def test_validation():
                 print(f"  Модели: {', '.join(result.get('models', []))}")
                 
                 if 'analytics' in result and result['analytics']:
-                    print(f"\n  📊 АНАЛИТИКА:")
+                    print("\n  📊 АНАЛИТИКА:")
                     analytics = result['analytics']
                     for key, value in analytics.items():
                         print(f"    - {key}: {value}")

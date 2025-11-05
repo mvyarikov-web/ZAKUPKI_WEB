@@ -278,6 +278,8 @@ def test_handle_duplicate_upload_other_user(app, tmp_path):
     test_file.write_text("Документ другого пользователя", encoding='utf-8')
     
     with app.app_context():
+        # Настроим uploads root так, чтобы storage_url был относительным
+        app.config['UPLOAD_FOLDER'] = str(tmp_path)
         sha256 = calculate_file_hash(str(test_file))
         existing = {'id': 100, 'owner_id': 2, 'is_visible': True}  # owner_id=2
         
@@ -306,6 +308,64 @@ def test_handle_duplicate_upload_other_user(app, tmp_path):
         assert doc_id == 200
         assert 'нового пользователя' in msg.lower()
         assert is_dup is True
+        # Проверяем, что в INSERT передан storage_url как относительный путь
+        # Находим вызов execute с INSERT INTO documents (... storage_url ...)
+        exec_calls = [c for c in mock_cursor.execute.call_args_list if 'INSERT INTO documents' in c.args[0]]
+        assert exec_calls, 'Ожидался вызов INSERT INTO documents'
+        insert_call = exec_calls[0]
+        params = insert_call.args[1]
+        # Аргументы: (owner_id, filename, storage_url, sha256)
+        assert len(params) >= 4
+        assert params[2] == test_file.name  # storage_url должен быть относительным именем файла
+
+
+@patch('webapp.services.db_indexing.RAGDatabase')
+def test_find_changed_files_uses_storage_url(mock_db_class, tmp_path, app):
+    """Проверяет, что find_changed_files сравнивает по относительному пути (storage_url)."""
+    from webapp.services.db_indexing import find_changed_files, calculate_file_hash
+    
+    # Создаём структуру файлов
+    subdir = tmp_path / 'sub'
+    subdir.mkdir()
+    f1 = subdir / 'a.txt'
+    f2 = subdir / 'b.txt'
+    f1.write_text('AAA', encoding='utf-8')
+    f2.write_text('BBB', encoding='utf-8')
+    
+    # Текущее состояние файлов
+    current_files = {
+        str(f1): {
+            'sha256': calculate_file_hash(str(f1)),
+            'size': f1.stat().st_size,
+            'mtime': f1.stat().st_mtime,
+            'content_type': 'text/plain'
+        },
+        str(f2): {
+            'sha256': calculate_file_hash(str(f2)),
+            'size': f2.stat().st_size,
+            'mtime': f2.stat().st_mtime,
+            'content_type': 'text/plain'
+        }
+    }
+    
+    # Мокаем БД: в базе есть запись только для sub/a.txt с тем же хешем
+    mock_db = Mock()
+    mock_db_class.return_value = mock_db
+    mock_conn = MagicMock()
+    mock_cursor = MagicMock()
+    existing_rows = [
+        (str(f1.relative_to(tmp_path)).replace('\\', '/'), current_files[str(f1)]['sha256'])
+    ]
+    mock_cursor.fetchall.return_value = existing_rows
+    mock_conn.__enter__.return_value.cursor.return_value.__enter__.return_value = mock_cursor
+    mock_db.db.connect.return_value = mock_conn
+    
+    with app.app_context():
+        changed = find_changed_files(mock_db, owner_id=1, folder_path=str(tmp_path), current_files=current_files)
+    
+    # Должен вернуть только f2, так как f1 совпадает по storage_url и хешу
+    assert len(changed) == 1
+    assert changed[0] == str(f2)
 
 
 if __name__ == '__main__':

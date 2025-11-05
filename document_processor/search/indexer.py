@@ -4,10 +4,9 @@ import io
 import re
 import zipfile
 import tempfile
-import datetime
 import json
 from datetime import datetime
-from typing import Iterable, Tuple, List, Optional, Any
+from typing import Iterable, Tuple, List
 import logging
 
 # Разделитель заголовков в индексе
@@ -700,7 +699,6 @@ class Indexer:
         return entries
 
     def _write_temp_file(self, data: bytes, suffix: str = "") -> str:
-        import tempfile
         fd, tmp_path = tempfile.mkstemp(suffix=suffix)
         with os.fdopen(fd, "wb") as f:
             f.write(data)
@@ -829,7 +827,8 @@ class Indexer:
             return f.read()
 
     def _normalize_text(self, text: str) -> str:
-        import unicodedata, re
+        import unicodedata
+        import re
         if not text:
             return ""
         t = unicodedata.normalize("NFKC", text)
@@ -841,7 +840,8 @@ class Indexer:
         """Очень простая очистка HTML без внешних зависимостей: убираем теги, скрипты/стили, декодируем сущности."""
         if not html:
             return ""
-        import re, html as h
+        import re
+        import html as h
         # Удаляем содержимое <script> и <style>
         cleaned = re.sub(r"<script[\s\S]*?</script>", " ", html, flags=re.IGNORECASE)
         cleaned = re.sub(r"<style[\s\S]*?</style>", " ", cleaned, flags=re.IGNORECASE)

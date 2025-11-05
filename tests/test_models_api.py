@@ -15,7 +15,7 @@ import json
 import time
 import pytest
 from pathlib import Path
-from typing import Dict, List, Any, Tuple
+from typing import Dict, Any, Tuple
 import openai
 
 
@@ -184,9 +184,9 @@ class TestModelAvailability:
                 
                 # Пробуем диагностировать и исправить
                 if '401' in error or 'insufficient permissions' in error.lower():
-                    print(f"   💡 Недостаточно прав. Проверьте подписку/доступ к модели.")
+                    print("   💡 Недостаточно прав. Проверьте подписку/доступ к модели.")
                 elif 'temperature' in error.lower():
-                    print(f"   💡 Ошибка с temperature. Попробуем без него...")
+                    print("   💡 Ошибка с temperature. Попробуем без него...")
                     # Повторная попытка для новых моделей
                     success2, error2, result2 = test_model_basic(
                         model_id=model_id,
@@ -196,7 +196,7 @@ class TestModelAvailability:
                         max_tokens=150
                     )
                     if success2:
-                        print(f"   ✅ Исправлено! Работает без system role.")
+                        print("   ✅ Исправлено! Работает без system role.")
                         test_results[model_id]['success'] = True
                         test_results[model_id]['error'] = ""
                         test_results[model_id]['result'] = result2
@@ -204,9 +204,9 @@ class TestModelAvailability:
                     else:
                         print(f"   ❌ Не удалось исправить: {error2}")
                 elif 'max_tokens' in error.lower():
-                    print(f"   💡 Ошибка с max_tokens. Эта модель требует max_completion_tokens.")
+                    print("   💡 Ошибка с max_tokens. Эта модель требует max_completion_tokens.")
                 elif 'model' in error.lower() and '404' in error:
-                    print(f"   💡 Модель не найдена. Возможно, неправильный ID или модель устарела.")
+                    print("   💡 Модель не найдена. Возможно, неправильный ID или модель устарела.")
 
 
 class TestModelOptimalParams:
@@ -282,12 +282,12 @@ class TestModelCleanup:
                     print(f"⚠️  default_model изменена на: {models_config['default_model']}")
                 else:
                     models_config['default_model'] = None
-                    print(f"⚠️  Нет рабочих моделей! default_model = None")
+                    print("⚠️  Нет рабочих моделей! default_model = None")
             
             save_models_config(models_config)
             print(f"\n✅ Конфигурация обновлена. Удалено моделей: {len(removed_models)}")
         else:
-            print(f"\n✅ Все модели работают корректно!")
+            print("\n✅ Все модели работают корректно!")
 
 
 # === Итоговый отчёт ===

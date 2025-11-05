@@ -1,5 +1,4 @@
 """Базовые тесты для модуля анализа текста."""
-import os
 import pytest
 from document_processor.analysis import Extractor
 

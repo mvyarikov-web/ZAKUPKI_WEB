@@ -5,13 +5,12 @@
 """
 import sys
 import requests
-import json
 
 def test_perplexity_api(api_key: str):
     """Прямой тест Perplexity API через requests"""
     
     print(f"🔑 Тестирование ключа: {api_key[:8]}...{api_key[-4:]}")
-    print(f"🌐 Подключение к: https://api.perplexity.ai")
+    print("🌐 Подключение к: https://api.perplexity.ai")
     
     url = "https://api.perplexity.ai/chat/completions"
     

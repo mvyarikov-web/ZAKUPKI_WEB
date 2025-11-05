@@ -102,7 +102,7 @@ class SessionRepository(BaseRepository[SessionModel]):
         """
         stmt = select(SessionModel).where(
             SessionModel.token_hash == token_hash,
-            SessionModel.is_active == True,
+            SessionModel.is_active,
             SessionModel.expires_at > datetime.utcnow()
         )
         result = self.session.execute(stmt)
@@ -146,7 +146,7 @@ class SessionRepository(BaseRepository[SessionModel]):
         """
         stmt = select(SessionModel).where(
             SessionModel.user_id == user_id,
-            SessionModel.is_active == True
+            SessionModel.is_active
         )
         result = self.session.execute(stmt)
         sessions = result.scalars().all()
@@ -196,7 +196,7 @@ class SessionRepository(BaseRepository[SessionModel]):
         
         if active_only:
             stmt = stmt.where(
-                SessionModel.is_active == True,
+                SessionModel.is_active,
                 SessionModel.expires_at > datetime.utcnow()
             )
         
@@ -216,6 +216,6 @@ class SessionRepository(BaseRepository[SessionModel]):
         """
         return self.count(
             SessionModel.user_id == user_id,
-            SessionModel.is_active == True,
+            SessionModel.is_active,
             SessionModel.expires_at > datetime.utcnow()
         )

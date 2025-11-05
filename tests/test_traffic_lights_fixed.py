@@ -2,9 +2,6 @@
 Тест исправленной логики светофоров.
 Проверяет корректность определения цветов светофоров в различных сценариях.
 """
-import pytest
-import time
-from unittest.mock import Mock, patch
 
 
 def test_traffic_light_logic_fixed():
@@ -73,7 +70,6 @@ def test_folder_status_logic_fixed():
         if not file_colors:
             return 'gray'
             
-        has_red = 'red' in file_colors
         has_green = 'green' in file_colors  
         has_yellow = 'yellow' in file_colors
         

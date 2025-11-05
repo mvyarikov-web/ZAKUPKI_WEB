@@ -22,7 +22,7 @@ import mimetypes
 import logging
 from pathlib import Path
 from datetime import datetime, timezone
-from typing import Optional, Dict, List, Tuple
+from typing import Optional
 import argparse
 
 # Настраиваем путь для импорта webapp модулей
@@ -34,7 +34,7 @@ from cryptography.fernet import Fernet
 import bcrypt
 
 from webapp.db.models import (
-    Base, User, Document, APIKey, UserModel
+    User, Document, APIKey, UserModel
 )
 
 # Настройка логирования
@@ -133,7 +133,7 @@ class FilesToDBMigrator:
         
         self.stats.users_created += 1
         logger.info(f"✅ Создан пользователь: {user.email} (ID={user.id})")
-        logger.warning(f"⚠️  Дефолтный пароль: 'changeme' - ОБЯЗАТЕЛЬНО смените после миграции!")
+        logger.warning("⚠️  Дефолтный пароль: 'changeme' - ОБЯЗАТЕЛЬНО смените после миграции!")
         
         return user
     

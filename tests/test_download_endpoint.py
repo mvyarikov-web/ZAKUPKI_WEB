@@ -1,5 +1,3 @@
-import os
-from pathlib import Path
 
 
 def test_download_endpoint_serves_file(tmp_path):

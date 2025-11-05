@@ -1,5 +1,4 @@
 import re
-import json
 import pytest
 from webapp import create_app
 

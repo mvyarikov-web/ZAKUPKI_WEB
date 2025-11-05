@@ -4,7 +4,6 @@
 from typing import Optional, List
 from datetime import datetime
 from sqlalchemy.orm import Session
-from sqlalchemy import select
 from webapp.db.models import Document
 from webapp.db.repositories.base_repository import BaseRepository
 

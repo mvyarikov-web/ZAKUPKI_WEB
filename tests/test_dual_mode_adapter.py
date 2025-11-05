@@ -3,8 +3,6 @@
 """
 import os
 import pytest
-import tempfile
-import shutil
 from unittest.mock import MagicMock
 from webapp.services.data_access_adapter import DataAccessAdapter
 
@@ -119,7 +117,7 @@ def test_build_index_files_mode(mock_app_config_files, tmp_path):
     with open(test_file, 'w', encoding='utf-8') as f:
         f.write('Тестовый документ с ключевым словом жираф')
     
-    adapter = DataAccessAdapter(mock_app_config_files)
+    DataAccessAdapter(mock_app_config_files)
     
     # TODO: требуется Flask app context для current_app.logger
     # Временно пропускаем реальную сборку индекса
@@ -135,7 +133,7 @@ def test_build_index_db_mode(mock_app_config_db, tmp_path):
     mock_app_config_db['INDEX_FOLDER'] = str(tmp_path / 'index')
     os.makedirs(mock_app_config_db['UPLOAD_FOLDER'], exist_ok=True)
     
-    adapter = DataAccessAdapter(mock_app_config_db)
+    DataAccessAdapter(mock_app_config_db)
     
     # TODO: требуется Flask app context + БД соединение
     # Временно пропускаем
@@ -152,7 +150,7 @@ def test_search_files_mode_no_index(mock_app_config_files, tmp_path):
     mock_app_config_files['UPLOAD_FOLDER'] = str(tmp_path / 'uploads')
     mock_app_config_files['INDEX_FOLDER'] = str(tmp_path / 'index')
     
-    adapter = DataAccessAdapter(mock_app_config_files)
+    DataAccessAdapter(mock_app_config_files)
     
     # TODO: требуется Flask app context
     # results = adapter.search_documents(['жираф'], user_id=None, exclude_mode=False)
@@ -164,7 +162,7 @@ def test_search_db_mode_fallback_to_files(mock_app_config_db, tmp_path):
     mock_app_config_db['UPLOAD_FOLDER'] = str(tmp_path / 'uploads')
     mock_app_config_db['INDEX_FOLDER'] = str(tmp_path / 'index')
     
-    adapter = DataAccessAdapter(mock_app_config_db)
+    DataAccessAdapter(mock_app_config_db)
     
     # TODO: проверить fallback на файловый поиск
     # assert adapter.use_database is True

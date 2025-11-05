@@ -64,7 +64,7 @@ def compare_logic(file_colors_list):
             print(f"   Было:  {old_emoji} {old_result}")
             print(f"   Стало: {new_emoji} {new_result}")
         else:
-            print(f"\n✅ БЕЗ ИЗМЕНЕНИЙ:")
+            print("\n✅ БЕЗ ИЗМЕНЕНИЙ:")
             print(f"   Файлы: {files_str}")
             print(f"   Результат: {new_emoji} {new_result}")
     

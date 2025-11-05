@@ -5,7 +5,7 @@ from .models import (
     User, Session, Document, Chunk,
     AIConversation, AIMessage,
     SearchHistory, APIKey, UserModel,
-    AppLog, JobQueue
+    AppLog, JobQueue, TokenUsage
 )
 
 __all__ = [
@@ -28,4 +28,5 @@ __all__ = [
     'UserModel',
     'AppLog',
     'JobQueue',
+    'TokenUsage',
 ]

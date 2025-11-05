@@ -1,6 +1,6 @@
 from __future__ import annotations
 import os
-from typing import List, Dict, Optional
+from typing import List, Dict
 from .search.indexer import Indexer
 from .search.searcher import Searcher
 

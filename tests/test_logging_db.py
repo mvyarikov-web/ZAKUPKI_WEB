@@ -88,7 +88,6 @@ def test_get_errors(log_repository):
 
 def test_delete_old_logs(log_repository, test_db_session):
     """Тест удаления старых логов."""
-    from webapp.db.models import AppLog
     
     # Создаём старый лог (вручную ставим дату)
     old_log = log_repository.create_log(level='INFO', message='Old message')
@@ -187,7 +186,6 @@ def test_database_log_handler_with_secrets(test_db_session):
 
 def test_get_logs_with_date_range(log_repository, test_db_session):
     """Тест фильтрации по диапазону дат."""
-    from webapp.db.models import AppLog
     
     # Создаём логи с разными датами
     log1 = log_repository.create_log(level='INFO', message='Log 1')
@@ -196,7 +194,7 @@ def test_get_logs_with_date_range(log_repository, test_db_session):
     log2 = log_repository.create_log(level='INFO', message='Log 2')
     log2.created_at = datetime.utcnow() - timedelta(days=5)
     
-    log3 = log_repository.create_log(level='INFO', message='Log 3')
+    log_repository.create_log(level='INFO', message='Log 3')
     # log3 имеет текущую дату
     
     test_db_session.commit()

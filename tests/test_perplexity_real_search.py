@@ -124,7 +124,7 @@ def test_perplexity_sonar_real_search():
     
     # Проверяем usage
     usage = response.usage
-    print(f"\n📊 Usage:")
+    print("\n📊 Usage:")
     print(f"  - prompt_tokens: {usage.prompt_tokens}")
     print(f"  - completion_tokens: {usage.completion_tokens}")
     print(f"  - total_tokens: {usage.total_tokens}")
@@ -178,7 +178,7 @@ def test_perplexity_sonar_real_search():
     has_anekdot = 'анекдот' in content_lower or 'anekdot' in content_lower
     has_psychology = 'психолог' in content_lower
     
-    print(f"\n📝 Анализ содержимого:")
+    print("\n📝 Анализ содержимого:")
     print(f"  - Упоминание 'анекдот': {'✅' if has_anekdot else '❌'}")
     print(f"  - Упоминание 'психолог': {'✅' if has_psychology else '❌'}")
     

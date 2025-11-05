@@ -6,7 +6,6 @@ def test_server_default_config():
     """Проверяет, что app.py использует правильные значения по умолчанию."""
     # Импортируем модуль app (но не запускаем сервер)
     import sys
-    import os
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     
     # Сохраняем оригинальные переменные окружения
@@ -21,9 +20,6 @@ def test_server_default_config():
                 del os.environ[key]
         
         # Проверяем дефолтные значения
-        expected_host = '127.0.0.1'
-        expected_port = 8081
-        expected_debug = True
         
         # Читаем код app.py и проверяем дефолты
         with open('app.py', 'r', encoding='utf-8') as f:

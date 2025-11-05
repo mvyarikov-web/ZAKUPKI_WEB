@@ -1,8 +1,6 @@
 """Тесты для оптимизации порядка обработки файлов (increment-013, Этап 3)."""
 import os
 import pytest
-from pathlib import Path
-import time
 
 
 @pytest.mark.timeout(30)
@@ -176,7 +174,6 @@ def test_file_sort_key_priorities():
 def test_integration_fast_files_indexed_first(tmp_path):
     """Интеграционный тест: быстрые файлы индексируются первыми."""
     from document_processor.search.indexer import Indexer
-    import time
     
     root = tmp_path / "uploads"
     root.mkdir()
@@ -197,7 +194,7 @@ def test_integration_fast_files_indexed_first(tmp_path):
     indexer._extract_text = tracked_extract
     
     # Создаём индекс
-    index_path = indexer.create_index(str(root))
+    indexer.create_index(str(root))
     
     # Проверяем порядок
     txt_idx = processed.index('fast.txt')
@@ -213,7 +210,7 @@ def test_os_replace_atomic_operation(tmp_path):
     # Этот тест проверяет, что мы используем именно os.replace, а не другие методы
     
     from document_processor.search.indexer import Indexer
-    from unittest.mock import patch, MagicMock
+    from unittest.mock import patch
     
     root = tmp_path / "uploads"
     root.mkdir()

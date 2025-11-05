@@ -101,7 +101,7 @@ class ApiKeyRepository(BaseRepository[APIKey]):
         if include_shared:
             # Свои ключи + общие ключи (is_shared=True)
             stmt = self.session.query(APIKey).filter(
-                (APIKey.user_id == user_id) | (APIKey.is_shared == True)
+                (APIKey.user_id == user_id) | (APIKey.is_shared)
             )
         else:
             # Только свои ключи
@@ -189,7 +189,7 @@ class ApiKeyRepository(BaseRepository[APIKey]):
         stmt = self.session.query(APIKey).filter(
             and_(
                 APIKey.provider == provider,
-                APIKey.is_shared == True
+                APIKey.is_shared
             )
         ).order_by(APIKey.created_at.desc())
         

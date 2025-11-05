@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 # Загружаем .env с переопределением
 load_dotenv(override=True)
 
-from webapp.db import Base, SessionLocal, User, Session as UserSession, Document, Chunk
+from webapp.db import SessionLocal, User, Session as UserSession, Document, Chunk  # noqa: E402
 
 
 @pytest.fixture(scope='module')
@@ -84,7 +84,7 @@ def test_embedding_column_is_vector(postgres_engine):
         row = result.fetchone()
         assert row is not None, "Колонка embedding не найдена"
         assert row[1] == 'vector', f"Неправильный тип колонки: {row[1]}"
-        print(f"\n✅ Колонка embedding имеет тип vector")
+        print("\n✅ Колонка embedding имеет тип vector")
 
 
 def test_create_user(postgres_session):
@@ -125,7 +125,6 @@ def test_create_session_with_cascade(postgres_session):
     postgres_session.commit()
     
     session_id = session.id
-    user_id = user.id
     
     # Удаляем пользователя
     postgres_session.delete(user)
@@ -134,7 +133,7 @@ def test_create_session_with_cascade(postgres_session):
     # Проверяем, что сессия тоже удалилась (CASCADE)
     deleted_session = postgres_session.query(UserSession).filter_by(id=session_id).first()
     assert deleted_session is None, "Каскадное удаление не сработало"
-    print(f"\n✅ Каскадное удаление работает корректно")
+    print("\n✅ Каскадное удаление работает корректно")
 
 
 def test_enum_types_in_postgres(postgres_session):
@@ -190,7 +189,7 @@ def test_document_and_chunks(postgres_session):
     
     assert chunk.id is not None
     assert chunk.document_id == doc.id
-    print(f"\n✅ Документ и чанк созданы успешно")
+    print("\n✅ Документ и чанк созданы успешно")
     
     # Очистка (CASCADE удалит chunk автоматически)
     postgres_session.delete(doc)

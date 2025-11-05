@@ -7,12 +7,10 @@
 - Проверку совместимости моделей и миграций
 """
 
-import pytest
 import subprocess
 from sqlalchemy import inspect, text
 
-from webapp.db import Base, engine
-from webapp.config import get_config
+from webapp.db import engine
 
 
 def test_alembic_current_shows_migration():
@@ -159,7 +157,6 @@ def test_cascade_delete_works():
         session.commit()
         
         session_id = user_session.id
-        user_id = user.id
         
         # Удаляем пользователя
         session.delete(user)

@@ -7,7 +7,6 @@ Auth Middleware для извлечения и валидации JWT токен
 
 from functools import wraps
 from flask import request, g, jsonify, current_app
-from typing import Optional
 
 from webapp.auth.jwt_manager import extract_token_from_header
 from webapp.services.auth_service import AuthService
@@ -38,6 +37,10 @@ def setup_auth_middleware(app):
         # Извлекаем токен из заголовка Authorization
         auth_header = request.headers.get('Authorization')
         token = extract_token_from_header(auth_header)
+        
+        # Если токена нет в заголовке, проверяем query параметр
+        if not token:
+            token = request.args.get('token')
         
         if not token:
             # Токен отсутствует - это нормально для публичных эндпоинтов

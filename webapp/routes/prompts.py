@@ -3,7 +3,6 @@ API для работы с промптами.
 """
 
 from flask import Blueprint, request, jsonify, g
-from sqlalchemy.orm import Session
 
 from webapp.db.base import get_db
 from webapp.services.prompt_service import PromptService

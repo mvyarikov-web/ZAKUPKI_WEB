@@ -4,7 +4,6 @@
 Проверяет, что обработчики 404/500/413 работают корректно
 даже при отсутствии шаблонов error.html/404.html/500.html.
 """
-import pytest
 
 
 def test_404_handler_returns_fallback_html(client):

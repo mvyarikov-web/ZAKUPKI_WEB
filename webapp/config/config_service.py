@@ -4,7 +4,6 @@
 """
 
 import os
-import sys
 from typing import Any, Optional
 from dotenv import load_dotenv
 

@@ -127,7 +127,7 @@ def upload_files():
                                 })
                             
                             current_app.logger.info(f"Файл проиндексирован: {file_path} → doc#{doc_id}, {message}")
-                    except Exception as e:
+                    except Exception:
                         current_app.logger.exception(f'Ошибка дедупликации/индексации при загрузке: {file_path}')
                         # Не блокируем загрузку при ошибке индексации
                 
