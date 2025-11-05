@@ -112,6 +112,7 @@ def create_app(config_name=None):
     from webapp.routes.ai_rag import ai_rag_bp
     from webapp.routes.auth import auth_bp
     from webapp.routes.prompts import prompts_bp
+    from webapp.routes.admin import admin_bp
     
     # Используем БД-версию API ключей вместо legacy
     from webapp.routes.api_keys_db import api_keys_new_bp
@@ -125,6 +126,7 @@ def create_app(config_name=None):
     app.register_blueprint(api_keys_new_bp)
     app.register_blueprint(auth_bp)
     app.register_blueprint(prompts_bp)
+    app.register_blueprint(admin_bp)
     
     # Настраиваем auth middleware
     from webapp.middleware.auth_middleware import setup_auth_middleware
