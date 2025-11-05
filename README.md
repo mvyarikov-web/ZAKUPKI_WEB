@@ -76,6 +76,14 @@ ZAKUPKI_WEB/
 - **Папка загрузок**: uploads/
 - **Папка индекса**: index/
 
+### Автоматический Garbage Collection (APScheduler)
+- **GC_SCHEDULE_ENABLED** (bool, default: true) — включить автоматический GC
+- **GC_SCHEDULE_HOUR** (int, 0-23, default: 3) — час запуска GC по MSK
+- **GC_THRESHOLD_SCORE** (float, default: -10.0) — порог retention score для удаления
+- **GC_MAX_DELETIONS** (int, default: 100) — максимум удалений за один запуск
+
+Планировщик автоматически запускается при старте приложения и выполняет GC ежедневно в заданное время. Управление через административную панель: `/admin` → секция "⏰ Автоматический Garbage Collection".
+
 ### Поддерживаемые форматы
 - **PDF**: Извлечение текста с помощью pypdf и pdfplumber
 - **DOCX**: Обработка через python-docx
