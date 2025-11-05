@@ -104,6 +104,19 @@ class DocumentRepository(BaseRepository[Document]):
             return self.find_one(sha256=sha256, owner_id=owner_id)
         return self.find_one(sha256=sha256)
     
+    def get_by_path(self, storage_url: str, owner_id: int) -> Optional[Document]:
+        """
+        Найти документ по пути к файлу и владельцу.
+        
+        Args:
+            storage_url: Относительный путь к файлу (например, "Documents_207888-25LO/файл.PDF")
+            owner_id: ID владельца
+            
+        Returns:
+            Document или None
+        """
+        return self.find_one(storage_url=storage_url, owner_id=owner_id, is_visible=True)
+    
     def update_status(
         self,
         document_id: int,

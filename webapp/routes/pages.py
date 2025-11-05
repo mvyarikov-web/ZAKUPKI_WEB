@@ -99,61 +99,57 @@ def index():
 
 
 @pages_bp.get('/view/<path:filepath>')
+@require_auth
 def view_file(filepath: str):
     """Отображение содержимого файла с подсветкой ключевых слов.
     
-    FR-003: Читает текст из сводного индекса (_search_index.txt) вместо оригинального файла.
+    Использует БД PostgreSQL для получения чанков документа.
     """
     from urllib.parse import unquote
     from webapp.services.files import is_safe_subpath
+    from webapp.db.base import get_db_context
+    from webapp.db.repositories.document_repository import DocumentRepository
+    from webapp.db.repositories.chunk_repository import ChunkRepository
+    from flask import g
     
     try:
         decoded_filepath = unquote(filepath)
-        current_app.logger.info(f"Просмотр файла из индекса: {decoded_filepath}")
+        current_app.logger.info(f"Просмотр файла: {decoded_filepath}, пользователь: {g.user.get('id')}")
         
         # Проверка безопасности пути
         if not is_safe_subpath(current_app.config['UPLOAD_FOLDER'], decoded_filepath):
             return jsonify({'error': 'Недопустимый путь к файлу'}), 400
         
-        # Проверяем статус файла
-        files_state = _get_files_state()
-        file_data = files_state.get_file_status(decoded_filepath)
-        
-        status = file_data.get('status', 'not_checked')
-        char_count = file_data.get('char_count')
-        error = file_data.get('error')
-        
-        # FR-001, FR-002: Запрещаем чтение неподдерживаемых, ошибочных и пустых файлов
-        # Возвращаем понятное сообщение вместо JSON
-        if status == 'unsupported':
-            return render_template('view.html',
-                                 title=os.path.basename(decoded_filepath),
-                                 content=Markup('<div class="error-message">Просмотр файла не поддерживается</div>'),
-                                 keywords=[])
-        if status == 'error' or error:
-            return render_template('view.html',
-                                 title=os.path.basename(decoded_filepath),
-                                 content=Markup('<div class="error-message">Просмотр файла не поддерживается</div>'),
-                                 keywords=[])
-        if char_count == 0:
-            return render_template('view.html',
-                                 title=os.path.basename(decoded_filepath),
-                                 content=Markup('<div class="error-message">Просмотр файла не поддерживается</div>'),
-                                 keywords=[])
-        
-        # FR-003: Читаем текст из индекса
-        index_path = get_index_path(current_app.config['INDEX_FOLDER'])
-        if not os.path.exists(index_path):
-            return jsonify({'error': 'Индекс не создан. Постройте индекс перед просмотром.'}), 404
-        
-        text = _extract_text_from_index(index_path, decoded_filepath)
-        
-        if not text:
-            # Возвращаем HTML-превью с сообщением об ошибке
-            return render_template('view.html',
-                                 filename=os.path.basename(decoded_filepath),
-                                 content=Markup('<div class="error-message">Не удалось извлечь текст из индекса</div>'),
-                                 keywords=[])
+        # Получаем документ из БД
+        with get_db_context() as session:
+            doc_repo = DocumentRepository(session)
+            chunk_repo = ChunkRepository(session)
+            
+            document = doc_repo.get_by_path(storage_url=decoded_filepath, owner_id=g.user['id'])
+            
+            if not document:
+                current_app.logger.warning(f"Документ не найден в БД: {decoded_filepath}")
+                return jsonify({'error': 'Индекс не создан. Постройте индекс перед просмотром.'}), 404
+            
+            # Проверяем статус документа
+            if document.status != 'indexed':
+                return render_template('view.html',
+                                     title=os.path.basename(decoded_filepath),
+                                     content=Markup('<div class="error-message">Документ ещё не проиндексирован</div>'),
+                                     keywords=[])
+            
+            # Получаем чанки документа из БД
+            chunks = chunk_repo.get_by_document(document_id=document.id)
+            
+            if not chunks:
+                current_app.logger.warning(f"Чанки не найдены для документа: {decoded_filepath}")
+                return render_template('view.html',
+                                     filename=os.path.basename(decoded_filepath),
+                                     content=Markup('<div class="error-message">Не удалось извлечь текст документа</div>'),
+                                     keywords=[])
+            
+            # Собираем текст из чанков
+            text = '\n\n'.join([chunk.text for chunk in chunks])
         
         # Получаем ключевые слова из query параметра
         query = request.args.get('q', '')
@@ -180,109 +176,6 @@ def view_file(filepath: str):
     except Exception as e:
         current_app.logger.exception('view_file error')
         return jsonify({'error': str(e)}), 500
-
-
-def _extract_text_from_index(index_path: str, target_path: str) -> str:
-    """Извлекает текст из индекса для указанного файла, используя маркеры начала и конца.
-    
-    FR-003: Источник данных для окна просмотра — индекс, без повторного чтения исходных файлов.
-    
-    Args:
-        index_path: Путь к файлу индекса
-        target_path: Относительный путь к целевому файлу
-        
-    Returns:
-        Извлечённый текст или пустая строка
-    """
-    import re
-    import os
-    
-    # Маркеры для поиска содержимого документа
-    DOC_START_MARKER = "<<< НАЧАЛО ДОКУМЕНТА >>>"
-    DOC_END_MARKER = "<<< КОНЕЦ ДОКУМЕНТА >>>"
-    
-    try:
-        # Нормализуем путь для поиска
-        norm_target = target_path.replace('\\', '/')
-        norm_target_clean = re.sub(r'^(zip://|rar://)', '', norm_target)
-        
-        current_app.logger.debug(f"Поиск в индексе с маркерами: target_path='{target_path}', norm_target='{norm_target}', norm_target_clean='{norm_target_clean}'")
-        
-        with open(index_path, 'r', encoding='utf-8', errors='ignore') as f:
-            content = f.read()
-        
-        # Ищем заголовок документа
-        patterns = [
-            rf"ЗАГОЛОВОК: {re.escape(norm_target)}\n",
-            rf"ЗАГОЛОВОК: {re.escape(norm_target_clean)}\n",
-            rf"ЗАГОЛОВОК: .*{re.escape(os.path.basename(norm_target))}\n",
-            rf"ЗАГОЛОВОК: .*{re.escape(os.path.basename(norm_target_clean))}\n"
-        ]
-        
-        for pattern in patterns:
-            matches = list(re.finditer(pattern, content, re.MULTILINE | re.IGNORECASE))
-            if matches:
-                current_app.logger.debug(f"Найдено {len(matches)} соответствий по шаблону: {pattern}")
-                
-                for match in matches:
-                    # Ищем маркер начала документа после заголовка
-                    start_pos = content.find(DOC_START_MARKER, match.end())
-                    if start_pos == -1:
-                        continue
-                    
-                    # Ищем маркер конца документа
-                    end_pos = content.find(DOC_END_MARKER, start_pos + len(DOC_START_MARKER))
-                    if end_pos == -1:
-                        # Если маркер конца не найден, берем до конца файла
-                        document_text = content[start_pos + len(DOC_START_MARKER):].strip()
-                    else:
-                        document_text = content[start_pos + len(DOC_START_MARKER):end_pos].strip()
-                    
-                    if document_text:
-                        current_app.logger.debug(f"Извлечен текст ({len(document_text)} символов) для '{target_path}'")
-                        return document_text
-        
-        # Если с маркерами не найдено, пробуем старый способ для совместимости
-        current_app.logger.debug(f"Попытка извлечения старым способом для '{target_path}'")
-        with open(index_path, 'r', encoding='utf-8', errors='ignore') as f:
-            in_target = False
-            text_lines = []
-            header_bar = "=" * 31
-            for line in f:
-                stripped = line.rstrip('\n')
-                if stripped == header_bar:
-                    if in_target:
-                        break
-                    in_target = False
-                    text_lines = []
-                    continue
-                if stripped.startswith('ЗАГОЛОВОК:'):
-                    title = stripped.split(':', 1)[1].strip().replace('\\', '/')
-                    title_clean = re.sub(r'^(zip://|rar://)', '', title)
-                    
-                    if (title == norm_target or 
-                        title_clean == norm_target_clean or
-                        title.endswith(norm_target) or 
-                        title_clean.endswith(norm_target_clean) or
-                        norm_target.endswith(title_clean) or
-                        norm_target_clean.endswith(title_clean) or
-                        title.endswith('/' + os.path.basename(norm_target)) or
-                        title_clean.endswith('/' + os.path.basename(norm_target_clean))):
-                        in_target = True
-                        current_app.logger.debug(f"Найден блок для '{target_path}' в заголовке '{title}' (старый способ)")
-                    continue
-                if stripped.startswith('Формат:') or stripped.startswith('Источник:'):
-                    continue
-                if in_target:
-                    text_lines.append(line.rstrip('\n'))
-            
-            result = '\n'.join(text_lines)
-            current_app.logger.debug(f"Извлечено символов (старый способ): {len(result)} для '{target_path}'")
-            return result
-            
-    except Exception as e:
-        current_app.logger.exception(f'Ошибка извлечения текста из индекса для {target_path}')
-        return ''
 
 
 @pages_bp.route('/test_models')
