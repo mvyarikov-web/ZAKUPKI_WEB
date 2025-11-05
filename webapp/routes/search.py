@@ -6,17 +6,9 @@ import json
 import html as htmllib
 from datetime import datetime, timedelta
 from flask import Blueprint, request, jsonify, current_app, Response, g
-from document_processor import DocumentProcessor
-from document_processor.search.searcher import Searcher
 from webapp.services.files import allowed_file
 from webapp.services.state import FilesState
-from webapp.services.indexing import (
-    build_search_index, 
-    search_in_index, 
-    get_index_path,
-    parse_index_char_counts
-)
-from webapp.services.data_access_adapter import DataAccessAdapter
+from webapp.services.indexing import get_index_path
 from webapp.services.db_indexing import build_db_index
 from webapp.models.rag_models import RAGDatabase
 from webapp.config.config_service import get_config
@@ -168,9 +160,7 @@ def _update_document_access_metrics(db: RAGDatabase, results: list) -> None:
         current_app.logger.warning(f"Не удалось обновить метрики использования: {e}")
 
 
-def _get_adapter():
-    """Получить экземпляр DataAccessAdapter для текущего приложения."""
-    return DataAccessAdapter(current_app.config)
+    conn.commit()
 
 
 def _get_files_state():
@@ -179,222 +169,12 @@ def _get_files_state():
     return FilesState(results_file)
 
 
-def _search_in_files(search_terms, exclude_mode=False):
-    """НОВАЯ логика: поиск по сводному индексу (_search_index.txt), игнорируя заголовки.
-    Группирует результаты по файлам и обновляет статусы file_status.
-    Параметр exclude_mode: если True, ищет файлы, которые НЕ содержат ключевые слова.
-    """
-    results = []
-    terms = [t.strip() for t in search_terms.split(',') if t.strip()]
-    if not terms:
-        return results
-
-    uploads = current_app.config['UPLOAD_FOLDER']
-    if not os.path.exists(uploads):
-        current_app.logger.warning('Папка uploads не существует при поиске')
-        return results
-
-    # Собираем список реальных файлов для отображения статусов
-    files_to_search = []
-    for root, dirs, files in os.walk(uploads):
-        for fname in files:
-            # Исключаем служебный индекс и временные Office-файлы
-            if fname == '_search_index.txt' or fname.startswith('~$') or fname.startswith('$'):
-                continue
-            if allowed_file(fname, current_app.config['ALLOWED_EXTENSIONS']):
-                rel_path = os.path.relpath(os.path.join(root, fname), uploads)
-                files_to_search.append(rel_path)
-
-    # Резолвер актуального индекса: index/_search_index.txt или uploads/_search_index.txt
-    def _resolve_live_index_path():
-        idx_in_index = get_index_path(current_app.config['INDEX_FOLDER'])
-        if os.path.exists(idx_in_index):
-            return idx_in_index
-        idx_in_uploads = os.path.join(uploads, '_search_index.txt')
-        if os.path.exists(idx_in_uploads):
-            return idx_in_uploads
-        return None
-
-    # Убедимся, что индекс существует (если нет — запустим сборку в фоне и не блокируем UI)
-    index_path = _resolve_live_index_path()
-    if not index_path:
-        current_app.logger.info('Индекс отсутствует — запускаем фоновую сборку (use_groups=True) и возвращаем пустой результат')
-        try:
-            import threading
-            def _bg_build():
-                try:
-                    adapter = _get_adapter()
-                    success, message, char_counts = adapter.build_index(use_groups=True)
-                    if success:
-                        current_app.logger.info(f'Фоновая сборка индекса завершена: {message}')
-                    else:
-                        current_app.logger.error(f'Ошибка фоновой индексации: {message}')
-                except Exception:
-                    current_app.logger.exception('Ошибка фоновой индексации')
-            threading.Thread(target=_bg_build, daemon=True).start()
-        except Exception:
-            current_app.logger.exception('Не удалось стартовать фоновую индексацию')
-        # Возвращаем пусто: UI покажет индикатор групп и предложит повторить поиск спустя секунды
-        return results
-
-    # Поиск по индексу с привязкой к файлам через DataAccessAdapter
-    try:
-        adapter = _get_adapter()
-        current_app.logger.info(f"Поиск по индексу: terms={terms}, exclude_mode={exclude_mode}")
-        matches = adapter.search_documents(
-            keywords=terms,
-            user_id=None,  # TODO: получать из request.user после реализации аутентификации
-            exclude_mode=exclude_mode,
-            context_chars=80
-        )
-    except Exception as e:
-        current_app.logger.exception(f'Ошибка поиска по индексу: {e}')
-        matches = []
-
-    # Сгруппируем результаты по файлам и по ключевым словам внутри файла
-    grouped: dict[str, dict] = {}
-    for m in matches:
-        title = m.get('title') or m.get('source') or 'индекс'
-        kw = m.get('keyword', '')
-        snip = m.get('snippet', '')
-        is_exclude = m.get('exclude_mode', False)
-        g = grouped.setdefault(title, { 'by_term': {}, 'total': 0, 'exclude_mode': is_exclude })
-        tinfo = g['by_term'].setdefault(kw, { 'count': 0, 'snippets': [] })
-        tinfo['count'] += 1
-        g['total'] += 1
-        # В режиме исключения - только 1 сниппет
-        max_snippets = 1 if is_exclude else 3
-        if len(tinfo['snippets']) < max_snippets and snip:
-            tinfo['snippets'].append(snip)
-
-    # Обновим статусы известных файлов и подготовим выдачу
-    files_state = _get_files_state()
-    # Получаем словарь количеств символов из индекса (реальные и виртуальные пути)
-    try:
-        counts = parse_index_char_counts(index_path)
-    except Exception:
-        counts = {}
-    found_files = set()
-    new_statuses = {}
-    
-    for rel_path, data in grouped.items():
-        # Составим агрегированный список терминов и до 3 сниппетов на термин
-        found_terms = []
-        context = []
-        is_exclude = data.get('exclude_mode', False)
-        
-        if is_exclude:
-            # В режиме исключения добавляем префикс "не содержит" для каждого термина
-            for term in terms:
-                found_terms.append(f"не содержит: {term}")
-            # В режиме исключения только 1 сниппет
-            for term, info in data['by_term'].items():
-                context.extend(info['snippets'][:1])
-        else:
-            for term, info in data['by_term'].items():
-                if not term:
-                    continue
-                found_terms.append(f"{term} ({info['count']})")
-                context.extend(info['snippets'][:3])
-        
-        new_entry = {
-            'status': 'contains_keywords',
-            'found_terms': found_terms,
-            'context': context[: max(3, len(context))],
-            'processed_at': datetime.now().isoformat()
-        }
-        
-        # Получаем предыдущий статус (для реальных и виртуальных файлов)
-        prev = files_state.get_file_status(rel_path)
-        # Не затираем ранее сохранённые поля (char_count, error, original_name)
-        for k in ('char_count','error','original_name'):
-            if k in prev:
-                new_entry[k] = prev[k]
-        # Обновляем char_count из индекса при наличии
-        if isinstance(rel_path, str) and rel_path in counts:
-            new_entry['char_count'] = counts[rel_path]
-        
-        # В режиме обратного поиска: пропускаем непроиндексированные файлы
-        # (файлы с char_count == 0 или с ошибками)
-        if is_exclude:
-            char_count = new_entry.get('char_count', 0)
-            if char_count == 0:
-                current_app.logger.debug(f"Пропуск непроиндексированного файла в режиме exclude: {rel_path}")
-                continue
-        
-        # Обновляем статус для всех найденных файлов (включая виртуальные из архивов)
-        new_statuses[rel_path] = new_entry
-        found_files.add(rel_path)
-        
-        # Добавляем в выдачу
-        # Формируем блоки по каждому ключевому слову
-        per_term = []
-        if is_exclude:
-            # В режиме исключения: один блок для всех терминов с префиксом "не содержит"
-            all_snippets = []
-            for term_data in data['by_term'].values():
-                all_snippets.extend(term_data['snippets'][:1])
-            
-            for original_term in terms:
-                per_term.append({
-                    'term': f'не содержит: {original_term}',
-                    'count': 1,
-                    'snippets': all_snippets[:1]  # Только 1 сниппет
-                })
-        else:
-            for term, info in data['by_term'].items():
-                per_term.append({
-                    'term': term,
-                    'count': info['count'],
-                    'snippets': info['snippets']
-                })
-        results.append({
-            'filename': os.path.basename(rel_path) if isinstance(rel_path, str) else str(rel_path),
-            'source': rel_path,
-            'path': rel_path if rel_path in files_to_search else None,
-            'total': data['total'],
-            'per_term': per_term
-        })
-
-    # Реальным файлам без совпадений — статус "нет ключевых слов"
-    for rel_path in files_to_search:
-        if rel_path not in found_files:
-            prev = files_state.get_file_status(rel_path)
-            # Проверяем char_count - если 0, то файл не удалось прочитать
-            char_count = prev.get('char_count', 0) if isinstance(prev, dict) else 0
-            if char_count == 0:
-                new_entry = {
-                    'status': 'error',
-                    'processed_at': datetime.now().isoformat()
-                }
-            else:
-                new_entry = {
-                    'status': 'no_keywords',
-                    'processed_at': datetime.now().isoformat()
-                }
-            for k in ('char_count','error','original_name'):
-                if k in prev:
-                    new_entry[k] = prev[k]
-            # Если есть счётчик символов в индексе — сохраним его
-            if rel_path in counts:
-                new_entry['char_count'] = counts[rel_path]
-            new_statuses[rel_path] = new_entry
-
-    # Атомарное обновление всех статусов
-    if new_statuses:
-        files_state.update_file_statuses(new_statuses)
-
-    current_app.logger.info(f"Поиск завершён: найдено {len(matches)} совпадений, групп: {len(grouped)}")
-    return results
-
-
 @search_bp.route('/search', methods=['POST'])
 def search():
-    """Поиск по ключевым словам.
+    """Поиск по ключевым словам (спецификация 015).
     
-    Поддерживает два режима (спецификация 015):
-    - USE_DB_INDEX=True: поиск по БД с фильтрацией по owner_id и is_visible=TRUE
-    - USE_DB_INDEX=False: legacy поиск по _search_index.txt
+    Поиск всегда происходит в БД с фильтрацией по owner_id и is_visible=TRUE.
+    Legacy файловый индекс больше не поддерживается.
     """
     search_terms = request.json.get('search_terms', '')
     exclude_mode = request.json.get('exclude_mode', False)
@@ -415,39 +195,24 @@ def search():
     if not filtered:
         return jsonify({'error': 'Слишком короткие/длинные или пустые ключевые слова'}), 400
 
-    config = get_config()
-    use_db_index = config.use_db_index
+    current_app.logger.info(f"Поиск в БД: terms='{','.join(filtered)}', exclude_mode={exclude_mode}")
     
-    if use_db_index:
-        # === РЕЖИМ БД (новый, increment-015) ===
-        current_app.logger.info(f"Поиск в БД: terms='{','.join(filtered)}', USE_DB_INDEX=True")
+    db = _get_db()
+    owner_id = _get_current_user_id()
+    
+    try:
+        # Поиск с фильтрацией по owner_id и is_visible=TRUE
+        results = _search_in_db(db, owner_id, filtered, exclude_mode)
         
-        db = _get_db()
-        owner_id = _get_current_user_id()
+        # Обновляем метрики использования (access_count, last_accessed_at)
+        _update_document_access_metrics(db, results)
         
-        try:
-            # Поиск с фильтрацией по owner_id и is_visible=TRUE
-            results = _search_in_db(db, owner_id, filtered, exclude_mode)
-            
-            # Обновляем метрики использования (access_count, last_accessed_at)
-            _update_document_access_metrics(db, results)
-            
-            current_app.logger.info(f"Поиск в БД завершён: найдено {len(results)} результатов")
-            return jsonify({'results': results, 'mode': 'database'})
-            
-        except Exception as e:
-            current_app.logger.exception("Ошибка поиска в БД")
-            return jsonify({'error': f'Ошибка поиска: {str(e)}'}), 500
-    else:
-        # === LEGACY РЕЖИМ (файловый индекс) ===
-        current_app.logger.info(f"Поиск в файле: terms='{','.join(filtered)}' (из {len(raw_terms)} входных), exclude_mode={exclude_mode}, USE_DB_INDEX=False")
-        results = _search_in_files(','.join(filtered), exclude_mode=exclude_mode)
+        current_app.logger.info(f"Поиск в БД завершён: найдено {len(results)} результатов")
+        return jsonify({'results': results})
         
-        # Сохраняем результаты поиска (сохраняем отфильтрованные термины)
-        files_state = _get_files_state()
-        files_state.set_last_search_terms(','.join(filtered))
-        
-        return jsonify({'results': results, 'mode': 'legacy_file'})
+    except Exception as e:
+        current_app.logger.exception("Ошибка поиска в БД")
+        return jsonify({'error': f'Ошибка поиска: {str(e)}'}), 500
 
 
 def _parse_index_groups(index_path: str) -> dict:
@@ -499,68 +264,41 @@ def _parse_index_groups(index_path: str) -> dict:
 
 @search_bp.route('/build_index', methods=['POST'])
 def build_index_route():
-    """Явная сборка индекса по папке uploads.
+    """Явная сборка индекса по папке uploads (спецификация 015).
     
-    Поддерживает два режима (спецификация 015):
-    - USE_DB_INDEX=True: индексация в БД с инкрементальностью
-    - USE_DB_INDEX=False: legacy индексация в _search_index.txt
+    Индексация всегда происходит в БД с инкрементальностью.
+    Legacy файловый индекс больше не поддерживается.
     """
     uploads = current_app.config['UPLOAD_FOLDER']
     if not os.path.exists(uploads):
         return jsonify({'success': False, 'message': 'Папка uploads не найдена'}), 400
     
     config = get_config()
-    use_db_index = config.use_db_index
     
     try:
-        if use_db_index:
-            # === РЕЖИМ БД (новый, increment-015) ===
-            current_app.logger.info("Запуск индексации в БД (USE_DB_INDEX=True)")
-            
-            db = _get_db()
-            owner_id = _get_current_user_id()
-            
-            success, message, stats = build_db_index(
-                db=db,
-                owner_id=owner_id,
-                folder_path=uploads,
-                chunk_size_tokens=config.chunk_size_tokens,
-                chunk_overlap_tokens=config.chunk_overlap_tokens
-            )
-            
-            if not success:
-                current_app.logger.error(f"Ошибка индексации в БД: {message}")
-                return jsonify({'success': False, 'message': message}), 500
-            
-            current_app.logger.info(f"Индексация в БД завершена: {message}")
-            return jsonify({
-                'success': True,
-                'message': message,
-                'mode': 'database',
-                'stats': stats
-            })
-            
-        else:
-            # === LEGACY РЕЖИМ (файловый индекс, fallback) ===
-            current_app.logger.info("Запуск индексации в файл (USE_DB_INDEX=False, legacy mode)")
-            
-            # Групповая индексация активна по умолчанию (increment-014)
-            use_groups = request.json.get('use_groups', True) if request.is_json else True
-            
-            adapter = _get_adapter()
-            current_app.logger.info(f"Запуск явной сборки индекса для uploads (use_groups={use_groups})")
-            
-            # Используем DataAccessAdapter для построения индекса
-            success, message, char_counts = adapter.build_index(use_groups=use_groups)
+        current_app.logger.info("Запуск индексации в БД (increment-015)")
+        
+        db = _get_db()
+        owner_id = _get_current_user_id()
+        
+        success, message, stats = build_db_index(
+            db=db,
+            owner_id=owner_id,
+            folder_path=uploads,
+            chunk_size_tokens=config.chunk_size_tokens,
+            chunk_overlap_tokens=config.chunk_overlap_tokens
+        )
         
         if not success:
-            current_app.logger.error(f"Ошибка построения индекса: {message}")
+            current_app.logger.error(f"Ошибка индексации в БД: {message}")
             return jsonify({'success': False, 'message': message}), 500
         
-        # Определяем путь к индексу для вывода статистики
-        index_path = get_index_path(current_app.config['INDEX_FOLDER'])
-        size = os.path.getsize(index_path) if os.path.exists(index_path) else 0
-        current_app.logger.info(f"Индекс собран: {index_path}, размер: {size} байт, файлов: {len(char_counts)}")
+        current_app.logger.info(f"Индексация в БД завершена: {message}")
+        return jsonify({
+            'success': True,
+            'message': message,
+            'stats': stats
+        })
         
         # Обновим количество распознанных символов по каждому файлу (включая виртуальные из архивов) и статусы ошибок/неподдержки
         try:
