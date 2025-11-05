@@ -1,5 +1,6 @@
 """Blueprint для административной панели управления хранилищем."""
 from flask import Blueprint, request, jsonify, current_app, render_template, g
+from webapp.middleware.auth_middleware import require_role
 from webapp.services.gc_service import (
     run_garbage_collection,
     get_storage_stats,
@@ -21,9 +22,12 @@ def _get_db() -> RAGDatabase:
 
 
 @admin_bp.route('/storage')
+@require_role('admin')
 def storage_page():
     """
     Главная страница административной панели.
+    
+    Требует: роль 'admin'
     
     Разделы:
     - Статистика хранилища
@@ -36,9 +40,12 @@ def storage_page():
 
 
 @admin_bp.get('/storage/stats')
+@require_role('admin')
 def storage_stats():
     """
     Получить статистику использования хранилища.
+    
+    Требует: роль 'admin'
     
     Returns:
         JSON с полями:
@@ -72,9 +79,12 @@ def storage_stats():
 
 
 @admin_bp.post('/gc/run')
+@require_role('admin')
 def run_gc():
     """
     Запустить Garbage Collection вручную.
+    
+    Требует: роль 'admin'
     
     Request JSON:
     {
@@ -128,9 +138,12 @@ def run_gc():
 
 
 @admin_bp.get('/gc/candidates')
+@require_role('admin')
 def get_gc_candidates_endpoint():
     """
     Получить список кандидатов на удаление без фактического удаления.
+    
+    Требует: роль 'admin'
     
     Query params:
     - threshold: float (default: -10.0)
@@ -162,9 +175,12 @@ def get_gc_candidates_endpoint():
 
 
 @admin_bp.post('/uploads/toggle')
+@require_role('admin')
 def toggle_uploads():
     """
     Экстренное включение/отключение загрузок.
+    
+    Требует: роль 'admin'
     
     Request JSON:
     {
@@ -201,6 +217,7 @@ def toggle_uploads():
 
 
 @admin_bp.get('/quota/<int:user_id>')
+@require_role('admin')
 def get_user_quota(user_id: int):
     """
     Получить информацию о квоте пользователя.
@@ -249,9 +266,12 @@ def get_user_quota(user_id: int):
 
 
 @admin_bp.get('/config')
+@require_role('admin')
 def get_admin_config():
     """
     Получить текущую конфигурацию административных параметров.
+    
+    Требует: роль 'admin'
     
     Returns:
         JSON: {"uploads_disabled": bool, ...}
@@ -271,9 +291,12 @@ def get_admin_config():
 
 
 @admin_bp.get('/audit_log')
+@require_role('admin')
 def get_audit_log():
     """
     Получить последние записи из лога аудита.
+    
+    Требует: роль 'admin'
     
     Query params:
     - limit: int (default: 100, max: 1000)

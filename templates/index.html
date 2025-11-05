@@ -481,12 +481,26 @@
     <script src="{{ url_for('static', filename='js/rag-analysis.js') }}"></script>
     <script src="{{ url_for('static', filename='js/text-optimizer.js') }}"></script>
     <script>
-        // Показываем кнопку админ-панели (TODO: добавить проверку прав через API)
+        // Показываем кнопку админ-панели только для администраторов
         document.addEventListener('DOMContentLoaded', function() {
             const adminBtn = document.getElementById('adminPanelBtn');
             if (adminBtn) {
-                // Пока показываем всем, позже добавим middleware для проверки роли
-                adminBtn.style.display = 'inline-flex';
+                // Проверяем доступ к админ-панели через API
+                fetch('/admin/config')
+                    .then(response => {
+                        if (response.ok) {
+                            // Если ответ 200 OK, значит пользователь админ
+                            adminBtn.style.display = 'inline-flex';
+                        } else if (response.status === 401 || response.status === 403) {
+                            // 401/403 - нет прав, скрываем кнопку
+                            adminBtn.style.display = 'none';
+                        }
+                    })
+                    .catch(err => {
+                        // При ошибке скрываем кнопку
+                        console.log('Проверка прав админа не удалась:', err);
+                        adminBtn.style.display = 'none';
+                    });
             }
         });
     </script>
