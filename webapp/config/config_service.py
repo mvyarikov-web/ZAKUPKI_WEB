@@ -387,6 +387,38 @@ class ConfigService:
         """Путь к лог-файлу аудита хранилища."""
         return os.path.join(self.LOGS_DIR, 'storage_audit.log')
     
+    # Планировщик GC (инкремент 15)
+    @property
+    def gc_schedule_enabled(self) -> bool:
+        """Включён ли автоматический GC."""
+        return os.getenv('GC_SCHEDULE_ENABLED', 'true').lower() == 'true'
+    
+    @property
+    def gc_schedule_hour(self) -> int:
+        """Час для запуска автоматического GC (0-23, default: 3)."""
+        try:
+            hour = int(os.getenv('GC_SCHEDULE_HOUR', '3'))
+            return max(0, min(23, hour))
+        except ValueError:
+            return 3
+    
+    @property
+    def gc_threshold_score(self) -> float:
+        """Порог retention score для GC (default: -10.0)."""
+        try:
+            return float(os.getenv('GC_THRESHOLD_SCORE', '-10.0'))
+        except ValueError:
+            return -10.0
+    
+    @property
+    def gc_max_deletions(self) -> int:
+        """Максимальное количество удалений за один запуск GC (default: 100)."""
+        try:
+            max_del = int(os.getenv('GC_MAX_DELETIONS', '100'))
+            return max(1, max_del)
+        except ValueError:
+            return 100
+    
     # ------------------------------------------------------------------------------
     # Внутренние хелперы
     # ------------------------------------------------------------------------------

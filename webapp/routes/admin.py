@@ -352,3 +352,82 @@ def get_audit_log():
     except Exception as e:
         current_app.logger.exception('Ошибка чтения лога аудита')
         return jsonify({'error': str(e)}), 500
+
+
+@admin_bp.get('/scheduler/status')
+@require_role('admin')
+def scheduler_status():
+    """
+    Получить статус планировщика GC.
+    
+    Требует: роль 'admin'
+    
+    Returns:
+        JSON с полями:
+        - running: bool - планировщик запущен
+        - gc_job_scheduled: bool - задача GC добавлена
+        - next_run_time: str | null - время следующего запуска
+        - config: dict - текущая конфигурация GC
+    """
+    try:
+        from webapp.services.scheduler import get_scheduler_status
+        
+        status = get_scheduler_status()
+        
+        # Добавляем текущую конфигурацию
+        config = get_config()
+        status['config'] = {
+            'enabled': config.gc_schedule_enabled,
+            'hour': config.gc_schedule_hour,
+            'threshold_score': config.gc_threshold_score,
+            'max_deletions': config.gc_max_deletions
+        }
+        
+        return jsonify(status)
+    except Exception as e:
+        current_app.logger.exception('Ошибка получения статуса планировщика')
+        return jsonify({'error': str(e)}), 500
+
+
+@admin_bp.post('/scheduler/toggle')
+@require_role('admin')
+def scheduler_toggle():
+    """
+    Включить/выключить автоматический GC.
+    
+    Требует: роль 'admin'
+    
+    Body:
+        {
+            "enabled": true/false
+        }
+    
+    Returns:
+        JSON с обновлённым статусом
+    """
+    try:
+        data = request.get_json()
+        enabled = data.get('enabled', False)
+        
+        from webapp.services.scheduler import schedule_gc_job, unschedule_gc_job, get_scheduler_status
+        
+        if enabled:
+            # Включаем автоматический GC
+            schedule_gc_job(current_app, remove_existing=True)
+            current_app.logger.info('Автоматический GC включён через админ-панель')
+        else:
+            # Выключаем автоматический GC
+            unschedule_gc_job(current_app)
+            current_app.logger.info('Автоматический GC выключен через админ-панель')
+        
+        # Возвращаем обновлённый статус
+        status = get_scheduler_status()
+        
+        return jsonify({
+            'success': True,
+            'enabled': enabled,
+            'status': status
+        })
+    except Exception as e:
+        current_app.logger.exception('Ошибка переключения планировщика')
+        return jsonify({'error': str(e)}), 500

@@ -166,6 +166,26 @@ def create_app(config_name=None):
         
         return response
     
+    # Инициализируем и запускаем планировщик (инкремент 15)
+    from webapp.services.scheduler import start_scheduler
+    try:
+        start_scheduler(app)
+        app.logger.info('Планировщик задач инициализирован')
+    except Exception as e:
+        app.logger.error(f'Ошибка инициализации планировщика: {e}')
+    
+    # Регистрируем очистку при завершении
+    import atexit
+    from webapp.services.scheduler import stop_scheduler
+    
+    def cleanup_scheduler():
+        try:
+            stop_scheduler(app)
+        except Exception as e:
+            app.logger.error(f'Ошибка остановки планировщика: {e}')
+    
+    atexit.register(cleanup_scheduler)
+    
     app.logger.info('Приложение запущено')
     
     return app
