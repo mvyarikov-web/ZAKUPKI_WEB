@@ -341,8 +341,58 @@ class ConfigService:
     
     @property
     def search_history_retention_days(self) -> int:
-        """Автоудаление истории поиска старше N дней (0 = отключено)."""
-        return int(os.getenv('SEARCH_HISTORY_RETENTION_DAYS', '365'))
+        """Количество дней хранения истории поиска."""
+        return int(os.getenv('SEARCH_HISTORY_RETENTION_DAYS', '30'))
+    
+    # ------------------------------------------------------------------------------
+    # Индексация в БД (спецификация 015)
+    # ------------------------------------------------------------------------------
+    
+    @property
+    def use_db_index(self) -> bool:
+        """Использовать БД для индексации вместо файлового _search_index.txt."""
+        return os.getenv('USE_DB_INDEX', 'true').lower() == 'true'
+    
+    @property
+    def chunk_size_tokens(self) -> int:
+        """Размер чанка в токенах для индексации."""
+        return int(os.getenv('CHUNK_SIZE_TOKENS', '500'))
+    
+    @property
+    def chunk_overlap_tokens(self) -> int:
+        """Перекрытие между чанками в токенах."""
+        return int(os.getenv('CHUNK_OVERLAP_TOKENS', '50'))
+    
+    @property
+    def auto_index_on_upload(self) -> bool:
+        """Автоматически индексировать файлы при загрузке."""
+        return os.getenv('AUTO_INDEX_ON_UPLOAD', 'false').lower() == 'true'
+    
+    @property
+    def user_quota_bytes(self) -> int:
+        """Квота на одного пользователя в байтах (default: 10 GB)."""
+        quota_gb = float(os.getenv('USER_QUOTA_GB', '10'))
+        return int(quota_gb * 1024 * 1024 * 1024)
+    
+    @property
+    def db_storage_limit_bytes(self) -> int:
+        """Глобальная квота БД в байтах (default: 100 GB)."""
+        limit_gb = float(os.getenv('DB_STORAGE_LIMIT_GB', '100'))
+        return int(limit_gb * 1024 * 1024 * 1024)
+    
+    @property
+    def uploads_disabled(self) -> bool:
+        """Флаг экстренной блокировки загрузок."""
+        return os.getenv('UPLOADS_DISABLED', 'false').lower() == 'true'
+    
+    @property
+    def storage_audit_log(self) -> str:
+        """Путь к лог-файлу аудита хранилища."""
+        return os.path.join(self.LOGS_DIR, 'storage_audit.log')
+    
+    # ------------------------------------------------------------------------------
+    # Внутренние хелперы
+    # ------------------------------------------------------------------------------
     
     @property
     def session_retention_days(self) -> int:
