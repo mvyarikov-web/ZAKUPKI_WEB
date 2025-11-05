@@ -5,7 +5,7 @@ import shutil
 import json
 import html as htmllib
 from datetime import datetime, timedelta
-from flask import Blueprint, request, jsonify, current_app, Response
+from flask import Blueprint, request, jsonify, current_app, Response, g
 from document_processor import DocumentProcessor
 from document_processor.search.searcher import Searcher
 from webapp.services.files import allowed_file
@@ -17,8 +17,155 @@ from webapp.services.indexing import (
     parse_index_char_counts
 )
 from webapp.services.data_access_adapter import DataAccessAdapter
+from webapp.services.db_indexing import build_db_index
+from webapp.models.rag_models import RAGDatabase
+from webapp.config.config_service import get_config
 
 search_bp = Blueprint('search', __name__)
+
+
+def _get_db() -> RAGDatabase:
+    """Получить подключение к БД (кешируется в g)."""
+    if 'db' not in g:
+        config = get_config()
+        dsn = config.database_url.replace('postgresql+psycopg2://', 'postgresql://')
+        g.db = RAGDatabase(dsn)
+    return g.db
+
+
+def _get_current_user_id() -> int:
+    """
+    Получить ID текущего пользователя из сессии/токена.
+    
+    TODO: Интеграция с реальной системой аутентификации.
+    Пока возвращаем фиксированный ID для разработки.
+    """
+    # Заглушка: в будущем извлечь из JWT токена или сессии
+    return g.get('user_id', 1)  # default owner_id=1 для dev
+
+
+def _search_in_db(db: RAGDatabase, owner_id: int, keywords: list, exclude_mode: bool = False) -> list:
+    """
+    Поиск по чанкам в БД с фильтрацией по owner_id и is_visible.
+    
+    Args:
+        db: Подключение к БД
+        owner_id: ID владельца
+        keywords: Список ключевых слов
+        exclude_mode: Если True, ищет файлы БЕЗ ключевых слов
+        
+    Returns:
+        Список результатов поиска
+    """
+    results = []
+    
+    try:
+        with db.db.connect() as conn:
+            with conn.cursor() as cur:
+                # Формируем tsquery для полнотекстового поиска
+                query_terms = ' | '.join(keywords)  # OR между терминами
+                
+                if exclude_mode:
+                    # Ищем документы, где НИ ОДИН термин не встречается
+                    cur.execute("""
+                        SELECT DISTINCT d.id, d.original_filename
+                        FROM documents d
+                        WHERE d.owner_id = %s
+                          AND d.is_visible = TRUE
+                          AND NOT EXISTS (
+                              SELECT 1 FROM chunks c
+                              WHERE c.document_id = d.id
+                                AND to_tsvector('russian', c.text) @@ to_tsquery('russian', %s)
+                          );
+                    """, (owner_id, query_terms))
+                    
+                    rows = cur.fetchall()
+                    for row in rows:
+                        results.append({
+                            'file': row[1],
+                            'matches': [],
+                            'match_count': 0,
+                            'status': 'no_match'
+                        })
+                else:
+                    # Обычный поиск: ищем чанки с совпадениями
+                    cur.execute("""
+                        SELECT 
+                            d.id,
+                            d.original_filename,
+                            c.chunk_idx,
+                            c.text,
+                            ts_headline('russian', c.text, to_tsquery('russian', %s), 'MaxWords=20, MinWords=10') as snippet
+                        FROM documents d
+                        JOIN chunks c ON c.document_id = d.id
+                        WHERE d.owner_id = %s
+                          AND d.is_visible = TRUE
+                          AND to_tsvector('russian', c.text) @@ to_tsquery('russian', %s)
+                        ORDER BY d.original_filename, c.chunk_idx
+                        LIMIT 500;
+                    """, (query_terms, owner_id, query_terms))
+                    
+                    rows = cur.fetchall()
+                    
+                    # Группируем по файлам
+                    file_matches = {}
+                    for row in rows:
+                        doc_id, filename, chunk_idx, text, snippet = row
+                        
+                        if filename not in file_matches:
+                            file_matches[filename] = {
+                                'file': filename,
+                                'matches': [],
+                                'match_count': 0,
+                                'doc_id': doc_id
+                            }
+                        
+                        file_matches[filename]['matches'].append({
+                            'chunk_idx': chunk_idx,
+                            'snippet': snippet,
+                            'text': text[:200]  # ограничиваем для производительности
+                        })
+                        file_matches[filename]['match_count'] += 1
+                    
+                    results = list(file_matches.values())
+                    
+    except Exception as e:
+        current_app.logger.exception("Ошибка поиска в БД")
+        raise
+    
+    return results
+
+
+def _update_document_access_metrics(db: RAGDatabase, results: list) -> None:
+    """
+    Обновляет метрики использования документов (access_count, last_accessed_at).
+    
+    Args:
+        db: Подключение к БД
+        results: Список результатов поиска
+    """
+    if not results:
+        return
+    
+    try:
+        doc_ids = [r.get('doc_id') for r in results if r.get('doc_id')]
+        if not doc_ids:
+            return
+        
+        with db.db.connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE documents
+                    SET access_count = access_count + 1,
+                        last_accessed_at = CURRENT_TIMESTAMP
+                    WHERE id = ANY(%s);
+                """, (doc_ids,))
+            conn.commit()
+            
+        current_app.logger.debug(f"Обновлены метрики для {len(doc_ids)} документов")
+        
+    except Exception as e:
+        current_app.logger.warning(f"Не удалось обновить метрики использования: {e}")
 
 
 def _get_adapter():
@@ -243,7 +390,12 @@ def _search_in_files(search_terms, exclude_mode=False):
 
 @search_bp.route('/search', methods=['POST'])
 def search():
-    """Поиск по ключевым словам"""
+    """Поиск по ключевым словам.
+    
+    Поддерживает два режима (спецификация 015):
+    - USE_DB_INDEX=True: поиск по БД с фильтрацией по owner_id и is_visible=TRUE
+    - USE_DB_INDEX=False: legacy поиск по _search_index.txt
+    """
     search_terms = request.json.get('search_terms', '')
     exclude_mode = request.json.get('exclude_mode', False)
     
@@ -263,15 +415,39 @@ def search():
     if not filtered:
         return jsonify({'error': 'Слишком короткие/длинные или пустые ключевые слова'}), 400
 
-    # Новый поиск через индекс
-    current_app.logger.info(f"Запрос поиска: terms='{','.join(filtered)}' (из {len(raw_terms)} входных), exclude_mode={exclude_mode}")
-    results = _search_in_files(','.join(filtered), exclude_mode=exclude_mode)
+    config = get_config()
+    use_db_index = config.use_db_index
     
-    # Сохраняем результаты поиска (сохраняем отфильтрованные термины)
-    files_state = _get_files_state()
-    files_state.set_last_search_terms(','.join(filtered))
-    
-    return jsonify({'results': results})
+    if use_db_index:
+        # === РЕЖИМ БД (новый, increment-015) ===
+        current_app.logger.info(f"Поиск в БД: terms='{','.join(filtered)}', USE_DB_INDEX=True")
+        
+        db = _get_db()
+        owner_id = _get_current_user_id()
+        
+        try:
+            # Поиск с фильтрацией по owner_id и is_visible=TRUE
+            results = _search_in_db(db, owner_id, filtered, exclude_mode)
+            
+            # Обновляем метрики использования (access_count, last_accessed_at)
+            _update_document_access_metrics(db, results)
+            
+            current_app.logger.info(f"Поиск в БД завершён: найдено {len(results)} результатов")
+            return jsonify({'results': results, 'mode': 'database'})
+            
+        except Exception as e:
+            current_app.logger.exception("Ошибка поиска в БД")
+            return jsonify({'error': f'Ошибка поиска: {str(e)}'}), 500
+    else:
+        # === LEGACY РЕЖИМ (файловый индекс) ===
+        current_app.logger.info(f"Поиск в файле: terms='{','.join(filtered)}' (из {len(raw_terms)} входных), exclude_mode={exclude_mode}, USE_DB_INDEX=False")
+        results = _search_in_files(','.join(filtered), exclude_mode=exclude_mode)
+        
+        # Сохраняем результаты поиска (сохраняем отфильтрованные термины)
+        files_state = _get_files_state()
+        files_state.set_last_search_terms(','.join(filtered))
+        
+        return jsonify({'results': results, 'mode': 'legacy_file'})
 
 
 def _parse_index_groups(index_path: str) -> dict:
@@ -323,20 +499,59 @@ def _parse_index_groups(index_path: str) -> dict:
 
 @search_bp.route('/build_index', methods=['POST'])
 def build_index_route():
-    """Явная сборка индекса по папке uploads."""
+    """Явная сборка индекса по папке uploads.
+    
+    Поддерживает два режима (спецификация 015):
+    - USE_DB_INDEX=True: индексация в БД с инкрементальностью
+    - USE_DB_INDEX=False: legacy индексация в _search_index.txt
+    """
     uploads = current_app.config['UPLOAD_FOLDER']
     if not os.path.exists(uploads):
         return jsonify({'success': False, 'message': 'Папка uploads не найдена'}), 400
     
-    # Групповая индексация активна по умолчанию (increment-014)
-    use_groups = request.json.get('use_groups', True) if request.is_json else True
+    config = get_config()
+    use_db_index = config.use_db_index
     
     try:
-        adapter = _get_adapter()
-        current_app.logger.info(f"Запуск явной сборки индекса для uploads (use_groups={use_groups})")
-        
-        # Используем DataAccessAdapter для построения индекса
-        success, message, char_counts = adapter.build_index(use_groups=use_groups)
+        if use_db_index:
+            # === РЕЖИМ БД (новый, increment-015) ===
+            current_app.logger.info("Запуск индексации в БД (USE_DB_INDEX=True)")
+            
+            db = _get_db()
+            owner_id = _get_current_user_id()
+            
+            success, message, stats = build_db_index(
+                db=db,
+                owner_id=owner_id,
+                folder_path=uploads,
+                chunk_size_tokens=config.chunk_size_tokens,
+                chunk_overlap_tokens=config.chunk_overlap_tokens
+            )
+            
+            if not success:
+                current_app.logger.error(f"Ошибка индексации в БД: {message}")
+                return jsonify({'success': False, 'message': message}), 500
+            
+            current_app.logger.info(f"Индексация в БД завершена: {message}")
+            return jsonify({
+                'success': True,
+                'message': message,
+                'mode': 'database',
+                'stats': stats
+            })
+            
+        else:
+            # === LEGACY РЕЖИМ (файловый индекс, fallback) ===
+            current_app.logger.info("Запуск индексации в файл (USE_DB_INDEX=False, legacy mode)")
+            
+            # Групповая индексация активна по умолчанию (increment-014)
+            use_groups = request.json.get('use_groups', True) if request.is_json else True
+            
+            adapter = _get_adapter()
+            current_app.logger.info(f"Запуск явной сборки индекса для uploads (use_groups={use_groups})")
+            
+            # Используем DataAccessAdapter для построения индекса
+            success, message, char_counts = adapter.build_index(use_groups=use_groups)
         
         if not success:
             current_app.logger.error(f"Ошибка построения индекса: {message}")
@@ -416,7 +631,12 @@ def build_index_route():
         except Exception:
             current_app.logger.exception('Не удалось обновить char_count по индексу')
         
-        return jsonify({'success': True, 'index_path': index_path, 'size': size})
+            return jsonify({
+                'success': True, 
+                'index_path': index_path, 
+                'size': size,
+                'mode': 'legacy_file'
+            })
     
     except Exception as e:
         current_app.logger.exception("Ошибка при сборке индекса")
