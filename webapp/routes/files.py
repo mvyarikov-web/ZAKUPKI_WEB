@@ -1,12 +1,29 @@
 """Blueprint для работы с файлами (upload, delete, download)."""
 import os
 import shutil
-from flask import Blueprint, request, jsonify, current_app, send_file, Response
+from flask import Blueprint, request, jsonify, current_app, send_file, Response, g
 from urllib.parse import unquote, quote as url_quote
 from webapp.services.files import is_safe_subpath, safe_filename, allowed_file
 from webapp.services.state import FilesState
+from webapp.services.db_indexing import calculate_file_hash, handle_duplicate_upload
+from webapp.models.rag_models import RAGDatabase
+from webapp.config.config_service import get_config
 
 files_bp = Blueprint('files', __name__)
+
+
+def _get_db() -> RAGDatabase:
+    """Получить подключение к БД (кешируется в g)."""
+    if 'db' not in g:
+        config = get_config()
+        dsn = config.database_url.replace('postgresql+psycopg2://', 'postgresql://')
+        g.db = RAGDatabase(dsn)
+    return g.db
+
+
+def _get_current_user_id() -> int:
+    """Получить ID текущего пользователя (заглушка для разработки)."""
+    return g.get('user_id', 1)
 
 
 def _get_files_state():
@@ -81,8 +98,40 @@ def upload_files():
                 file_key = os.path.join(*safe_folder_parts, final_filename) if safe_folder_parts else final_filename
                 files_state.set_file_status(file_key, 'not_checked', 
                                           {'original_name': filename})
-                uploaded_files.append(final_filename)
                 
+                # Дедупликация и индексация в БД (если не отключено)
+                config = get_config()
+                if not config.uploads_disabled:
+                    try:
+                        db = _get_db()
+                        owner_id = _get_current_user_id()
+                        sha256_hash = calculate_file_hash(file_path)
+                        
+                        if sha256_hash:
+                            doc_id, message, is_duplicate = handle_duplicate_upload(
+                                db, owner_id, file_path, sha256_hash,
+                                config.chunk_size_tokens, config.chunk_overlap_tokens
+                            )
+                            
+                            # Добавляем информацию о дедупликации в статус файла
+                            if is_duplicate:
+                                files_state.set_file_status(file_key, 'indexed_duplicate', {
+                                    'original_name': filename,
+                                    'message': message,
+                                    'document_id': doc_id
+                                })
+                            else:
+                                files_state.set_file_status(file_key, 'indexed', {
+                                    'original_name': filename,
+                                    'document_id': doc_id
+                                })
+                            
+                            current_app.logger.info(f"Файл проиндексирован: {file_path} → doc#{doc_id}, {message}")
+                    except Exception as e:
+                        current_app.logger.exception(f'Ошибка дедупликации/индексации при загрузке: {file_path}')
+                        # Не блокируем загрузку при ошибке индексации
+                
+                uploaded_files.append(final_filename)
                 current_app.logger.info(f"Файл сохранён: {file_path}, ключ: {file_key}")
             else:
                 return jsonify({'error': f'Неподдерживаемый тип файла: {original_filename}'}), 400

@@ -439,3 +439,184 @@ def build_db_index(
     except Exception as e:
         current_app.logger.exception('Ошибка индексации в БД')
         return False, str(e), {}
+
+
+def check_document_exists_by_hash(db: RAGDatabase, sha256_hash: str) -> Optional[Dict[str, Any]]:
+    """
+    Проверяет, существует ли документ с таким SHA256 в БД.
+    
+    Args:
+        db: Подключение к БД
+        sha256_hash: SHA256 хеш файла
+        
+    Returns:
+        Dict с полями документа если найден, None если нет
+        Поля: id, owner_id, original_filename, is_visible, deleted_at, sha256
+    """
+    try:
+        with db.db.connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT id, owner_id, original_filename, is_visible, deleted_at, sha256
+                    FROM documents
+                    WHERE sha256 = %s
+                    LIMIT 1;
+                """, (sha256_hash,))
+                row = cur.fetchone()
+                if row:
+                    return {
+                        'id': row[0],
+                        'owner_id': row[1],
+                        'original_filename': row[2],
+                        'is_visible': row[3],
+                        'deleted_at': row[4],
+                        'sha256': row[5]
+                    }
+                return None
+    except Exception as e:
+        current_app.logger.warning(f'Ошибка проверки дубликата по sha256: {e}')
+        return None
+
+
+def restore_soft_deleted_document(db: RAGDatabase, document_id: int, new_owner_id: int, new_filename: str) -> bool:
+    """
+    Восстанавливает мягко удалённый документ (is_visible=FALSE → TRUE).
+    
+    Args:
+        db: Подключение к БД
+        document_id: ID документа для восстановления
+        new_owner_id: ID нового владельца (может совпадать со старым)
+        new_filename: Новое имя файла
+        
+    Returns:
+        True если восстановлено, False если ошибка
+    """
+    try:
+        with db.db.connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE documents
+                    SET is_visible = TRUE,
+                        deleted_at = NULL,
+                        owner_id = %s,
+                        original_filename = %s,
+                        last_accessed_at = NOW()
+                    WHERE id = %s;
+                """, (new_owner_id, new_filename, document_id))
+            conn.commit()
+        current_app.logger.info(f'Восстановлен документ #{document_id} для owner_id={new_owner_id}')
+        return True
+    except Exception as e:
+        current_app.logger.exception(f'Ошибка восстановления документа #{document_id}')
+        return False
+
+
+def copy_chunks_between_users(db: RAGDatabase, source_doc_id: int, target_doc_id: int) -> int:
+    """
+    Копирует чанки от одного документа к другому (для дедупликации между пользователями).
+    
+    Args:
+        db: Подключение к БД
+        source_doc_id: ID документа-источника
+        target_doc_id: ID документа-назначения
+        
+    Returns:
+        Количество скопированных чанков
+    """
+    try:
+        with db.db.connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO chunks (document_id, chunk_idx, text)
+                    SELECT %s, chunk_idx, text
+                    FROM chunks
+                    WHERE document_id = %s;
+                """, (target_doc_id, source_doc_id))
+                count = cur.rowcount
+            conn.commit()
+        current_app.logger.info(f'Скопировано {count} чанков: doc#{source_doc_id} → doc#{target_doc_id}')
+        return count
+    except Exception as e:
+        current_app.logger.exception(f'Ошибка копирования чанков: doc#{source_doc_id} → doc#{target_doc_id}')
+        return 0
+
+
+def handle_duplicate_upload(
+    db: RAGDatabase,
+    owner_id: int,
+    file_path: str,
+    sha256_hash: str,
+    chunk_size_tokens: int = 500,
+    chunk_overlap_tokens: int = 50
+) -> Tuple[int, str, bool]:
+    """
+    Обрабатывает загрузку дубликата файла (дедупликация).
+    
+    Сценарии:
+    1. Документ с таким sha256 уже существует у того же пользователя и видим → пропускаем
+    2. Документ мягко удалён у того же пользователя → восстанавливаем
+    3. Документ существует у другого пользователя → создаём новую запись, копируем чанки
+    4. Документа нет → индексируем как обычно
+    
+    Args:
+        db: Подключение к БД
+        owner_id: ID владельца
+        file_path: Путь к файлу
+        sha256_hash: SHA256 хеш файла
+        chunk_size_tokens: Размер чанка в токенах
+        chunk_overlap_tokens: Перекрытие чанков в токенах
+        
+    Returns:
+        Tuple (document_id, message, is_duplicate)
+    """
+    filename = os.path.basename(file_path)
+    
+    # Проверяем существование документа
+    existing_doc = check_document_exists_by_hash(db, sha256_hash)
+    
+    if not existing_doc:
+        # Сценарий 4: документа нет → индексируем обычным образом
+        file_info = {
+            'mtime': os.path.getmtime(file_path),
+            'size': os.path.getsize(file_path)
+        }
+        doc_id, _ = index_document_to_db(
+            db, owner_id, file_path, file_info,
+            chunk_size_tokens, chunk_overlap_tokens
+        )
+        return doc_id, 'Новый документ проиндексирован', False
+    
+    # Документ существует
+    if existing_doc['owner_id'] == owner_id:
+        if existing_doc['is_visible']:
+            # Сценарий 1: уже существует у пользователя и видим
+            current_app.logger.info(f'Дубликат пропущен: {filename} (doc#{existing_doc["id"]})')
+            return existing_doc['id'], 'Документ уже существует (пропущен)', True
+        else:
+            # Сценарий 2: мягко удалён у того же пользователя → восстанавливаем
+            if restore_soft_deleted_document(db, existing_doc['id'], owner_id, filename):
+                return existing_doc['id'], 'Документ восстановлен из архива', True
+            else:
+                return -1, 'Ошибка восстановления документа', False
+    else:
+        # Сценарий 3: существует у другого пользователя → создаём новую запись, копируем чанки
+        try:
+            with db.db.connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        INSERT INTO documents (owner_id, original_filename, sha256, is_visible, indexing_cost_seconds)
+                        VALUES (%s, %s, %s, TRUE, 0.0)
+                        RETURNING id;
+                    """, (owner_id, filename, sha256_hash))
+                    new_doc_id = cur.fetchone()[0]
+                conn.commit()
+            
+            # Копируем чанки от существующего документа
+            count = copy_chunks_between_users(db, existing_doc['id'], new_doc_id)
+            msg = f'Дубликат добавлен для нового пользователя ({count} чанков скопировано)'
+            current_app.logger.info(f'{msg}: doc#{existing_doc["id"]} → doc#{new_doc_id}')
+            return new_doc_id, msg, True
+            
+        except Exception as e:
+            current_app.logger.exception(f'Ошибка создания дубликата для owner_id={owner_id}')
+            return -1, f'Ошибка дедупликации: {e}', False
