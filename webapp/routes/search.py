@@ -52,22 +52,25 @@ def _search_in_db(db: RAGDatabase, owner_id: int, keywords: list, exclude_mode: 
     try:
         with db.db.connect() as conn:
             with conn.cursor() as cur:
-                # Формируем tsquery для полнотекстового поиска
-                query_terms = ' | '.join(keywords)  # OR между терминами
-                
                 if exclude_mode:
                     # Ищем документы, где НИ ОДИН термин не встречается
-                    cur.execute("""
+                    # Формируем условия для каждого термина
+                    conditions = []
+                    params = [owner_id]
+                    for keyword in keywords:
+                        conditions.append("c.text NOT ILIKE %s")
+                        params.append(f'%{keyword}%')
+                    
+                    where_clause = " AND ".join(conditions)
+                    
+                    cur.execute(f"""
                         SELECT DISTINCT d.id, d.original_filename
                         FROM documents d
+                        JOIN chunks c ON c.document_id = d.id
                         WHERE d.owner_id = %s
                           AND d.is_visible = TRUE
-                          AND NOT EXISTS (
-                              SELECT 1 FROM chunks c
-                              WHERE c.document_id = d.id
-                                AND to_tsvector('russian', c.text) @@ to_tsquery('russian', %s)
-                          );
-                    """, (owner_id, query_terms))
+                          AND {where_clause};
+                    """, params)
                     
                     rows = cur.fetchall()
                     for row in rows:
@@ -78,37 +81,50 @@ def _search_in_db(db: RAGDatabase, owner_id: int, keywords: list, exclude_mode: 
                             'status': 'no_match'
                         })
                 else:
-                    # Обычный поиск: ищем чанки с совпадениями
-                    cur.execute("""
+                    # Обычный поиск: ищем чанки с совпадениями (простой ILIKE для каждого термина)
+                    # Формируем условия OR для каждого ключевого слова
+                    conditions = []
+                    params = [owner_id]
+                    for keyword in keywords:
+                        conditions.append("c.text ILIKE %s")
+                        params.append(f'%{keyword}%')
+                    
+                    where_clause = " OR ".join(conditions)
+                    
+                    cur.execute(f"""
                         SELECT 
                             d.id,
                             d.original_filename,
+                            d.storage_url,
                             c.chunk_idx,
-                            c.text,
-                            ts_headline('russian', c.text, to_tsquery('russian', %s), 'MaxWords=20, MinWords=10') as snippet
+                            c.text
                         FROM documents d
                         JOIN chunks c ON c.document_id = d.id
                         WHERE d.owner_id = %s
                           AND d.is_visible = TRUE
-                          AND to_tsvector('russian', c.text) @@ to_tsquery('russian', %s)
+                          AND ({where_clause})
                         ORDER BY d.original_filename, c.chunk_idx
                         LIMIT 500;
-                    """, (query_terms, owner_id, query_terms))
+                    """, params)
                     
                     rows = cur.fetchall()
                     
                     # Группируем по файлам
                     file_matches = {}
                     for row in rows:
-                        doc_id, filename, chunk_idx, text, snippet = row
+                        doc_id, filename, storage_url, chunk_idx, text = row
                         
                         if filename not in file_matches:
                             file_matches[filename] = {
                                 'file': filename,
+                                'storage_url': storage_url,
                                 'matches': [],
                                 'match_count': 0,
                                 'doc_id': doc_id
                             }
+                        
+                        # Создаём сниппет с подсветкой
+                        snippet = text[:300] if len(text) > 300 else text
                         
                         file_matches[filename]['matches'].append({
                             'chunk_idx': chunk_idx,
@@ -498,15 +514,14 @@ def view_index():
             # Добавляем документы
             for doc in docs:
                 parts.append('')
-                parts.append(f"ЗАГОЛОВОК: {doc['filename']}")
-                parts.append(f"Формат: {os.path.splitext(doc['filename'])[1]}")
-                parts.append(f"Источник: {doc.get('storage_url', 'unknown')}")
+                parts.append(f"__LABEL__ЗАГОЛОВОК:__/LABEL__ __HEADER__{doc['filename']}__/HEADER__")
+                parts.append(f"__LABEL__Формат:__/LABEL__ {os.path.splitext(doc['filename'])[1]}")
+                parts.append(f"__LABEL__Источник:__/LABEL__ {doc.get('storage_url', 'unknown')}")
                 
                 # Подсчёт символов из чанков
                 total_chars = sum(c.get('char_count', 0) for c in doc.get('chunks', []))
-                parts.append(f"Символов: {total_chars}")
+                parts.append(f"__LABEL__Символов:__/LABEL__ {total_chars}")
                 parts.append('')
-                parts.append("<<< НАЧАЛО ДОКУМЕНТА >>>")
                 
                 # Объединяем тексты чанков
                 for chunk in doc.get('chunks', []):
@@ -514,7 +529,9 @@ def view_index():
                         parts.append(chunk['text'])
                         parts.append('')  # разделитель между чанками
                 
-                parts.append("<<< КОНЕЦ ДОКУМЕНТА >>>")
+                # 3 пустые строки между документами
+                parts.append('')
+                parts.append('')
                 parts.append('')
             
             parts.append(f"<!-- END_{g.upper()} -->")
@@ -607,8 +624,31 @@ def view_index():
         if not terms:
             return Response(base_text, mimetype='text/plain; charset=utf-8')
 
-        # Подсветка: экранируем HTML, затем выделяем совпадения <mark>
-        safe = htmllib.escape(base_text)
+        # Подсветка: сохраняем наши плейсхолдеры, экранируем остальное
+        safe = base_text
+        placeholders = {}
+        counter = 0
+        
+        # Сохраняем метки через плейсхолдеры (до экранирования HTML)
+        for match in re.finditer(r"__LABEL__(.*?)__/LABEL__", safe):
+            placeholder = f"__PH_LABEL_{counter}__"
+            placeholders[placeholder] = f'<span class="index-document-label">{match.group(1)}</span>'
+            safe = safe.replace(match.group(0), placeholder, 1)
+            counter += 1
+        
+        for match in re.finditer(r"__HEADER__(.*?)__/HEADER__", safe):
+            placeholder = f"__PH_HEADER_{counter}__"
+            placeholders[placeholder] = f'<span class="index-document-header">{match.group(1)}</span>'
+            safe = safe.replace(match.group(0), placeholder, 1)
+            counter += 1
+        
+        # Экранируем всё остальное
+        safe = htmllib.escape(safe)
+        
+        # Восстанавливаем плейсхолдеры
+        for placeholder, original in placeholders.items():
+            safe = safe.replace(placeholder, original)
+        
         highlighted = safe
         for term in terms:
             if not term:
@@ -632,6 +672,8 @@ def view_index():
             "<style>body{font:14px/1.5 -apple-system,Segoe UI,Arial,sans-serif;padding:16px;}"
             "pre{white-space:pre-wrap;word-wrap:break-word;background:#f8f8f8;padding:12px;border-radius:6px;}"
             "mark{background:#ffeb3b;padding:0 2px;border-radius:2px;}"
+            ".index-document-header{color:#2196F3 !important;font-weight:bold;}"
+            ".index-document-label{color:#1976D2 !important;font-weight:600;}"
             "a.btn{display:inline-block;margin-bottom:12px;text-decoration:none;background:#3498db;color:#fff;padding:6px 10px;border-radius:4px;margin-right:8px;}"
             ".search-info{background:#e8f5e9;padding:8px 12px;border-radius:4px;margin-bottom:12px;display:inline-block;}"
             "</style>\n"

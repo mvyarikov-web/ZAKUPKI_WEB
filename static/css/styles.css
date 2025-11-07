@@ -1223,3 +1223,14 @@ section h2 {
 .btn-danger:hover {
     background-color: #7a2326;
 }
+
+/* Синие заголовки для индекса */
+.index-document-header {
+    color: #2196F3 !important;
+    font-weight: bold;
+}
+
+.index-document-label {
+    color: #1976D2 !important;
+    font-weight: 600;
+}
