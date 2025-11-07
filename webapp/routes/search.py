@@ -30,8 +30,67 @@ def _get_current_user_id() -> int:
     TODO: Интеграция с реальной системой аутентификации.
     Пока возвращаем фиксированный ID для разработки.
     """
-    # Заглушка: в будущем извлечь из JWT токена или сессии
-    return g.get('user_id', 1)  # default owner_id=1 для dev
+    # 1) Если аутентификация настроена — используем g.user.id
+    try:
+        user = getattr(g, 'user', None)
+        if user and getattr(user, 'id', None):
+            return int(user.id)
+    except Exception:
+        pass
+
+    # 2) Dev/тестовый режим: поддержка заголовка X-User-ID
+    try:
+        uid = request.headers.get('X-User-ID')
+        if uid and str(uid).isdigit():
+            return int(uid)
+    except Exception:
+        pass
+
+    # 3) Fallback по умолчанию
+    return 1
+
+
+def _make_snippet(text: str, keywords: list, context_chars: int = 100) -> str:
+    """
+    Создаёт сниппет с контекстом вокруг первого найденного ключевого слова.
+    
+    Args:
+        text: Исходный текст
+        keywords: Список ключевых слов для поиска
+        context_chars: Количество символов контекста до и после ключевого слова
+        
+    Returns:
+        Сниппет с контекстом и многоточиями
+    """
+    text_lower = text.lower()
+    
+    # Ищем первое вхождение любого ключевого слова
+    min_pos = len(text)
+    found_keyword = None
+    
+    for keyword in keywords:
+        pos = text_lower.find(keyword.lower())
+        if pos != -1 and pos < min_pos:
+            min_pos = pos
+            found_keyword = keyword
+    
+    # Если ни одно ключевое слово не найдено, возвращаем начало
+    if found_keyword is None:
+        return text[:200] + ('...' if len(text) > 200 else '')
+    
+    # Вычисляем границы сниппета
+    start = max(0, min_pos - context_chars)
+    end = min(len(text), min_pos + len(found_keyword) + context_chars)
+    
+    snippet = text[start:end]
+    
+    # Добавляем многоточия
+    if start > 0:
+        snippet = '...' + snippet
+    if end < len(text):
+        snippet = snippet + '...'
+    
+    return snippet
 
 
 def _search_in_db(db: RAGDatabase, owner_id: int, keywords: list, exclude_mode: bool = False) -> list:
@@ -53,25 +112,21 @@ def _search_in_db(db: RAGDatabase, owner_id: int, keywords: list, exclude_mode: 
         with db.db.connect() as conn:
             with conn.cursor() as cur:
                 if exclude_mode:
-                    # Ищем документы, где НИ ОДИН термин не встречается
-                    # Формируем условия для каждого термина
+                    # Ищем документы, где ни один термин не встречается
                     conditions = []
                     params = [owner_id]
-                    for keyword in keywords:
+                    for kw in keywords:
                         conditions.append("c.text NOT ILIKE %s")
-                        params.append(f'%{keyword}%')
-                    
+                        params.append(f'%{kw}%')
                     where_clause = " AND ".join(conditions)
-                    
                     cur.execute(f"""
-                        SELECT DISTINCT d.id, d.original_filename
-                        FROM documents d
-                        JOIN chunks c ON c.document_id = d.id
-                        WHERE d.owner_id = %s
-                          AND d.is_visible = TRUE
-                          AND {where_clause};
-                    """, params)
-                    
+SELECT DISTINCT d.id, COALESCE(ud.original_filename, d.sha256) AS filename
+FROM user_documents ud
+JOIN documents d ON d.id = ud.document_id
+JOIN chunks c ON c.document_id = d.id
+WHERE ud.user_id = %s AND ud.is_soft_deleted = FALSE
+  AND {where_clause};
+""", params)
                     rows = cur.fetchall()
                     for row in rows:
                         results.append({
@@ -81,35 +136,31 @@ def _search_in_db(db: RAGDatabase, owner_id: int, keywords: list, exclude_mode: 
                             'status': 'no_match'
                         })
                 else:
-                    # Обычный поиск: ищем чанки с совпадениями (простой ILIKE для каждого термина)
-                    # Формируем условия OR для каждого ключевого слова
+                    # Обычный поиск по совпадениям
                     conditions = []
                     params = [owner_id]
-                    for keyword in keywords:
+                    for kw in keywords:
                         conditions.append("c.text ILIKE %s")
-                        params.append(f'%{keyword}%')
-                    
+                        params.append(f'%{kw}%')
                     where_clause = " OR ".join(conditions)
-                    
                     cur.execute(f"""
-                        SELECT 
-                            d.id,
-                            d.original_filename,
-                            d.storage_url,
-                            c.chunk_idx,
-                            c.text
-                        FROM documents d
-                        JOIN chunks c ON c.document_id = d.id
-                        WHERE d.owner_id = %s
-                          AND d.is_visible = TRUE
-                          AND ({where_clause})
-                        ORDER BY d.original_filename, c.chunk_idx
-                        LIMIT 500;
-                    """, params)
-                    
+SELECT 
+    d.id,
+    COALESCE(ud.original_filename, d.sha256) AS filename,
+    ud.user_path,
+    c.chunk_index,
+    c.text
+FROM user_documents ud
+JOIN documents d ON d.id = ud.document_id
+JOIN chunks c ON c.document_id = d.id
+WHERE ud.user_id = %s AND ud.is_soft_deleted = FALSE
+  AND ({where_clause})
+ORDER BY filename, c.chunk_index
+LIMIT 500;
+""", params)
                     rows = cur.fetchall()
                     
-                    # Группируем по файлам
+                    # Группируем по файлам и одновременно собираем per_term
                     file_matches = {}
                     for row in rows:
                         doc_id, filename, storage_url, chunk_idx, text = row
@@ -118,13 +169,17 @@ def _search_in_db(db: RAGDatabase, owner_id: int, keywords: list, exclude_mode: 
                             file_matches[filename] = {
                                 'file': filename,
                                 'storage_url': storage_url,
+                                'filename': filename,   # совместимость для фронта
+                                'source': storage_url,  # ключ группировки в UI
+                                'path': storage_url,    # совместимость
                                 'matches': [],
                                 'match_count': 0,
-                                'doc_id': doc_id
+                                'doc_id': doc_id,
+                                '_per_term': {t: {'count': 0, 'snippets': []} for t in keywords}
                             }
                         
-                        # Создаём сниппет с подсветкой
-                        snippet = text[:300] if len(text) > 300 else text
+                        # Создаём сниппет с контекстом вокруг ключевого слова
+                        snippet = _make_snippet(text, keywords, context_chars=100)
                         
                         file_matches[filename]['matches'].append({
                             'chunk_idx': chunk_idx,
@@ -132,8 +187,42 @@ def _search_in_db(db: RAGDatabase, owner_id: int, keywords: list, exclude_mode: 
                             'text': text[:200]  # ограничиваем для производительности
                         })
                         file_matches[filename]['match_count'] += 1
+
+                        # Пер-термин статистика для UI (по каждому ключу считаем вхождения и берём до 2 сниппетов)
+                        try:
+                            lower_text = text.lower()
+                            for term in keywords:
+                                term_lower = term.lower()
+                                # Считаем вхождения по словоформам: слово + продолжение букв/цифр
+                                pattern = re.compile(r"\b" + re.escape(term_lower) + r"\w*\b", re.IGNORECASE)
+                                matches = pattern.findall(lower_text)
+                                cnt = len(matches)
+                                if cnt > 0:
+                                    entry = file_matches[filename]['_per_term'][term]
+                                    entry['count'] += cnt
+                                    # До двух сниппетов на термин для одного файла
+                                    if len(entry['snippets']) < 2:
+                                        entry['snippets'].append(_make_snippet(text, [term], context_chars=100))
+                        except Exception:
+                            # Не ломаем общий поиск из-за проблем подсчёта
+                            pass
                     
-                    results = list(file_matches.values())
+                    # Преобразуем _per_term в per_term для ответа
+                    results = []
+                    for fm in file_matches.values():
+                        per_term = []
+                        for term, data in fm.get('_per_term', {}).items():
+                            per_term.append({
+                                'term': term,
+                                'count': int(data.get('count', 0)),
+                                'snippets': data.get('snippets', [])
+                            })
+                        # Сортируем по убыванию количества
+                        per_term.sort(key=lambda x: x['count'], reverse=True)
+                        fm['per_term'] = per_term
+                        # Убираем служебное поле
+                        fm.pop('_per_term', None)
+                        results.append(fm)
                     
     except Exception:
         current_app.logger.exception("Ошибка поиска в БД")
@@ -218,6 +307,13 @@ def search():
         
         # Обновляем метрики использования (access_count, last_accessed_at)
         _update_document_access_metrics(db, results)
+        
+        # Сохраняем последние поисковые термины для UI (/ и /view_index)
+        try:
+            files_state = _get_files_state()
+            files_state.set_last_search_terms(','.join(filtered))
+        except Exception:
+            current_app.logger.debug('Не удалось сохранить последние поисковые термины', exc_info=True)
         
         current_app.logger.info(f"Поиск в БД завершён: найдено {len(results)} результатов")
         return jsonify({'results': results})
@@ -605,6 +701,8 @@ def view_index():
         
         terms = [t.strip() for t in q.split(',') if t and t.strip()]
 
+
+
         if show_raw:
             base_text = '\n'.join(metadata) + '\n' + content
         else:
@@ -674,14 +772,17 @@ def view_index():
             if not term:
                 continue
             try:
-                pattern = re.compile(re.escape(term), re.IGNORECASE)
+                # Используем границы слов \b для поиска целых слов и их форм
+                # re.escape защищает от спецсимволов, а \b ищет границы слов
+                pattern = re.compile(r'\b' + re.escape(term) + r'\w*\b', re.IGNORECASE)
                 highlighted = pattern.sub(lambda m: f"<mark>{m.group(0)}</mark>", highlighted)
             except re.error:
                 # Игнорируем некорректный паттерн
                 continue
 
         # Формируем параметры для кнопки переключения режима
-        q_param = f"&q={htmllib.escape(q)}" if q else ""
+        from urllib.parse import quote
+        q_param = f"&q={quote(q)}" if q else ""
         toggle_text = "Показать с подсветкой" if show_raw else "Показать полную структуру"
         toggle_raw = '0' if show_raw else '1'
         

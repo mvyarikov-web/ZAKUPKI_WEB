@@ -1,7 +1,7 @@
 """Blueprint для страниц (index, view)."""
 import os
 from urllib.parse import unquote
-from flask import Blueprint, render_template, jsonify, request, current_app, send_from_directory
+from flask import Blueprint, render_template, jsonify, request, current_app, send_from_directory, g
 from markupsafe import Markup
 from webapp.services.files import allowed_file, is_safe_subpath
 from webapp.services.state import FilesState
@@ -113,6 +113,24 @@ def view_file(filepath):
             g.db = RAGDatabase(dsn)
         return g.db
     
+    def _current_owner_id() -> int:
+        # 1) Пользователь из middleware
+        try:
+            user = getattr(g, 'user', None)
+            if user and getattr(user, 'id', None):
+                return int(user.id)
+        except Exception:
+            pass
+        # 2) Dev/тест: заголовок X-User-ID
+        try:
+            uid = request.headers.get('X-User-ID')
+            if uid and str(uid).isdigit():
+                return int(uid)
+        except Exception:
+            pass
+        # 3) Fallback
+        return 1
+
     try:
         decoded_filepath = unquote(filepath)
         current_app.logger.info(f"Просмотр файла: {decoded_filepath}")
@@ -123,46 +141,41 @@ def view_file(filepath):
         
         # Получаем документ и чанки из БД через RAGDatabase
         db = _get_db()
-        owner_id = 1  # TODO: использовать реального пользователя
+        owner_id = _current_owner_id()
         
         document = None
         chunks = []
         
         with db.db.connect() as conn:
             with conn.cursor() as cur:
-                # Ищем документ по storage_url
-                cur.execute("""
-                    SELECT id, original_filename, status
-                    FROM documents
-                    WHERE storage_url = %s AND owner_id = %s AND is_visible = TRUE
+                # Ищем документ по user_path через связь user_documents
+                cur.execute(
+                    """
+                    SELECT d.id, COALESCE(ud.original_filename, d.sha256) AS filename, 'indexed' AS status
+                    FROM user_documents ud
+                    JOIN documents d ON d.id = ud.document_id
+                    WHERE ud.user_id = %s AND ud.is_soft_deleted = FALSE AND ud.user_path = %s
                     LIMIT 1;
-                """, (decoded_filepath, owner_id))
-                row = cur.fetchone()
-                
-                if not row:
+                    """,
+                    (owner_id, decoded_filepath)
+                )
+                doc_row = cur.fetchone()
+                if not doc_row:
                     current_app.logger.warning(f"Документ не найден в БД: {decoded_filepath}")
-                    return jsonify({'error': 'Документ не найден в индексе. Постройте индекс для этого файла.'}), 404
-                
-                doc_id, filename, status = row
+                    return jsonify({'error': 'Документ не найден в индексе.'}), 404
+                doc_id, filename, status = doc_row
                 document = {'id': doc_id, 'filename': filename, 'status': status}
-                
-                # Проверяем статус документа
-                if status != 'indexed':
-                    return render_template(
-                        'view.html',
-                        title=os.path.basename(decoded_filepath),
-                        content=Markup('<div class="error-message">Документ ещё не проиндексирован</div>'),
-                        keywords=[]
-                    )
-                
                 # Получаем чанки документа
-                cur.execute("""
+                cur.execute(
+                    """
                     SELECT text
                     FROM chunks
                     WHERE document_id = %s
-                    ORDER BY chunk_idx;
-                """, (doc_id,))
-                chunks = [row[0] for row in cur.fetchall()]
+                    ORDER BY chunk_index;
+                    """,
+                    (doc_id,)
+                )
+                chunks = [r[0] for r in cur.fetchall()]
         
         if not chunks:
             current_app.logger.warning(f"Чанки не найдены для документа: {decoded_filepath}")

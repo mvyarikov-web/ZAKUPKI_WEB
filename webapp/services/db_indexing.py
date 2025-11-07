@@ -203,43 +203,30 @@ def find_changed_files(
 
 def index_document_to_db(
     db: RAGDatabase,
-    owner_id: int,
     file_path: str,
     file_info: Dict[str, Any],
     chunk_size_tokens: int = 500,
     chunk_overlap_tokens: int = 50
 ) -> Tuple[int, float]:
-    """
-    Индексирует один документ в БД с измерением времени.
-    
-    Args:
-        db: Подключение к БД
-        owner_id: ID владельца
-        file_path: Путь к файлу
-        file_info: Метаданные файла {'sha256': ..., 'size': ..., 'content_type': ...}
-        chunk_size_tokens: Размер чанка в токенах
-        chunk_overlap_tokens: Перекрытие чанков
-        
-    Returns:
-        Tuple[document_id, indexing_cost_seconds]
+    """Индексирует документ если его ещё нет в таблице `documents`.
+
+    Возвращает ID существующего или нового документа и время индексации.
+    Документ определяется исключительно по sha256.
+    Чанки создаются только если документ новый.
     """
     start_time = time.time()
     
     try:
-        # 1. Проверка существования документа по sha256 (дедупликация на уровне файла)
+        # 1. Проверка существования документа по sha256
         with db.db.connect() as conn:
             with conn.cursor() as cur:
                 cur.execute("""
-                    SELECT id FROM documents
-                    WHERE owner_id = %s AND sha256 = %s AND is_visible = TRUE;
-                """, (owner_id, file_info['sha256']))
-                
-                existing_doc = cur.fetchone()
-                if existing_doc:
-                    # Документ уже проиндексирован, возвращаем существующий ID
+                    SELECT id FROM documents WHERE sha256 = %s;
+                """, (file_info['sha256'],))
+                row = cur.fetchone()
+                if row:
                     indexing_cost = time.time() - start_time
-                    current_app.logger.info(f'Документ {file_path} уже проиндексирован (дедупликация)')
-                    return existing_doc[0], indexing_cost
+                    return row[0], indexing_cost
         
         # 2. Извлекаем текст через общий экстрактор и чанкуем
         content = ""
@@ -274,59 +261,37 @@ def index_document_to_db(
             indexing_cost = time.time() - start_time
             return 0, indexing_cost
         
-        # 4. Добавляем документ в БД
-        # Сохраняем относительный путь (storage_url) для последующего отображения через /view
-        uploads_root = current_app.config.get('UPLOAD_FOLDER')
-        try:
-            if uploads_root:
-                # Если файл лежит в пределах uploads, сохраняем относительный путь
-                abs_file = os.path.abspath(file_path)
-                abs_root = os.path.abspath(uploads_root)
-                if os.path.commonpath([abs_file, abs_root]) == abs_root:
-                    storage_url = os.path.relpath(abs_file, abs_root)
-                else:
-                    storage_url = os.path.basename(file_path)
-            else:
-                storage_url = os.path.basename(file_path)
-        except Exception:
-            storage_url = os.path.basename(file_path)
+        # 4. Добавляем документ (глобально) в БД
         with db.db.connect() as conn:
             with conn.cursor() as cur:
-                cur.execute("""
-                    INSERT INTO documents (
-                        owner_id, original_filename, storage_url, content_type, size_bytes, sha256,
-                        status, uploaded_at, indexed_at, is_visible, access_count, indexing_cost_seconds
-                    ) VALUES (
-                        %s, %s, %s, %s, %s, %s, 'indexed', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, TRUE, 0, %s
-                    )
+                cur.execute(
+                    """
+                    INSERT INTO documents (sha256, size_bytes, mime, parse_status, indexing_cost_seconds)
+                    VALUES (%s, %s, %s, %s, %s)
                     RETURNING id;
-                """, (
-                    owner_id,
-                    os.path.basename(file_path),
-                    storage_url,
-                    file_info.get('content_type', 'text/plain'),
-                    file_info.get('size', 0),
-                    file_info['sha256'],
-                    time.time() - start_time  # предварительная оценка
-                ))
-                
+                    """,
+                    (
+                        file_info['sha256'],
+                        file_info.get('size', 0),
+                        file_info.get('content_type', 'text/plain'),
+                        'indexed',
+                        0.0
+                    )
+                )
                 doc_id = cur.fetchone()[0]
             conn.commit()
         
         # 5. Добавляем чанки в БД
         chunk_data = []
         for idx, chunk in enumerate(chunks):
-            # chunk_document возвращает 'content', а не 'text'
             text = chunk.get('content', chunk.get('text', ''))
             chunk_sha256 = hashlib.sha256(text.encode('utf-8')).hexdigest()
             chunk_data.append({
                 'document_id': doc_id,
-                'owner_id': owner_id,
-                'chunk_idx': idx,
+                'chunk_index': idx,
                 'text': text,
                 'text_sha256': chunk_sha256,
-                'tokens': chunk.get('token_count', chunk.get('tokens', 0)),
-                'embedding': None  # TODO: генерация эмбеддингов
+                'tokens': chunk.get('token_count', chunk.get('tokens', 0))
             })
         
         if chunk_data:
@@ -334,17 +299,21 @@ def index_document_to_db(
                 with conn.cursor() as cur:
                     # Удаляем старые чанки документа
                     cur.execute("DELETE FROM chunks WHERE document_id = %s;", (doc_id,))
-                    
-                    # Вставляем новые чанки
                     from psycopg2.extras import execute_values
                     execute_values(
                         cur,
                         """
-                        INSERT INTO chunks (document_id, owner_id, chunk_idx, text, text_sha256, tokens, created_at)
+                        INSERT INTO chunks (document_id, chunk_index, text, length, created_at)
                         VALUES %s;
                         """,
-                        [(c['document_id'], c['owner_id'], c['chunk_idx'], c['text'], c['text_sha256'], c['tokens'], 'now()') 
-                         for c in chunk_data]
+                        [
+                            (
+                                c['document_id'],
+                                c['chunk_index'],
+                                c['text'],
+                                len(c['text'])
+                            ) for c in chunk_data
+                        ]
                     )
                 conn.commit()
         
@@ -352,14 +321,7 @@ def index_document_to_db(
         indexing_cost = time.time() - start_time
         with db.db.connect() as conn:
             with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    UPDATE documents
-                    SET indexing_cost_seconds = %s
-                    WHERE id = %s;
-                    """,
-                    (indexing_cost, doc_id)
-                )
+                cur.execute("UPDATE documents SET indexing_cost_seconds = %s WHERE id = %s;", (indexing_cost, doc_id))
             conn.commit()
         
         current_app.logger.info(
@@ -563,138 +525,110 @@ def restore_soft_deleted_document(db: RAGDatabase, document_id: int, new_owner_i
         return False
 
 
-def copy_chunks_between_users(db: RAGDatabase, source_doc_id: int, target_doc_id: int) -> int:
-    """
-    Копирует чанки от одного документа к другому (для дедупликации между пользователями).
-    
-    Args:
-        db: Подключение к БД
-        source_doc_id: ID документа-источника
-        target_doc_id: ID документа-назначения
-        
-    Returns:
-        Количество скопированных чанков
+def ensure_user_binding(
+    db: RAGDatabase,
+    user_id: int,
+    document_id: int,
+    original_filename: str,
+    user_path: str
+) -> Tuple[bool, str]:
+    """Создаёт или обновляет связь пользователя с документом.
+
+    Возвращает (is_new_binding, message).
+    Если была soft-deleted запись – восстанавливает.
     """
     try:
         with db.db.connect() as conn:
             with conn.cursor() as cur:
-                # Копируем чанки, заполняя owner_id целевого документа и сохраняя text_sha256/tokens, если они есть
                 cur.execute(
                     """
-                    INSERT INTO chunks (document_id, owner_id, chunk_idx, text, text_sha256, tokens)
-                    SELECT %s AS document_id,
-                           d.owner_id AS owner_id,
-                           c.chunk_idx,
-                           c.text,
-                           c.text_sha256,
-                           c.tokens
-                    FROM chunks c
-                    JOIN documents d ON d.id = %s
-                    WHERE c.document_id = %s;
+                    SELECT is_soft_deleted FROM user_documents
+                    WHERE user_id = %s AND document_id = %s;
                     """,
-                    (target_doc_id, target_doc_id, source_doc_id)
+                    (user_id, document_id)
                 )
-                count = cur.rowcount
-            conn.commit()
-        current_app.logger.info(f'Скопировано {count} чанков: doc#{source_doc_id} → doc#{target_doc_id}')
-        return count
+                row = cur.fetchone()
+                if row is None:
+                    cur.execute(
+                        """
+                        INSERT INTO user_documents (user_id, document_id, original_filename, user_path)
+                        VALUES (%s, %s, %s, %s);
+                        """,
+                        (user_id, document_id, original_filename, user_path)
+                    )
+                    conn.commit()
+                    return True, 'Связь создана'
+                elif row[0]:  # была soft-deleted
+                    cur.execute(
+                        """
+                        UPDATE user_documents
+                        SET is_soft_deleted = FALSE, original_filename = %s, user_path = %s
+                        WHERE user_id = %s AND document_id = %s;
+                        """,
+                        (original_filename, user_path, user_id, document_id)
+                    )
+                    conn.commit()
+                    return False, 'Связь восстановлена'
+                else:
+                    return False, 'Связь уже существует'
     except Exception:
-        current_app.logger.exception(f'Ошибка копирования чанков: doc#{source_doc_id} → doc#{target_doc_id}')
-        return 0
+        current_app.logger.exception('Ошибка ensure_user_binding')
+        return False, 'Ошибка связывания'
 
 
 def handle_duplicate_upload(
     db: RAGDatabase,
-    owner_id: int,
+    user_id: int,
     file_path: str,
     sha256_hash: str,
     chunk_size_tokens: int = 500,
     chunk_overlap_tokens: int = 50
 ) -> Tuple[int, str, bool]:
-    """
-    Обрабатывает загрузку дубликата файла (дедупликация).
-    
-    Сценарии:
-    1. Документ с таким sha256 уже существует у того же пользователя и видим → пропускаем
-    2. Документ мягко удалён у того же пользователя → восстанавливаем
-    3. Документ существует у другого пользователя → создаём новую запись, копируем чанки
-    4. Документа нет → индексируем как обычно
-    
-    Args:
-        db: Подключение к БД
-        owner_id: ID владельца
-        file_path: Путь к файлу
-        sha256_hash: SHA256 хеш файла
-        chunk_size_tokens: Размер чанка в токенах
-        chunk_overlap_tokens: Перекрытие чанков в токенах
-        
-    Returns:
-        Tuple (document_id, message, is_duplicate)
+    """Глобальный дедуп: один документ на sha256, видимость через user_documents.
+
+    Возвращает (document_id, message, is_duplicate).
     """
     filename = os.path.basename(file_path)
-    
-    # Проверяем существование документа
-    existing_doc = check_document_exists_by_hash(db, sha256_hash)
-    
-    if not existing_doc:
-        # Сценарий 4: документа нет → индексируем обычным образом
+
+    # Относительный путь для user_path (в пределах uploads)
+    uploads_root = current_app.config.get('UPLOAD_FOLDER')
+    try:
+        if uploads_root:
+            abs_file = os.path.abspath(file_path)
+            abs_root = os.path.abspath(uploads_root)
+            if os.path.commonpath([abs_file, abs_root]) == abs_root:
+                user_path = os.path.relpath(abs_file, abs_root)
+            else:
+                user_path = os.path.basename(file_path)
+        else:
+            user_path = os.path.basename(file_path)
+    except Exception:
+        user_path = os.path.basename(file_path)
+
+    # Проверяем существование глобального документа
+    with db.db.connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM documents WHERE sha256 = %s;", (sha256_hash,))
+            row = cur.fetchone()
+            doc_id = row[0] if row else None
+
+    if not doc_id:
+        # Новый документ: индексируем (создаём документ + чанки)
         file_info = {
             'sha256': sha256_hash,
-            'mtime': os.path.getmtime(file_path),
             'size': os.path.getsize(file_path),
-            'content_type': 'text/plain'  # TODO: определение MIME
+            'content_type': 'text/plain'
         }
         doc_id, _ = index_document_to_db(
-            db, owner_id, file_path, file_info,
-            chunk_size_tokens, chunk_overlap_tokens
+            db,
+            file_path,
+            file_info,
+            chunk_size_tokens,
+            chunk_overlap_tokens
         )
-        return doc_id, 'Новый документ проиндексирован', False
-    
-    # Документ существует
-    if existing_doc['owner_id'] == owner_id:
-        if existing_doc['is_visible']:
-            # Сценарий 1: уже существует у пользователя и видим
-            current_app.logger.info(f'Дубликат пропущен: {filename} (doc#{existing_doc["id"]})')
-            return existing_doc['id'], 'Документ уже существует (пропущен)', True
-        else:
-            # Сценарий 2: мягко удалён у того же пользователя → восстанавливаем
-            if restore_soft_deleted_document(db, existing_doc['id'], owner_id, filename):
-                return existing_doc['id'], 'Документ восстановлен из архива', True
-            else:
-                return -1, 'Ошибка восстановления документа', False
-    else:
-        # Сценарий 3: существует у другого пользователя → создаём новую запись, копируем чанки
-        try:
-            # Рассчитываем storage_url (относительный путь в пределах uploads)
-            uploads_root = current_app.config.get('UPLOAD_FOLDER')
-            try:
-                if uploads_root:
-                    abs_file = os.path.abspath(file_path)
-                    abs_root = os.path.abspath(uploads_root)
-                    if os.path.commonpath([abs_file, abs_root]) == abs_root:
-                        storage_url = os.path.relpath(abs_file, abs_root)
-                    else:
-                        storage_url = os.path.basename(file_path)
-                else:
-                    storage_url = os.path.basename(file_path)
-            except Exception:
-                storage_url = os.path.basename(file_path)
-            with db.db.connect() as conn:
-                with conn.cursor() as cur:
-                    cur.execute("""
-                        INSERT INTO documents (owner_id, original_filename, storage_url, sha256, is_visible, indexing_cost_seconds)
-                        VALUES (%s, %s, %s, %s, TRUE, 0.0)
-                        RETURNING id;
-                    """, (owner_id, filename, storage_url, sha256_hash))
-                    new_doc_id = cur.fetchone()[0]
-                conn.commit()
-            
-            # Копируем чанки от существующего документа
-            count = copy_chunks_between_users(db, existing_doc['id'], new_doc_id)
-            msg = f'Дубликат добавлен для нового пользователя ({count} чанков скопировано)'
-            current_app.logger.info(f'{msg}: doc#{existing_doc["id"]} → doc#{new_doc_id}')
-            return new_doc_id, msg, True
-            
-        except Exception as e:
-            current_app.logger.exception(f'Ошибка создания дубликата для owner_id={owner_id}')
-            return -1, f'Ошибка дедупликации: {e}', False
+        binding_new, bind_msg = ensure_user_binding(db, user_id, doc_id, filename, user_path)
+        return doc_id, f'Документ создан; {bind_msg}', False
+
+    # Документ существует глобально → создаём/обновляем связь
+    binding_new, bind_msg = ensure_user_binding(db, user_id, doc_id, filename, user_path)
+    return doc_id, bind_msg, True

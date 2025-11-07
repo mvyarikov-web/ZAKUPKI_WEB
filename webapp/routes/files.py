@@ -104,12 +104,12 @@ def upload_files():
                 if not config.uploads_disabled:
                     try:
                         db = _get_db()
-                        owner_id = _get_current_user_id()
+                        user_id = _get_current_user_id()
                         sha256_hash = calculate_file_hash(file_path)
                         
                         if sha256_hash:
                             doc_id, message, is_duplicate = handle_duplicate_upload(
-                                db, owner_id, file_path, sha256_hash,
+                                db, user_id, file_path, sha256_hash,
                                 config.chunk_size_tokens, config.chunk_overlap_tokens
                             )
                             
