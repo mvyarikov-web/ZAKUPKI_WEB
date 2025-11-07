@@ -216,18 +216,12 @@ def _direct_analyze_without_rag(
         api_keys_mgr = get_api_keys_manager()
         default_api_key = (api_keys_mgr.get_key("openai") if api_keys_mgr else None) or current_app.config.get("OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY")
 
-        # Тексты документов из индекса (если не подавляем)
-        from webapp.routes.ai_analysis import _extract_text_from_index_for_files
-        from webapp.services.indexing import get_index_path
-        index_folder = current_app.config.get("INDEX_FOLDER")
-        index_path = get_index_path(index_folder) if index_folder else None
+        # DB-first: файловый индекс отключён. В режиме БД прямой анализ без RAG не предоставляет тексты из индекса.
+        if current_app.config.get("use_database", False) and not suppress_documents:
+            return jsonify({"success": False, "message": "Файловый индекс отключён (DB-first). Используйте RAG-поток или загрузите тексты вручную."}), 400
 
+        # Legacy-путь: без БД — прямой анализ без RAG не читает индекс, чтобы не зависеть от _search_index.txt.
         combined_docs = ""
-        if not suppress_documents and index_path and os.path.exists(index_path):
-            combined_docs = _extract_text_from_index_for_files(file_paths, index_path)
-
-        if (not combined_docs or not combined_docs.strip()) and not suppress_documents:
-            return jsonify({"success": False, "message": "Не удалось извлечь текст из файлов. Постройте индекс через кнопку «Построить индекс»."}), 400
 
         cfg = _load_models_config()
         model_config = None

@@ -12,7 +12,12 @@ def register_error_handlers(app):
     @app.errorhandler(413)
     def request_entity_too_large(e):
         """Обработчик ошибки слишком большого файла."""
-        app.logger.warning('413 Request Entity Too Large')
+        try:
+            received = request.content_length or 0
+            limit = int(app.config.get('MAX_CONTENT_LENGTH') or 0)
+            app.logger.warning('413 Request Entity Too Large: received=%dB, limit=%dB', received, limit)
+        except Exception:
+            app.logger.warning('413 Request Entity Too Large')
         if request.is_json or request.path.startswith('/api'):
             return jsonify({'error': 'Файл слишком большой. Лимит 100MB.'}), 413
         

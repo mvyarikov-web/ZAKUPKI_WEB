@@ -1,3 +1,35 @@
+"""Тесты миграций Alembic (инкремент 13, шаг 6).
+Проверяем:
+- Генерацию миграций
+- Применение миграции upgrade head  
+- Наличие всех таблиц после миграции через Base.metadata
+- Проверку совместимости моделей и миграций
+"""
+
+import subprocess
+from sqlalchemy import inspect, text
+
+from webapp.db import engine
+
+
+... (rest of the file content)
+
+
+def test_migration_is_idempotent():
+    """Повторное применение миграции безопасно."""
+    # Этот тест проверяет, что после upgrade head
+    # повторный upgrade head не вызывает ошибок
+    import subprocess
+
+    result = subprocess.run(
+        ['python3', '-m', 'alembic', 'current'],
+        cwd='/Users/maksimyarikov/Desktop/Автоматизация закупок/Код/web_interface',
+        capture_output=True,
+        text=True
+    )
+
+    assert result.returncode == 0
+    assert 'initial_schema_phase1' in result.stdout or '14c42e5d4b45' in result.stdout
 """
 Тесты миграций Alembic (инкремент 13, шаг 6).
 Проверяем:

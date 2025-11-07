@@ -2,7 +2,6 @@
 import os
 from flask import Blueprint, request, jsonify, current_app, render_template
 from webapp.services.gpt_analysis import GPTAnalysisService, PromptManager
-from webapp.services.indexing import get_index_path
 from webapp.services.state import FilesState
 from document_processor.core import DocumentProcessor
 
@@ -48,21 +47,14 @@ def get_text_size():
                 'message': 'Не выбраны файлы для анализа'
             }), 400
         
-        # Собираем текст из индекса
-        index_folder = current_app.config.get('INDEX_FOLDER')
-        index_path = get_index_path(index_folder) if index_folder else None
+        # В DB-first режимах файловый индекс отключён
+        if current_app.config.get('use_database', False):
+            return jsonify({'success': False, 'message': 'Файловый индекс отключён (DB-first).'}), 400
 
-        if not index_path or not os.path.exists(index_path):
-            return jsonify({
-                'success': False,
-                'message': 'Сводный индекс не найден. Постройте индекс через кнопку «Построить индекс».'
-            }), 400
-
-        combined_text = _extract_text_from_index_for_files(file_paths, index_path)
-
-        if not combined_text:
-            upload_folder = current_app.config['UPLOAD_FOLDER']
-            combined_text = _extract_text_from_files(file_paths, upload_folder)
+        # В legacy-режиме извлекаем текст напрямую из файлов
+        combined_text = None
+        upload_folder = current_app.config['UPLOAD_FOLDER']
+        combined_text = _extract_text_from_files(file_paths, upload_folder)
         
         if not combined_text:
             return jsonify({
@@ -137,21 +129,15 @@ def analyze():
         
         current_app.logger.info(f'AI анализ: получено {len(file_paths)} файлов')
         
-        # Собираем текст из индекса (FR-003: источник данных — только индекс)
-        index_folder = current_app.config.get('INDEX_FOLDER')
-        index_path = get_index_path(index_folder) if index_folder else None
-
-        if not index_path or not os.path.exists(index_path):
-            return jsonify({
-                'success': False,
-                'message': 'Сводный индекс не найден. Постройте индекс через кнопку «Построить индекс».'
-            }), 400
+        # В DB-first режимах файловый индекс отключён
+        if current_app.config.get('use_database', False):
+            return jsonify({'success': False, 'message': 'Файловый индекс отключён (DB-first).'}), 400
 
         # Если передан override_text (из окна оптимизации) — используем его
         if isinstance(override_text, str) and override_text.strip():
             combined_text = override_text
         else:
-            combined_text = _extract_text_from_index_for_files(file_paths, index_path)
+            combined_text = None  # DB-first: не извлекаем из файлового индекса
 
         # Безопасный фолбэк: если по какой-то причине текста нет в индексе (не должен происходить при валидном индексе),
         # пробуем старый способ извлечения из исходных файлов. Это не блокирует UI и сработает только точечно.
@@ -219,22 +205,27 @@ def get_texts():
         if not file_paths:
             return jsonify({'success': False, 'message': 'Не выбраны файлы'}), 400
 
-        index_folder = current_app.config.get('INDEX_FOLDER')
-        index_path = get_index_path(index_folder) if index_folder else None
-        if not index_path or not os.path.exists(index_path):
-            return jsonify({'success': False, 'message': 'Сводный индекс не найден'}), 400
+        if current_app.config.get('use_database', False):
+            return jsonify({'success': False, 'message': 'Файловый индекс отключён (DB-first).'}), 400
 
-        # Извлечём тексты по каждому пути отдельно
+        # Legacy-режим: извлекаем тексты напрямую из исходных файлов
         docs = []
         try:
-            with open(index_path, 'r', encoding='utf-8', errors='ignore') as f:
-                content = f.read()
+            upload_folder = current_app.config['UPLOAD_FOLDER']
+            processor = DocumentProcessor()
+            for rel_path in file_paths:
+                try:
+                    full_path = os.path.join(upload_folder, rel_path)
+                    if not os.path.exists(full_path):
+                        text = ''
+                    else:
+                        text = processor.extract_text(full_path) or ''
+                except Exception:
+                    current_app.logger.debug('Ошибка извлечения текста для %s', rel_path, exc_info=True)
+                    text = ''
+                docs.append({'path': rel_path, 'text': text, 'length': len(text)})
         except Exception:
-            return jsonify({'success': False, 'message': 'Не удалось прочитать индекс'}), 500
-
-        for rel_path in file_paths:
-            text = _extract_single_from_index(content, rel_path)
-            docs.append({'path': rel_path, 'text': text or '', 'length': len(text or '')})
+            return jsonify({'success': False, 'message': 'Не удалось извлечь тексты'}), 500
 
         return jsonify({'success': True, 'docs': docs}), 200
     except Exception as e:

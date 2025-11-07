@@ -143,7 +143,7 @@ def log_token_usage(
                         cost_rub=kopecks(cost_info['cost_rub']),
                         input_cost_usd=cents(cost_info['input_cost_usd']),
                         output_cost_usd=cents(cost_info['output_cost_usd']),
-                        metadata=metadata or {},
+                        metadata_json=metadata or {},
                     )
                     db.add(obj)
                     db.commit()
@@ -229,7 +229,7 @@ def get_token_stats(
                             'cost_rub': (r.cost_rub or 0) / 100.0,
                             'input_cost_usd': (r.input_cost_usd or 0) / 100.0,
                             'output_cost_usd': (r.output_cost_usd or 0) / 100.0,
-                            'metadata': r.metadata or {},
+                            'metadata': r.metadata_json or {},
                         }
                         records.append(rec)
                 finally:

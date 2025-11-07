@@ -176,7 +176,9 @@ def find_changed_files(
                     FROM documents
                     WHERE owner_id = %s AND is_visible = TRUE;
                 """, (owner_id,))
-                existing_hashes = {row[0]: row[1] for row in cur.fetchall() if row[0]}
+                rows = cur.fetchall()
+                existing_hashes = {row[0]: row[1] for row in rows if row[0]}
+                current_app.logger.info(f'[CHANGED] В БД найдено {len(existing_hashes)} документов: {list(existing_hashes.keys())[:3]}...')
         
         # Сравниваем хеши
         for file_path, file_info in current_files.items():
@@ -242,7 +244,9 @@ def index_document_to_db(
         # 2. Извлекаем текст через общий экстрактор и чанкуем
         content = ""
         try:
+            current_app.logger.info(f'[EXTRACT] Вызов extract_text для: {file_path}, exists={os.path.exists(file_path)}')
             content = extract_text(file_path) or ""
+            current_app.logger.info(f'[EXTRACT] extract_text вернул {len(content)} символов')
         except Exception as e:
             current_app.logger.warning(f'Ошибка извлечения текста {file_path}: {e}')
         
@@ -256,12 +260,14 @@ def index_document_to_db(
             return 0, indexing_cost
         
     # 3. Чанкуем текст
+        current_app.logger.info(f'[CHUNK] Начинаем чанкование для {file_path}, size_tokens={chunk_size_tokens}')
         chunks = chunk_document(
             content,
             file_path=file_path,
             chunk_size_tokens=chunk_size_tokens,
             overlap_sentences=2  # TODO: использовать chunk_overlap_tokens
         )
+        current_app.logger.info(f'[CHUNK] Получено {len(chunks)} чанков')
         
         if not chunks:
             current_app.logger.info(f'Чанкование вернуло 0 чанков: {file_path}')
@@ -293,12 +299,6 @@ def index_document_to_db(
                     ) VALUES (
                         %s, %s, %s, %s, %s, %s, 'indexed', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, TRUE, 0, %s
                     )
-                    ON CONFLICT (owner_id, sha256) WHERE is_visible = TRUE
-                    DO UPDATE SET
-                        original_filename = EXCLUDED.original_filename,
-                        storage_url = EXCLUDED.storage_url,
-                        indexed_at = CURRENT_TIMESTAMP,
-                        indexing_cost_seconds = EXCLUDED.indexing_cost_seconds
                     RETURNING id;
                 """, (
                     owner_id,
@@ -316,14 +316,16 @@ def index_document_to_db(
         # 5. Добавляем чанки в БД
         chunk_data = []
         for idx, chunk in enumerate(chunks):
-            chunk_sha256 = hashlib.sha256(chunk['text'].encode('utf-8')).hexdigest()
+            # chunk_document возвращает 'content', а не 'text'
+            text = chunk.get('content', chunk.get('text', ''))
+            chunk_sha256 = hashlib.sha256(text.encode('utf-8')).hexdigest()
             chunk_data.append({
                 'document_id': doc_id,
                 'owner_id': owner_id,
                 'chunk_idx': idx,
-                'text': chunk['text'],
+                'text': text,
                 'text_sha256': chunk_sha256,
-                'tokens': chunk.get('tokens', 0),
+                'tokens': chunk.get('token_count', chunk.get('tokens', 0)),
                 'embedding': None  # TODO: генерация эмбеддингов
             })
         
@@ -338,10 +340,10 @@ def index_document_to_db(
                     execute_values(
                         cur,
                         """
-                        INSERT INTO chunks (document_id, owner_id, chunk_idx, text, text_sha256, tokens)
+                        INSERT INTO chunks (document_id, owner_id, chunk_idx, text, text_sha256, tokens, created_at)
                         VALUES %s;
                         """,
-                        [(c['document_id'], c['owner_id'], c['chunk_idx'], c['text'], c['text_sha256'], c['tokens']) 
+                        [(c['document_id'], c['owner_id'], c['chunk_idx'], c['text'], c['text_sha256'], c['tokens'], 'now()') 
                          for c in chunk_data]
                     )
                 conn.commit()
@@ -361,7 +363,7 @@ def index_document_to_db(
             conn.commit()
         
         current_app.logger.info(
-            f'Документ {file_path} проиндексирован: {len(chunks)} чанков, {indexing_cost:.2f}с'
+            f'Документ {file_path} проиндексирован: ID={doc_id}, {len(chunks)} чанков, {indexing_cost:.2f}с'
         )
         return doc_id, indexing_cost
         
@@ -376,7 +378,8 @@ def build_db_index(
     owner_id: int,
     folder_path: str,
     chunk_size_tokens: int = 500,
-    chunk_overlap_tokens: int = 50
+    chunk_overlap_tokens: int = 50,
+    force_rebuild: bool = False
 ) -> Tuple[bool, str, Dict[str, int]]:
     """
     Инкрементальная индексация папки в БД.
@@ -384,9 +387,12 @@ def build_db_index(
     Алгоритм:
     1. Вычисляем root_hash текущей папки
     2. Сравниваем с сохранённым в folder_index_status
-    3. Если совпадает — пропускаем индексацию
+    3. Если совпадает И force_rebuild=False — пропускаем индексацию
     4. Иначе определяем изменённые файлы и индексируем только их
     5. Обновляем folder_index_status
+    
+    Args:
+        force_rebuild: Если True, игнорирует root_hash и пересобирает индекс
     
     Args:
         db: Подключение к БД
@@ -404,11 +410,27 @@ def build_db_index(
         if not current_root_hash:
             return False, f'Не удалось вычислить root_hash для {folder_path}', {}
         
-        # 2. Проверяем статус индексации
+        # 2. Проверяем статус индексации и количество документов
         status = get_folder_index_status(db, owner_id, folder_path)
-        if status and status['root_hash'] == current_root_hash:
-            current_app.logger.info(f'Папка {folder_path} не изменилась (root_hash совпадает), пропускаем индексацию')
+        
+        # Проверяем наличие документов в БД для этого владельца
+        with db.db.connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT COUNT(*) FROM documents
+                    WHERE owner_id = %s AND is_visible = TRUE;
+                """, (owner_id,))
+                docs_count = cur.fetchone()[0]
+        
+        # Если есть статус, root_hash совпадает, НЕ force_rebuild И есть документы — пропускаем
+        if not force_rebuild and status and status['root_hash'] == current_root_hash and docs_count > 0:
+            current_app.logger.info(f'Папка {folder_path} не изменилась (root_hash совпадает, документов: {docs_count}), пропускаем индексацию')
             return True, 'Индексация не требуется (папка не изменилась)', {}
+        
+        if force_rebuild:
+            current_app.logger.info(f'Принудительная пересборка индекса для {folder_path}')
+        if docs_count == 0:
+            current_app.logger.info(f'Документов нет в БД, принудительная индексация папки {folder_path}')
         
         # 3. Собираем информацию о всех файлах в папке
         current_files = {}
@@ -433,6 +455,7 @@ def build_db_index(
         
         # 4. Определяем изменённые файлы
         changed_files = find_changed_files(db, owner_id, folder_path, current_files)
+        current_app.logger.info(f'[CHANGED] Обнаружено {len(changed_files)} изменённых файлов из {len(current_files)}')
         
         if not changed_files:
             # Файлы не изменились, но root_hash изменился (возможно, переименование/перемещение)
@@ -616,8 +639,10 @@ def handle_duplicate_upload(
     if not existing_doc:
         # Сценарий 4: документа нет → индексируем обычным образом
         file_info = {
+            'sha256': sha256_hash,
             'mtime': os.path.getmtime(file_path),
-            'size': os.path.getsize(file_path)
+            'size': os.path.getsize(file_path),
+            'content_type': 'text/plain'  # TODO: определение MIME
         }
         doc_id, _ = index_document_to_db(
             db, owner_id, file_path, file_info,

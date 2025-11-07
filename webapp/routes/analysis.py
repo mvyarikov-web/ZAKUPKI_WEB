@@ -1,8 +1,10 @@
-"""Blueprint для модуля анализа текста."""
+"""Blueprint для модуля анализа текста (DB-first).
+
+Примечание: анализ по файловому индексу (_search_index.txt) отключён в DB-first.
+"""
 import os
 from flask import Blueprint, request, jsonify, current_app, send_file
-from webapp.services.analysis import run_analysis, save_analysis
-from webapp.services.indexing import get_index_path
+from webapp.services.analysis import save_analysis
 
 
 analysis_bp = Blueprint('analysis', __name__, url_prefix='/analysis')
@@ -10,37 +12,18 @@ analysis_bp = Blueprint('analysis', __name__, url_prefix='/analysis')
 
 @analysis_bp.route('/run', methods=['POST'])
 def run_analysis_endpoint():
-    """
-    Запускает анализ сводного индекса.
-    
-    Returns:
-        JSON с извлечёнными данными или ошибкой
+    """Запуск анализа.
+
+    В DB-first режиме файловый анализ _search_index.txt недоступен.
     """
     try:
-        # Получаем путь к индексу
-        index_folder = current_app.config['INDEX_FOLDER']
-        index_path = get_index_path(index_folder)
-        
-        if not os.path.exists(index_path):
+        if current_app.config.get('use_database', False):
             return jsonify({
                 'success': False,
-                'message': 'Индекс не найден. Сначала создайте индекс с помощью кнопки "Построить индекс".'
-            }), 404
-        
-        # Запускаем анализ
-        success, message, result = run_analysis(index_path)
-        
-        if success:
-            return jsonify({
-                'success': True,
-                'message': message,
-                'data': result
-            }), 200
-        else:
-            return jsonify({
-                'success': False,
-                'message': message
-            }), 500
+                'message': 'Анализ по файловому индексу отключён (DB-first).'
+            }), 400
+        # Legacy-фолбэк не реализуем в DB-first ветке
+        return jsonify({'success': False, 'message': 'Функция недоступна в текущей конфигурации'}), 400
             
     except Exception as e:
         current_app.logger.exception(f'Ошибка в /analysis/run: {e}')
@@ -132,12 +115,12 @@ def get_analysis_status():
     """
     try:
         index_folder = current_app.config['INDEX_FOLDER']
-        index_path = get_index_path(index_folder)
         json_path = os.path.join(index_folder, 'analysis_result.json')
         report_path = os.path.join(index_folder, 'analysis_report.html')
         
         return jsonify({
-            'index_exists': os.path.exists(index_path),
+            'mode': 'db-first' if current_app.config.get('use_database', False) else 'legacy',
+            'index_exists': False,  # файловый индекс не используется в DB-first
             'analysis_exists': os.path.exists(json_path),
             'report_exists': os.path.exists(report_path)
         }), 200

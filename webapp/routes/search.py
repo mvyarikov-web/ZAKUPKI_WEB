@@ -7,8 +7,7 @@ from datetime import datetime, timedelta
 from flask import Blueprint, request, jsonify, current_app, Response, g
 from webapp.services.files import allowed_file
 from webapp.services.state import FilesState
-from webapp.services.indexing import get_index_path
-from webapp.services.db_indexing import build_db_index
+from webapp.services.db_indexing import build_db_index, get_folder_index_status
 from webapp.models.rag_models import RAGDatabase
 from webapp.config.config_service import get_config
 
@@ -159,8 +158,6 @@ def _update_document_access_metrics(db: RAGDatabase, results: list) -> None:
         current_app.logger.warning(f"Не удалось обновить метрики использования: {e}")
 
 
-    conn.commit()
-
 
 def _get_files_state():
     """Получить экземпляр FilesState для текущего приложения."""
@@ -214,51 +211,7 @@ def search():
         return jsonify({'error': f'Ошибка поиска: {str(e)}'}), 500
 
 
-def _parse_index_groups(index_path: str) -> dict:
-    """Парсит индекс и извлекает информацию о группах.
-    
-    Returns:
-        {
-            'fast': {'files': 50, 'completed': True, 'size_bytes': 12345},
-            'medium': {'files': 30, 'completed': False, 'size_bytes': 0},
-            'slow': {'files': 10, 'completed': False, 'size_bytes': 0}
-        }
-    """
-    groups_info = {}
-    
-    try:
-        with open(index_path, 'r', encoding='utf-8') as f:
-            content = f.read()
-        
-        for group_name in ['fast', 'medium', 'slow']:
-            # Ищем заголовок группы
-            group_pattern = rf'\[ГРУППА: {group_name.upper()}\].*?Файлов: (\d+).*?Статус: ([^\n]+)'
-            match = re.search(group_pattern, content, re.IGNORECASE | re.DOTALL)
-            
-            if match:
-                files_count = int(match.group(1))
-                status_text = match.group(2).strip()
-                completed = '✅' in status_text or 'завершено' in status_text.lower()
-                
-                # Вычисляем размер контента группы
-                begin_marker = f'<!-- BEGIN_{group_name.upper()} -->'
-                end_marker = f'<!-- END_{group_name.upper()} -->'
-                group_content = re.search(
-                    re.escape(begin_marker) + r'(.*?)' + re.escape(end_marker),
-                    content,
-                    re.DOTALL
-                )
-                size_bytes = len(group_content.group(1).strip()) if group_content else 0
-                
-                groups_info[group_name] = {
-                    'files': files_count,
-                    'completed': completed,
-                    'size_bytes': size_bytes
-                }
-    except Exception as e:
-        current_app.logger.warning(f"Ошибка парсинга групп индекса: {e}")
-    
-    return groups_info
+# Удалено: парсинг файлового индекса (_search_index.txt) — legacy
 
 
 @search_bp.route('/build_index', methods=['POST'])
@@ -280,12 +233,16 @@ def build_index_route():
         db = _get_db()
         owner_id = _get_current_user_id()
         
+        # Получаем параметр force_rebuild из JSON-запроса
+        force_rebuild = request.json.get('force_rebuild', False) if request.is_json else False
+        
         success, message, stats = build_db_index(
             db=db,
             owner_id=owner_id,
             folder_path=uploads,
             chunk_size_tokens=config.chunk_size_tokens,
-            chunk_overlap_tokens=config.chunk_overlap_tokens
+            chunk_overlap_tokens=config.chunk_overlap_tokens,
+            force_rebuild=force_rebuild
         )
         
         if not success:
@@ -319,20 +276,18 @@ def index_status():
         - groups_info: {fast: {files: int, completed: bool}, ...}
     """
     try:
-        # Проверяем наличие progress status файла (increment-013/014)
+        # 1) Телеметрия прогресса (legacy status.json для UI)
         index_folder = current_app.config.get('INDEX_FOLDER')
         status_json_path = os.path.join(index_folder, 'status.json') if index_folder else None
         progress_data = None
-        
         if status_json_path and os.path.exists(status_json_path):
             try:
-                import json
                 with open(status_json_path, 'r', encoding='utf-8') as f:
                     progress_data = json.load(f)
             except Exception as e:
-                current_app.logger.debug("Не удалось прочитать status.json: %s", e)
-        
-        # Если в текущей папке uploads нет поддерживаемых файлов, считаем индекс отсутствующим
+                current_app.logger.debug('Не удалось прочитать status.json: %s', e)
+
+        # 2) Есть ли вообще поддерживаемые файлы в uploads
         uploads = current_app.config.get('UPLOAD_FOLDER', 'uploads')
         has_files = False
         if os.path.exists(uploads):
@@ -345,80 +300,76 @@ def index_status():
                         break
                 if has_files:
                     break
-        
-        if not has_files:
-            response = {'exists': False}
-            if progress_data:
-                response['progress'] = progress_data
-            return jsonify(response)
 
-        # Резолвим актуальный индекс (index/ или uploads/)
-        idx_primary = get_index_path(current_app.config['INDEX_FOLDER'])
-        idx_uploads = os.path.join(uploads, '_search_index.txt')
-        idx = idx_primary if os.path.exists(idx_primary) else (idx_uploads if os.path.exists(idx_uploads) else idx_primary)
-        exists = os.path.exists(idx)
-        
-        if not exists:
-            response = {'exists': False, 'index_exists': False}
+        # Если нет файлов — индекса как такового быть не может
+        if not has_files:
+            resp = {'exists': False, 'index_exists': False, 'status': 'idle'}
             if progress_data:
-                response['progress'] = progress_data
-                # Добавляем статусы из progress_data на верхний уровень
-                response['status'] = progress_data.get('status', 'idle')
-                response['group_status'] = progress_data.get('group_status', {})
-                response['current_group'] = progress_data.get('current_group')
-            else:
-                response['status'] = 'idle'
-            return jsonify(response)
-        
-        size = os.path.getsize(idx)
-        mtime = datetime.fromtimestamp(os.path.getmtime(idx)).isoformat()
-        
-        # Подсчёт записей (количество разделителей ===)
+                resp['progress'] = progress_data
+                # Совместимость: отдаём group_status/group_times, если есть
+                if isinstance(progress_data, dict):
+                    if 'group_status' in progress_data:
+                        resp['group_status'] = progress_data.get('group_status')
+                    if 'group_times' in progress_data:
+                        resp['group_times'] = progress_data.get('group_times')
+            return jsonify(resp)
+
+        # 3) Статус из БД (increment-015): uploads как tracked folder
+        db = _get_db()
+        owner_id = _get_current_user_id()
         try:
-            with open(idx, 'r', encoding='utf-8', errors='ignore') as f:
-                entries = sum(1 for line in f if line.strip().startswith('====='))
+            db_status = get_folder_index_status(db, owner_id, uploads)
         except Exception:
-            entries = None
-        
+            current_app.logger.debug('Не удалось получить статус из БД для /index_status', exc_info=True)
+            db_status = None
+
+        # 4) Количество документов в БД для владельца (используем как entries)
+        docs_count = 0
+        try:
+            with db.db.connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT COUNT(*) FROM documents
+                        WHERE owner_id = %s AND is_visible = TRUE;
+                        """,
+                        (owner_id,)
+                    )
+                    row = cur.fetchone()
+                    if row and isinstance(row[0], (int,)):
+                        docs_count = int(row[0])
+        except Exception:
+            # При ошибке подключения к БД считаем 0 (поведение по умолчанию)
+            docs_count = 0
+
+        # 5) Формируем ответ (DB-first) с совместимостью полей
         response = {
-            'exists': True,
-            'index_exists': True,
-            'index_size': size,
-            'size': size,
-            'mtime': mtime,
-            'entries': entries
+            'exists': docs_count > 0,
+            'index_exists': docs_count > 0,  # совместимость с legacy тестами
+            'entries': docs_count,           # map на количество документов в БД
+            'db': {
+                'documents': docs_count,
+                'last_indexed_at': (db_status or {}).get('last_indexed_at').isoformat() if (db_status and db_status.get('last_indexed_at')) else None,
+                'root_hash': (db_status or {}).get('root_hash')
+            }
         }
-        
-        # Парсим группы из индекса
-        groups_info = _parse_index_groups(idx) if exists else {}
-        if groups_info:
-            response['groups_info'] = groups_info
-        
-        # Добавляем информацию о прогрессе если доступна
-        if progress_data:
+
+        # 6) Включаем статусы групп и времена, если доступны в progress.json
+        if progress_data and isinstance(progress_data, dict):
             response['progress'] = progress_data
-            # Добавляем статусы из progress_data на верхний уровень
-            prog_status = progress_data.get('status', 'completed')
-            # Если индекс существует и статус в progress_data 'running', но индекс уже полный,
-            # значит индексация завершилась — показываем completed
-            if prog_status == 'running' and entries and entries > 0:
-                # Проверяем timestamp: если статус не обновлялся > 10 секунд, считаем завершённым
-                try:
-                    updated_at = progress_data.get('updated_at')
-                    if updated_at:
-                        last_update = datetime.fromisoformat(updated_at)
-                        if datetime.now() - last_update > timedelta(seconds=10):
-                            prog_status = 'completed'
-                except Exception:
-                    pass
-            response['status'] = prog_status
-            response['group_status'] = progress_data.get('group_status', {})
-            response['current_group'] = progress_data.get('current_group')
+            response['status'] = progress_data.get('status', 'completed' if docs_count > 0 else 'idle')
+            if 'group_status' in progress_data:
+                response['group_status'] = progress_data.get('group_status')
+            if 'current_group' in progress_data:
+                response['current_group'] = progress_data.get('current_group')
+            if 'group_times' in progress_data:
+                response['group_times'] = progress_data.get('group_times')
         else:
-            response['status'] = 'idle'
-        
+            # Если нет progress.json — просто отражаем факт наличия документов
+            response['status'] = 'completed' if docs_count > 0 else 'idle'
+
         return jsonify(response)
-    
+
     except Exception as e:
         current_app.logger.exception('Ошибка получения статуса индекса')
         return jsonify({'error': str(e)}), 500
@@ -432,80 +383,192 @@ def view_index():
     - raw=1: показать индекс как есть (с заголовками групп)
     - raw=0 (default): показать только записи документов (без служебных строк)
     """
-    # Показываем живой индекс из index/ или uploads/
+    # Диагностический просмотр: показываем только скелет по статусу групп + сводку БД
     uploads = current_app.config.get('UPLOAD_FOLDER', 'uploads')
-    idx_primary = get_index_path(current_app.config['INDEX_FOLDER'])
-    idx_uploads = os.path.join(uploads, '_search_index.txt')
-    idx = idx_primary if os.path.exists(idx_primary) else (idx_uploads if os.path.exists(idx_uploads) else idx_primary)
-    
     try:
-        content = None
-        if os.path.exists(idx):
-            try:
-                with open(idx, 'r', encoding='utf-8', errors='ignore') as f:
-                    content = f.read()
-            except Exception:
-                # Во время атомарной замены файл может быть временно недоступен
-                content = None
-
-        # Если не удалось прочитать индекс — формируем скелет по статусу
-        if content is None:
-            # Загружаем прогресс статуса
+        # Загружаем прогресс статуса
+        progress = None
+        status_json_path = os.path.join(current_app.config.get('INDEX_FOLDER'), 'status.json')
+        try:
+            if status_json_path and os.path.exists(status_json_path):
+                with open(status_json_path, 'r', encoding='utf-8') as sf:
+                    progress = json.load(sf)
+        except Exception:
             progress = None
-            status_json_path = os.path.join(current_app.config.get('INDEX_FOLDER'), 'status.json')
-            try:
-                if status_json_path and os.path.exists(status_json_path):
-                    with open(status_json_path, 'r', encoding='utf-8') as sf:
-                        progress = json.load(sf)
-            except Exception:
-                progress = None
 
-            group_labels = {
-                'fast': 'TXT, CSV, HTML',
-                'medium': 'DOCX, XLSX, векторные PDF',
-                'slow': 'PDF-сканы с OCR'
-            }
-            def map_status(s):
-                if s == 'completed':
-                    return '✅ завершено'
-                if s == 'running':
-                    return 'обрабатывается'
-                return 'ожидание'
-            grp_status = (progress or {}).get('group_status', {}) if progress else {}
-            # Собираем скелет: заголовки + пустые секции между маркерами
-            parts = []
-            for g in ['fast', 'medium', 'slow']:
-                parts.append('' )
-                parts.append('═' * 80)
-                parts.append(f"[ГРУППА: {g.upper()}] {group_labels[g]}")
-                status_text = map_status(grp_status.get(g)) if grp_status else 'ожидание'
-                parts.append(f"Файлов: — | Статус: {status_text}")
-                parts.append('═' * 80)
-                parts.append(f"<!-- BEGIN_{g.upper()} -->")
-                parts.append(f"<!-- END_{g.upper()} -->")
+        group_labels = {
+            'fast': 'TXT, CSV, HTML',
+            'medium': 'DOCX, XLSX, векторные PDF',
+            'slow': 'PDF-сканы с OCR'
+        }
+        def map_status(s):
+            if s == 'completed':
+                return '✅ завершено'
+            if s == 'running':
+                return 'обрабатывается'
+            return 'ожидание'
+        grp_status = (progress or {}).get('group_status', {}) if progress else {}
+        
+        # DB-first: формируем структуру документов из БД
+        db = _get_db()
+        owner_id = _get_current_user_id()
+        
+        # Загружаем все документы и их чанки для текущего пользователя
+        docs_by_group = {'fast': [], 'medium': [], 'slow': []}
+        try:
+            with db.db.connect() as conn:
+                with conn.cursor() as cur:
+                    # Получаем документы с их чанками
+                    cur.execute("""
+                        SELECT 
+                            d.id,
+                            d.original_filename,
+                            d.storage_url,
+                            c.chunk_idx,
+                            c.text
+                        FROM documents d
+                        LEFT JOIN chunks c ON c.document_id = d.id
+                        WHERE d.owner_id = %s AND d.is_visible = TRUE
+                        ORDER BY d.original_filename, c.chunk_idx;
+                    """, (owner_id,))
+                    rows = cur.fetchall()
+                    
+                    # Группируем по документам
+                    current_doc = None
+                    current_chunks = []
+                    for row in rows:
+                        doc_id, filename, storage_url, chunk_idx, text = row
+                        
+                        if current_doc is None or current_doc['id'] != doc_id:
+                            # Сохраняем предыдущий документ
+                            if current_doc:
+                                current_doc['chunks'] = current_chunks
+                                # Определяем группу по расширению (упрощённо)
+                                ext = os.path.splitext(filename)[1].lower()
+                                if ext in ['.txt', '.csv', '.html', '.htm']:
+                                    docs_by_group['fast'].append(current_doc)
+                                elif ext in ['.docx', '.xlsx', '.xls']:
+                                    docs_by_group['medium'].append(current_doc)
+                                else:
+                                    docs_by_group['slow'].append(current_doc)
+                            
+                            # Начинаем новый документ
+                            current_doc = {
+                                'id': doc_id,
+                                'filename': filename,
+                                'storage_url': storage_url
+                            }
+                            current_chunks = []
+                        
+                        # Добавляем чанк
+                        if text:
+                            current_chunks.append({
+                                'idx': chunk_idx,
+                                'text': text,
+                                'char_count': len(text)
+                            })
+                    
+                    # Не забываем последний документ
+                    if current_doc:
+                        current_doc['chunks'] = current_chunks
+                        ext = os.path.splitext(current_doc['filename'])[1].lower()
+                        if ext in ['.txt', '.csv', '.html', '.htm']:
+                            docs_by_group['fast'].append(current_doc)
+                        elif ext in ['.docx', '.xlsx', '.xls']:
+                            docs_by_group['medium'].append(current_doc)
+                        else:
+                            docs_by_group['slow'].append(current_doc)
+                            
+        except Exception as e:
+            current_app.logger.exception('Ошибка загрузки документов из БД для view_index')
+            # Продолжаем с пустыми группами
+        
+        # Собираем текстовое представление с документами
+        parts = []
+        for g in ['fast', 'medium', 'slow']:
+            docs = docs_by_group.get(g, [])
+            parts.append('')
+            parts.append('═' * 80)
+            parts.append(f"[ГРУППА: {g.upper()}] {group_labels[g]}")
+            status_text = map_status(grp_status.get(g)) if grp_status else 'ожидание'
+            parts.append(f"Файлов: {len(docs)} | Статус: {status_text}")
+            parts.append('═' * 80)
+            parts.append(f"<!-- BEGIN_{g.upper()} -->")
+            
+            # Добавляем документы
+            for doc in docs:
                 parts.append('')
-            content = "\n".join(parts)
+                parts.append(f"ЗАГОЛОВОК: {doc['filename']}")
+                parts.append(f"Формат: {os.path.splitext(doc['filename'])[1]}")
+                parts.append(f"Источник: {doc.get('storage_url', 'unknown')}")
+                
+                # Подсчёт символов из чанков
+                total_chars = sum(c.get('char_count', 0) for c in doc.get('chunks', []))
+                parts.append(f"Символов: {total_chars}")
+                parts.append('')
+                parts.append("<<< НАЧАЛО ДОКУМЕНТА >>>")
+                
+                # Объединяем тексты чанков
+                for chunk in doc.get('chunks', []):
+                    if chunk.get('text'):
+                        parts.append(chunk['text'])
+                        parts.append('')  # разделитель между чанками
+                
+                parts.append("<<< КОНЕЦ ДОКУМЕНТА >>>")
+                parts.append('')
+            
+            parts.append(f"<!-- END_{g.upper()} -->")
+            parts.append('')
+        
+        content = "\n".join(parts)
         
         # Добавляем метаинформацию в начало
         metadata = [
-            "# Сводный индекс поиска",
-            f"# Размер: {len(content)} байт",
+            "# Диагностический просмотр индекса (DB-first)",
             f"# Обновлён: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
             "#",
-            "# Формат: групповая структура (increment-014)",
             "# Группы: FAST (TXT,CSV,HTML) → MEDIUM (DOCX,XLSX,PDF) → SLOW (OCR)",
             "#",
             ""
         ]
+        # DB-first сводка (increment-015): документы и статус папки
+        try:
+            db = _get_db()
+            owner_id = _get_current_user_id()
+            # Количество документов
+            docs_count = None
+            with db.db.connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT COUNT(*) FROM documents
+                        WHERE owner_id = %s AND is_visible = TRUE;
+                        """,
+                        (owner_id,)
+                    )
+                    row = cur.fetchone()
+                    docs_count = row[0] if row else None
+            # folder_index_status
+            db_status = None
+            try:
+                db_status = get_folder_index_status(db, owner_id, uploads)
+            except Exception:
+                db_status = None
+            last_idx = db_status.get('last_indexed_at').strftime('%Y-%m-%d %H:%M:%S') if (db_status and db_status.get('last_indexed_at')) else '—'
+            root_hash = db_status.get('root_hash') if db_status else '—'
+            metadata.extend([
+                "# БД-сводка:",
+                f"# Документов: {docs_count if docs_count is not None else '—'}",
+                f"# Последняя индексация: {last_idx}",
+                f"# Root hash (uploads): {root_hash}",
+                "#",
+                ""
+            ])
+        except Exception:
+            # Не мешаем отображению при сбое БД
+            pass
         
-        # Парсим статистику групп
-        groups_info = _parse_index_groups(idx)
-        for group_name, info in groups_info.items():
-            status = "✅ завершено" if info['completed'] else "⏳ обрабатывается"
-            metadata.append(
-                f"# {group_name.upper()}: {info['files']} файлов, "
-                f"{info['size_bytes']} байт, {status}"
-            )
+        # Примечание: подробная статистика групп доступна через /index_status
         
         metadata.append("#\n" + "=" * 80 + "\n")
         
@@ -565,7 +628,7 @@ def view_index():
         html_page = (
             "<!DOCTYPE html>\n"
             "<html lang=\"ru\">\n<head>\n<meta charset=\"utf-8\">\n"
-            "<title>Сводный индекс — подсветка</title>\n"
+            "<title>Индекс (БД) — подсветка</title>\n"
             "<style>body{font:14px/1.5 -apple-system,Segoe UI,Arial,sans-serif;padding:16px;}"
             "pre{white-space:pre-wrap;word-wrap:break-word;background:#f8f8f8;padding:12px;border-radius:6px;}"
             "mark{background:#ffeb3b;padding:0 2px;border-radius:2px;}"

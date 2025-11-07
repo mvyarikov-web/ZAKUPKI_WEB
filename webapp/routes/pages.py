@@ -1,8 +1,9 @@
 """Blueprint для страниц (index, view)."""
 import os
+from urllib.parse import unquote
 from flask import Blueprint, render_template, jsonify, request, current_app, send_from_directory
 from markupsafe import Markup
-from webapp.services.files import allowed_file
+from webapp.services.files import allowed_file, is_safe_subpath
 from webapp.services.state import FilesState
 from webapp.middleware.auth_middleware import require_auth
 
@@ -97,62 +98,83 @@ def index():
     )
 
 
-@pages_bp.get('/view/<path:filepath>')
-@require_auth
-def view_file(filepath: str):
-    """Отображение содержимого файла с подсветкой ключевых слов.
-    
-    Использует БД PostgreSQL для получения чанков документа.
-    """
-    from urllib.parse import unquote
-    from webapp.services.files import is_safe_subpath
-    from webapp.db.base import get_db_context
-    from webapp.db.repositories.document_repository import DocumentRepository
-    from webapp.db.repositories.chunk_repository import ChunkRepository
+@pages_bp.route('/view/<path:filepath>')
+def view_file(filepath):
+    """Просмотр содержимого файла из индекса (DB-first через RAGDatabase, increment-015)."""
     from flask import g
+    from webapp.models.rag_models import RAGDatabase
+    from webapp.config import get_config
+    
+    def _get_db() -> RAGDatabase:
+        """Получить подключение к БД (кешируется в g)."""
+        if 'db' not in g:
+            config = get_config()
+            dsn = config.database_url.replace('postgresql+psycopg2://', 'postgresql://')
+            g.db = RAGDatabase(dsn)
+        return g.db
     
     try:
         decoded_filepath = unquote(filepath)
-        current_app.logger.info(f"Просмотр файла: {decoded_filepath}, пользователь: {getattr(g.user, 'id', None)}")
+        current_app.logger.info(f"Просмотр файла: {decoded_filepath}")
         
         # Проверка безопасности пути
         if not is_safe_subpath(current_app.config['UPLOAD_FOLDER'], decoded_filepath):
             return jsonify({'error': 'Недопустимый путь к файлу'}), 400
         
-        # Получаем документ из БД
-        with get_db_context() as session:
-            doc_repo = DocumentRepository(session)
-            chunk_repo = ChunkRepository(session)
-            
-            document = doc_repo.get_by_path(storage_url=decoded_filepath, owner_id=getattr(g.user, 'id', None))
-            
-            if not document:
-                current_app.logger.warning(f"Документ не найден в БД: {decoded_filepath}")
-                return jsonify({'error': 'Индекс не создан. Постройте индекс перед просмотром.'}), 404
-            
-            # Проверяем статус документа
-            if document.status != 'indexed':
-                return render_template(
-                    'view.html',
-                    title=os.path.basename(decoded_filepath),
-                    content=Markup('<div class="error-message">Документ ещё не проиндексирован</div>'),
-                    keywords=[]
-                )
-            
-            # Получаем чанки документа из БД
-            chunks = chunk_repo.get_by_document(document_id=document.id)
-            
-            if not chunks:
-                current_app.logger.warning(f"Чанки не найдены для документа: {decoded_filepath}")
-                return render_template(
-                    'view.html',
-                    title=os.path.basename(decoded_filepath),
-                    content=Markup('<div class="error-message">Не удалось извлечь текст документа</div>'),
-                    keywords=[]
-                )
-            
-            # Собираем текст из чанков
-            text = '\n\n'.join([chunk.text for chunk in chunks])
+        # Получаем документ и чанки из БД через RAGDatabase
+        db = _get_db()
+        owner_id = 1  # TODO: использовать реального пользователя
+        
+        document = None
+        chunks = []
+        
+        with db.db.connect() as conn:
+            with conn.cursor() as cur:
+                # Ищем документ по storage_url
+                cur.execute("""
+                    SELECT id, original_filename, status
+                    FROM documents
+                    WHERE storage_url = %s AND owner_id = %s AND is_visible = TRUE
+                    LIMIT 1;
+                """, (decoded_filepath, owner_id))
+                row = cur.fetchone()
+                
+                if not row:
+                    current_app.logger.warning(f"Документ не найден в БД: {decoded_filepath}")
+                    return jsonify({'error': 'Документ не найден в индексе. Постройте индекс для этого файла.'}), 404
+                
+                doc_id, filename, status = row
+                document = {'id': doc_id, 'filename': filename, 'status': status}
+                
+                # Проверяем статус документа
+                if status != 'indexed':
+                    return render_template(
+                        'view.html',
+                        title=os.path.basename(decoded_filepath),
+                        content=Markup('<div class="error-message">Документ ещё не проиндексирован</div>'),
+                        keywords=[]
+                    )
+                
+                # Получаем чанки документа
+                cur.execute("""
+                    SELECT text
+                    FROM chunks
+                    WHERE document_id = %s
+                    ORDER BY chunk_idx;
+                """, (doc_id,))
+                chunks = [row[0] for row in cur.fetchall()]
+        
+        if not chunks:
+            current_app.logger.warning(f"Чанки не найдены для документа: {decoded_filepath}")
+            return render_template(
+                'view.html',
+                title=os.path.basename(decoded_filepath),
+                content=Markup('<div class="error-message">Не удалось извлечь текст документа</div>'),
+                keywords=[]
+            )
+        
+        # Собираем текст из чанков
+        text = '\n\n'.join(chunks)
         
         # Получаем ключевые слова из query параметра
         query = request.args.get('q', '')

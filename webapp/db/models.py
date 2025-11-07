@@ -455,7 +455,7 @@ class TokenUsage(Base):
     cost_rub = Column(Integer)  # храним в копейках
     input_cost_usd = Column(Integer)  # центы
     output_cost_usd = Column(Integer)  # центы
-    metadata = Column(JSON)
+    metadata_json = Column(JSON)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
 
     __table_args__ = (

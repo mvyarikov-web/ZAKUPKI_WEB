@@ -585,7 +585,7 @@ searchBtn.addEventListener('click', () => {
 // FR-008: "Удалить файлы" - удаляет загруженные данные и результаты (кнопка "Очистить всё" удалена)
 if (deleteFilesBtn) {
     deleteFilesBtn.addEventListener('click', () => {
-        if (!confirm('Удалить ВСЕ загруженные файлы и папки, а также сводный файл? Это действие необратимо!')) {
+        if (!confirm('Удалить ВСЕ загруженные файлы и папки. Это действие необратимо!')) {
             return;
         }
         
@@ -1114,24 +1114,31 @@ function refreshIndexStatus() {
             
             // Проверяем статус индексации
             const currentStatus = data.status || 'idle';
+            const dbInfo = data.db || {};
+            const docs = (typeof dbInfo.documents === 'number') ? dbInfo.documents : null;
+            const lastIdxStr = dbInfo.last_indexed_at ? (() => {
+                try { return new Date(dbInfo.last_indexed_at).toLocaleString('ru-RU'); } catch (_) { return null; }
+            })() : null;
+            const dbSuffix = (docs !== null || lastIdxStr)
+                ? ' | ' + [
+                    (docs !== null ? `БД документов: ${docs}` : null),
+                    (lastIdxStr ? `обновлён: ${lastIdxStr}` : null)
+                  ].filter(Boolean).join(', ')
+                : '';
             
             if (!data.exists) {
-                indexStatus.textContent = 'Сводный файл: не сформирован';
+                indexStatus.textContent = 'Индекс (БД): не создан' + dbSuffix;
                 indexStatus.style.color = '#a00';
             } else {
-                const size = (data.size || 0);
-                const sizeKb = (size / 1024).toFixed(1);
                 const entries = (data.entries == null) ? '—' : data.entries;
-                
-                // Если индексация только что завершилась, показываем актуальный статус
                 if (currentStatus === 'completed' || currentStatus === 'idle') {
-                    indexStatus.textContent = `Сводный файл: сформирован, ${sizeKb} KB, файлов: ${entries}`;
+                    indexStatus.textContent = `Индекс (БД): готов, документов: ${entries}` + dbSuffix;
                     indexStatus.style.color = '#2a2';
                 } else if (currentStatus === 'running') {
-                    indexStatus.textContent = `Сводный файл: обновляется… (${sizeKb} KB)`;
+                    indexStatus.textContent = `Индекс (БД): обновляется…` + dbSuffix;
                     indexStatus.style.color = '#f90';
                 } else {
-                    indexStatus.textContent = `Сводный файл: сформирован, ${sizeKb} KB, файлов: ${entries}`;
+                    indexStatus.textContent = `Индекс (БД): готов, документов: ${entries}` + dbSuffix;
                     indexStatus.style.color = '#2a2';
                 }
             }
@@ -1142,7 +1149,7 @@ function refreshIndexStatus() {
             }
         })
         .catch(() => {
-            indexStatus.textContent = 'Сводный файл: ошибка запроса';
+            indexStatus.textContent = 'Индекс (БД): ошибка запроса';
             indexStatus.style.color = '#a00';
         });
 }
