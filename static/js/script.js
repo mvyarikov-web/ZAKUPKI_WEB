@@ -92,8 +92,10 @@ function handleFiles(e) {
         formData.append('files', f, relName);
     }
 
+    const userId = window.APP_USER_ID || localStorage.getItem('app_user_id') || '';
     fetch('/upload', {
         method: 'POST',
+        headers: userId ? { 'X-User-ID': userId } : {},
         body: formData
     })
     .then(res => {
@@ -398,12 +400,11 @@ async function performSearch(terms) {
     // Устанавливаем глобальный флаг, что поиск был выполнен
     window.searchWasPerformed = true;
     
+    const userId = window.APP_USER_ID || localStorage.getItem('app_user_id') || '';
     const resp = await fetch('/search', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-            search_terms: terms
-        })
+        headers: Object.assign({ 'Content-Type': 'application/json' }, userId ? { 'X-User-ID': userId } : {}),
+        body: JSON.stringify({ search_terms: terms })
     });
     const data = await resp.json();
     try { localStorage.setItem('last_search_terms', terms); } catch (e) {}
@@ -411,17 +412,23 @@ async function performSearch(terms) {
     await updateFilesList();
     
     if (data.results && data.results.length > 0) {
-        // Подсчитываем количество совпадений и документов
+        // Подсчитываем количество совпадений и наличие сниппетов
         const totalMatches = data.results.reduce((sum, r) => {
             if (r.per_term) {
                 return sum + r.per_term.reduce((termSum, t) => termSum + (t.count || 0), 0);
             }
             return sum;
         }, 0);
+        const snippetCount = data.results.reduce((sum, r) => {
+            if (r.per_term) {
+                return sum + r.per_term.reduce((s, t) => s + ((t.snippets || []).length), 0);
+            }
+            return sum;
+        }, 0);
         const totalDocs = data.results.length;
         
-        // Показываем зеленое сообщение об успехе
-        if (typeof MessageManager !== 'undefined') {
+        // Баннер выводим только если есть совпадения И есть сниппеты
+        if (totalMatches > 0 && snippetCount > 0 && typeof MessageManager !== 'undefined') {
             MessageManager.success(
                 `✅ Найдено ${totalMatches} совпадений в ${totalDocs} документах`,
                 'main'
@@ -457,12 +464,11 @@ async function performSearch(terms) {
                         const snips = (entry.snippets || []).slice(0, maxSnippets).map(s => 
                             `<div class="context-snippet">${escapeHtml(s)}</div>`
                         ).join('');
-                        
                         const termHtml = `${escapeHtml(entry.term)} (${entry.count})`;
-                        
+                        const snippetsBlock = snips ? `<div class="context-snippets">${snips}</div>` : '';
                         return `<div class="per-term-block">
                             <div class="found-terms"><span class="found-term">${termHtml}</span></div>
-                            <div class="context-snippets">${snips || '<div class="context-empty">Нет сниппетов</div>'}</div>
+                            ${snippetsBlock}
                         </div>`;
                     }).join('');
                     
@@ -493,13 +499,7 @@ async function performSearch(terms) {
         highlightSnippets(t);
         applyQueryToViewLinks();
     } else {
-        // Нет результатов - показываем желтое предупреждение
-        if (typeof MessageManager !== 'undefined') {
-            MessageManager.warning(
-                '⚠️ Совпадений не найдено',
-                'main'
-            );
-        }
+        // Нет результатов — ничего не показываем в шапке
     }
 }
 
@@ -745,9 +745,10 @@ function rebuildIndexWithProgress() {
     startIndexingTimer();
     
     // Запускаем построение индекса с групповой индексацией
+    const userId = window.APP_USER_ID || localStorage.getItem('app_user_id') || '';
     return fetch('/build_index', { 
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: Object.assign({ 'Content-Type': 'application/json' }, userId ? { 'X-User-ID': userId } : {}),
         body: JSON.stringify({ use_groups: true })
     })
         .then(res => res.json())

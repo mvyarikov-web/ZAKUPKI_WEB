@@ -44,7 +44,32 @@ def extract_text(file_path: str) -> str:
             return ''
         ext = p.suffix.lower().lstrip('.')
         if ext in {'txt', 'json', 'csv', 'tsv', 'xml', 'html', 'htm'}:
-            return _read_text_with_encoding(p)
+            raw = _read_text_with_encoding(p)
+            # Для HTML/XML удаляем теги простой регуляркой (минимально, без внешних libs)
+            if ext in {'html', 'htm', 'xml'}:
+                import re
+                # Удаляем скрипты/стили
+                raw = re.sub(r'<script[\s\S]*?</script>', ' ', raw, flags=re.IGNORECASE)
+                raw = re.sub(r'<style[\s\S]*?</style>', ' ', raw, flags=re.IGNORECASE)
+                # Удаляем все теги
+                raw = re.sub(r'<[^>]+>', ' ', raw)
+                # HTML entities упрощённо
+                raw = raw.replace('&nbsp;', ' ').replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>')
+                # Числовые сущности (&#NNNN; и &#xHH;) → символы
+                def _decode_entity(m):
+                    ent = m.group(1)
+                    try:
+                        if ent.lower().startswith('x'):
+                            return chr(int(ent[1:], 16))
+                        return chr(int(ent))
+                    except Exception:
+                        return ' '
+                raw = re.sub(r'&#(x?[0-9A-Fa-f]+);', _decode_entity, raw)
+                # Сжатие пробелов
+                raw = re.sub(r'[ \t]+', ' ', raw)
+                raw = re.sub(r'\s*\n\s*', '\n', raw)
+                raw = raw.strip()
+            return raw
         if ext == 'pdf':
             # pdfplumber → pypdf → ''
             try:

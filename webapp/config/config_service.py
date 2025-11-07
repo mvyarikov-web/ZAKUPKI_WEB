@@ -440,6 +440,11 @@ class ConfigService:
     def csrf_enabled(self) -> bool:
         """CSRF-защита включена."""
         return os.getenv('CSRF_ENABLED', 'true').lower() == 'true'
+
+    @property
+    def strict_user_id(self) -> bool:
+        """Требовать обязательный user-id в запросах (нет fallback к 1)."""
+        return os.getenv('STRICT_USER_ID', 'true').lower() == 'true'
     
     @property
     def cors_origins(self) -> list[str]:
@@ -498,6 +503,7 @@ class ConfigService:
             'vector_dimension': self.vector_dimension,
             'secure_cookies': self.secure_cookies,
             'csrf_enabled': self.csrf_enabled,
+            'strict_user_id': self.strict_user_id,
         }
     
     @staticmethod

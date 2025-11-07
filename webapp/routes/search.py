@@ -23,14 +23,12 @@ def _get_db() -> RAGDatabase:
     return g.db
 
 
-def _get_current_user_id() -> int:
-    """
-    Получить ID текущего пользователя из сессии/токена.
-    
-    TODO: Интеграция с реальной системой аутентификации.
-    Пока возвращаем фиксированный ID для разработки.
-    """
-    # 1) Если аутентификация настроена — используем g.user.id
+def required_user_id() -> int:
+    """Строго получить user_id (см. STRICT_USER_ID)."""
+    config = get_config()
+    strict = config.strict_user_id
+
+    # 1) g.user.id
     try:
         user = getattr(g, 'user', None)
         if user and getattr(user, 'id', None):
@@ -38,7 +36,7 @@ def _get_current_user_id() -> int:
     except Exception:
         pass
 
-    # 2) Dev/тестовый режим: поддержка заголовка X-User-ID
+    # 2) Заголовок
     try:
         uid = request.headers.get('X-User-ID')
         if uid and str(uid).isdigit():
@@ -46,7 +44,8 @@ def _get_current_user_id() -> int:
     except Exception:
         pass
 
-    # 3) Fallback по умолчанию
+    if strict:
+        raise ValueError('user_id отсутствует (STRICT_USER_ID)')
     return 1
 
 
@@ -299,7 +298,10 @@ def search():
     current_app.logger.info(f"Поиск в БД: terms='{','.join(filtered)}', exclude_mode={exclude_mode}")
     
     db = _get_db()
-    owner_id = _get_current_user_id()
+    try:
+        owner_id = required_user_id()
+    except ValueError:
+        return jsonify({'error': 'Не указан идентификатор пользователя (X-User-ID)'}), 400
     
     try:
         # Поиск с фильтрацией по owner_id и is_visible=TRUE
@@ -343,7 +345,10 @@ def build_index_route():
         current_app.logger.info("Запуск индексации в БД (increment-015)")
         
         db = _get_db()
-        owner_id = _get_current_user_id()
+        try:
+            owner_id = required_user_id()
+        except ValueError:
+            return jsonify({'success': False, 'message': 'Не указан идентификатор пользователя (X-User-ID)'}), 400
         
         # Получаем параметр force_rebuild из JSON-запроса
         force_rebuild = request.json.get('force_rebuild', False) if request.is_json else False
@@ -428,7 +433,10 @@ def index_status():
 
         # 3) Статус из БД (increment-015): uploads как tracked folder
         db = _get_db()
-        owner_id = _get_current_user_id()
+        try:
+            owner_id = required_user_id()
+        except ValueError:
+            return jsonify({'error': 'Не указан идентификатор пользователя (X-User-ID)'}), 400
         try:
             db_status = get_folder_index_status(db, owner_id, uploads)
         except Exception:
@@ -523,7 +531,10 @@ def view_index():
         
         # DB-first: формируем структуру документов из БД
         db = _get_db()
-        owner_id = _get_current_user_id()
+        try:
+            owner_id = required_user_id()
+        except ValueError:
+            owner_id = None  # В строгом режиме без user_id просто покажем пустой индекс
         
         # Загружаем все документы и их чанки для текущего пользователя
         docs_by_group = {'fast': [], 'medium': [], 'slow': []}
@@ -647,7 +658,10 @@ def view_index():
         # DB-first сводка (increment-015): документы и статус папки
         try:
             db = _get_db()
-            owner_id = _get_current_user_id()
+            try:
+                owner_id = required_user_id()
+            except ValueError:
+                owner_id = None
             # Количество документов
             docs_count = None
             with db.db.connect() as conn:

@@ -21,9 +21,39 @@ def _get_db() -> RAGDatabase:
     return g.db
 
 
-def _get_current_user_id() -> int:
-    """Получить ID текущего пользователя (заглушка для разработки)."""
-    return g.get('user_id', 1)
+def required_user_id() -> int:
+    """Строго получить user_id.
+
+    Поведение:
+    - Если STRICT_USER_ID=true: требуем явный X-User-ID или g.user.id, иначе 400.
+    - Если STRICT_USER_ID=false: пытаемся взять g.user.id, затем X-User-ID, затем fallback=1.
+    Возвращает целочисленный user_id при успехе.
+    """
+    config = get_config()
+    strict = config.strict_user_id
+
+    # 1) g.user.id если присутствует
+    try:
+        user = getattr(g, 'user', None)
+        if user and getattr(user, 'id', None):
+            return int(user.id)
+    except Exception:
+        pass
+
+    # 2) Заголовок X-User-ID
+    try:
+        uid = request.headers.get('X-User-ID')
+        if uid and str(uid).isdigit():
+            return int(uid)
+    except Exception:
+        pass
+
+    # 3) Строгий режим: ошибка
+    if strict:
+        raise ValueError('user_id отсутствует (STRICT_USER_ID)')
+
+    # 4) Нестрогий режим: fallback
+    return 1
 
 
 def _get_files_state():
@@ -104,7 +134,11 @@ def upload_files():
                 if not config.uploads_disabled:
                     try:
                         db = _get_db()
-                        user_id = _get_current_user_id()
+                        try:
+                            user_id = required_user_id()
+                        except ValueError:
+                            current_app.logger.warning('Загрузка отклонена: отсутствует user_id при STRICT_USER_ID')
+                            return jsonify({'error': 'Не указан идентификатор пользователя (X-User-ID)'}), 400
                         sha256_hash = calculate_file_hash(file_path)
                         
                         if sha256_hash:

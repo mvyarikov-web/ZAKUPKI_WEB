@@ -113,22 +113,26 @@ def view_file(filepath):
             g.db = RAGDatabase(dsn)
         return g.db
     
-    def _current_owner_id() -> int:
-        # 1) Пользователь из middleware
+    def required_user_id() -> int:
+        from webapp.config.config_service import get_config as _gc
+        config = _gc()
+        strict = config.strict_user_id
+        # 1) middleware
         try:
             user = getattr(g, 'user', None)
             if user and getattr(user, 'id', None):
                 return int(user.id)
         except Exception:
             pass
-        # 2) Dev/тест: заголовок X-User-ID
+        # 2) header
         try:
             uid = request.headers.get('X-User-ID')
             if uid and str(uid).isdigit():
                 return int(uid)
         except Exception:
             pass
-        # 3) Fallback
+        if strict:
+            raise ValueError('user_id отсутствует (STRICT_USER_ID)')
         return 1
 
     try:
@@ -141,7 +145,10 @@ def view_file(filepath):
         
         # Получаем документ и чанки из БД через RAGDatabase
         db = _get_db()
-        owner_id = _current_owner_id()
+        try:
+            owner_id = required_user_id()
+        except ValueError:
+            return jsonify({'error': 'Не указан идентификатор пользователя (X-User-ID)'}), 400
         
         document = None
         chunks = []
