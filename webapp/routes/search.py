@@ -620,11 +620,7 @@ def view_index():
                 filtered_lines.append(line)
             base_text = '\n'.join(metadata) + '\n' + '\n'.join(filtered_lines)
 
-        # Если нет терминов — отдаём как text/plain
-        if not terms:
-            return Response(base_text, mimetype='text/plain; charset=utf-8')
-
-        # Подсветка: сохраняем наши плейсхолдеры, экранируем остальное
+        # Обработка плейсхолдеров: всегда конвертируем __LABEL__/__HEADER__ в HTML
         safe = base_text
         placeholders = {}
         counter = 0
@@ -632,23 +628,47 @@ def view_index():
         # Сохраняем метки через плейсхолдеры (до экранирования HTML)
         for match in re.finditer(r"__LABEL__(.*?)__/LABEL__", safe):
             placeholder = f"__PH_LABEL_{counter}__"
-            placeholders[placeholder] = f'<span class="index-document-label">{match.group(1)}</span>'
+            # Экранируем содержимое метки
+            content = htmllib.escape(match.group(1))
+            placeholders[placeholder] = f'<span class="index-document-label">{content}</span>'
             safe = safe.replace(match.group(0), placeholder, 1)
             counter += 1
         
         for match in re.finditer(r"__HEADER__(.*?)__/HEADER__", safe):
             placeholder = f"__PH_HEADER_{counter}__"
-            placeholders[placeholder] = f'<span class="index-document-header">{match.group(1)}</span>'
+            # Экранируем содержимое заголовка
+            content = htmllib.escape(match.group(1))
+            placeholders[placeholder] = f'<span class="index-document-header">{content}</span>'
             safe = safe.replace(match.group(0), placeholder, 1)
             counter += 1
         
         # Экранируем всё остальное
         safe = htmllib.escape(safe)
         
-        # Восстанавливаем плейсхолдеры
+        # Восстанавливаем плейсхолдеры с уже готовыми span-тегами
         for placeholder, original in placeholders.items():
             safe = safe.replace(placeholder, original)
         
+        # Если нет терминов поиска — отдаём без подсветки
+        if not terms:
+            html_page = (
+                "<!DOCTYPE html>\n"
+                "<html lang=\"ru\">\n<head>\n<meta charset=\"utf-8\">\n"
+                "<title>Индекс (БД)</title>\n"
+                "<style>body{font:14px/1.5 -apple-system,Segoe UI,Arial,sans-serif;padding:16px;}"
+                "pre{white-space:pre-wrap;word-wrap:break-word;background:#f8f8f8;padding:12px;border-radius:6px;}"
+                ".index-document-header{color:#2196F3 !important;font-weight:bold;}"
+                ".index-document-label{color:#1976D2 !important;font-weight:600;}"
+                "a.btn{display:inline-block;margin-bottom:12px;text-decoration:none;background:#3498db;color:#fff;padding:6px 10px;border-radius:4px;margin-right:8px;}"
+                "</style>\n"
+                "</head><body>\n"
+                f"<div><a class=\"btn\" href=\"/\">← На главную</a></div>"
+                "<pre>" + safe + "</pre>\n"
+                "</body></html>\n"
+            )
+            return Response(html_page, mimetype='text/html; charset=utf-8')
+        
+        # Применяем подсветку для терминов поиска
         highlighted = safe
         for term in terms:
             if not term:
