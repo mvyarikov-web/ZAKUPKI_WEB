@@ -186,6 +186,19 @@ def create_app(config_name=None):
         atexit.register(cleanup_scheduler)
     else:
         app.logger.info('Планировщик отключён в тестовом режиме')
+
+    # Инициализация схемы БД для тестов/локальной разработки (без Alembic)
+    try:
+        if app.config.get('use_database', False):
+            from webapp.models.rag_models import RAGDatabase
+            from webapp.config.config_service import get_config as _gc
+            dsn = _gc().database_url
+            if dsn.startswith('postgresql+psycopg2://'):
+                dsn = dsn.replace('postgresql+psycopg2://', 'postgresql://', 1)
+            RAGDatabase(dsn).initialize_schema()
+            app.logger.info('Инициализация схемы БД выполнена')
+    except Exception as _e:
+        app.logger.debug(f'Инициализация схемы БД пропущена: {_e}')
     
     app.logger.info('Приложение запущено')
     

@@ -94,7 +94,7 @@ def _make_snippet(text: str, keywords: list, context_chars: int = 100) -> str:
 
 def _search_in_db(db: RAGDatabase, owner_id: int, keywords: list, exclude_mode: bool = False) -> list:
     """
-    Поиск по чанкам в БД с фильтрацией по owner_id и is_visible.
+    Поиск по чанкам в БД через глобальные documents с видимостью через user_documents.
     
     Args:
         db: Подключение к БД
@@ -273,7 +273,7 @@ def _get_files_state():
 def search():
     """Поиск по ключевым словам (спецификация 015).
     
-    Поиск всегда происходит в БД с фильтрацией по owner_id и is_visible=TRUE.
+    Поиск всегда происходит в БД с фильтрацией по user_documents (user_id, is_soft_deleted=FALSE).
     Legacy файловый индекс больше не поддерживается.
     """
     search_terms = request.json.get('search_terms', '')
@@ -388,9 +388,9 @@ def index_status():
         - status: idle | running | completed | error
         - group_status: {fast: pending|running|completed, medium: ..., slow: ...}
         - current_group: fast | medium | slow (если running)
-        - index_exists: bool
-        - index_size: int (байты)
-        - groups_info: {fast: {files: int, completed: bool}, ...}
+        - index_exists: bool (наличие видимых документов для пользователя)
+        - index_size: int (байты) — legacy поле (может быть опущено)
+        - groups_info: {fast: {files: int, completed: bool}, ...} — статистика групп из progress.json
     """
     try:
         # 1) Телеметрия прогресса (legacy status.json для UI)
@@ -443,15 +443,15 @@ def index_status():
             current_app.logger.debug('Не удалось получить статус из БД для /index_status', exc_info=True)
             db_status = None
 
-        # 4) Количество документов в БД для владельца (используем как entries)
+        # 4) Количество документов, доступных пользователю (через user_documents)
         docs_count = 0
         try:
             with db.db.connect() as conn:
                 with conn.cursor() as cur:
                     cur.execute(
                         """
-                        SELECT COUNT(*) FROM documents
-                        WHERE owner_id = %s AND is_visible = TRUE;
+                        SELECT COUNT(*) FROM user_documents
+                        WHERE user_id = %s AND is_soft_deleted = FALSE;
                         """,
                         (owner_id,)
                     )
@@ -459,7 +459,6 @@ def index_status():
                     if row and isinstance(row[0], (int,)):
                         docs_count = int(row[0])
         except Exception:
-            # При ошибке подключения к БД считаем 0 (поведение по умолчанию)
             docs_count = 0
 
         # 5) Формируем ответ (DB-first) с совместимостью полей
@@ -536,7 +535,7 @@ def view_index():
         except ValueError:
             owner_id = None  # В строгом режиме без user_id просто покажем пустой индекс
         
-        # Загружаем все документы и их чанки для текущего пользователя
+    # Загружаем все документы и их чанки для текущего пользователя через user_documents
         docs_by_group = {'fast': [], 'medium': [], 'slow': []}
         try:
             with db.db.connect() as conn:
@@ -545,14 +544,15 @@ def view_index():
                     cur.execute("""
                         SELECT 
                             d.id,
-                            d.original_filename,
-                            d.storage_url,
-                            c.chunk_idx,
+                            COALESCE(ud.original_filename, d.sha256) AS filename,
+                            ud.user_path,
+                            c.chunk_index,
                             c.text
-                        FROM documents d
+                        FROM user_documents ud
+                        JOIN documents d ON d.id = ud.document_id
                         LEFT JOIN chunks c ON c.document_id = d.id
-                        WHERE d.owner_id = %s AND d.is_visible = TRUE
-                        ORDER BY d.original_filename, c.chunk_idx;
+                        WHERE ud.user_id = %s AND ud.is_soft_deleted = FALSE
+                        ORDER BY filename, c.chunk_index;
                     """, (owner_id,))
                     rows = cur.fetchall()
                     
@@ -662,14 +662,14 @@ def view_index():
                 owner_id = required_user_id()
             except ValueError:
                 owner_id = None
-            # Количество документов
+            # Количество документов (видимых пользователю)
             docs_count = None
             with db.db.connect() as conn:
                 with conn.cursor() as cur:
                     cur.execute(
                         """
-                        SELECT COUNT(*) FROM documents
-                        WHERE owner_id = %s AND is_visible = TRUE;
+                        SELECT COUNT(*) FROM user_documents
+                        WHERE user_id = %s AND is_soft_deleted = FALSE;
                         """,
                         (owner_id,)
                     )

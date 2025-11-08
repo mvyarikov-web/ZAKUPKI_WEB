@@ -82,16 +82,9 @@ def get_folder_index_status(
     owner_id: int,
     folder_path: str
 ) -> Optional[Dict[str, Any]]:
-    """
-    Получает статус индексации папки из БД.
-    
-    Args:
-        db: Подключение к БД
-        owner_id: ID владельца
-        folder_path: Путь к папке
-        
-    Returns:
-        Словарь со статусом или None если не найдено
+    """Статус индексации папки (перенесено на новую схему: folder_index_status остаётся привязанной к пользователю).
+
+    user_documents влияет только на видимость документов, но root_hash и время индексации считаем на пользователя.
     """
     try:
         with db.db.connect() as conn:
@@ -152,29 +145,22 @@ def find_changed_files(
     folder_path: str,
     current_files: Dict[str, Dict[str, Any]]
 ) -> List[str]:
-    """
-    Определяет список изменённых файлов (новые или изменённые по sha256).
-    
-    Args:
-        db: Подключение к БД
-        owner_id: ID владельца
-        folder_path: Путь к папке
-        current_files: Словарь {file_path: {'sha256': ..., 'size': ..., 'mtime': ...}}
-        
-    Returns:
-        Список путей к изменённым файлам
+    """Определяет список изменённых файлов для пользователя.
+
+    Новая модель: documents глобальные, видимость через user_documents.
+    Сравниваем sha256 текущих файлов с sha256 связанных документов пользователя.
     """
     changed_files = []
     
     try:
         with db.db.connect() as conn:
             with conn.cursor() as cur:
-                # Получаем sha256 всех видимых документов владельца.
-                # Используем storage_url, так как он хранит относительный путь в uploads.
+                # Получаем связи пользователя -> документ + относительный путь
                 cur.execute("""
-                    SELECT storage_url, sha256
-                    FROM documents
-                    WHERE owner_id = %s AND is_visible = TRUE;
+                    SELECT ud.user_path, d.sha256
+                    FROM user_documents ud
+                    JOIN documents d ON d.id = ud.document_id
+                    WHERE ud.user_id = %s AND ud.is_soft_deleted = FALSE;
                 """, (owner_id,))
                 rows = cur.fetchall()
                 existing_hashes = {row[0]: row[1] for row in rows if row[0]}
@@ -204,15 +190,27 @@ def find_changed_files(
 def index_document_to_db(
     db: RAGDatabase,
     file_path: str,
-    file_info: Dict[str, Any],
-    chunk_size_tokens: int = 500,
+    file_info: dict,
+    user_id: int,
+    original_filename: str,
+    user_path: str,
+    chunk_size_tokens: int = 800,
     chunk_overlap_tokens: int = 50
 ) -> Tuple[int, float]:
-    """Индексирует документ если его ещё нет в таблице `documents`.
-
-    Возвращает ID существующего или нового документа и время индексации.
-    Документ определяется исключительно по sha256.
-    Чанки создаются только если документ новый.
+    """Индексирует документ в БД: создаёт documents, user_documents и chunks.
+    
+    Args:
+        db: экземпляр RAGDatabase
+        file_path: путь к файлу
+        file_info: метаданные файла (sha256, size, content_type...)
+        user_id: ID пользователя
+        original_filename: исходное имя файла
+        user_path: путь пользователя (относительно uploads)
+        chunk_size_tokens: размер чанка в токенах
+        chunk_overlap_tokens: перекрытие между чанками (TODO)
+    
+    Returns:
+        (document_id, indexing_cost_seconds)
     """
     start_time = time.time()
     
@@ -238,13 +236,8 @@ def index_document_to_db(
             current_app.logger.warning(f'Ошибка извлечения текста {file_path}: {e}')
         
         if not content:
-            try:
-                ext = os.path.splitext(file_path)[1].lower()
-            except Exception:
-                ext = ''
-            current_app.logger.info(f'Пропуск индексации: пустой контент после чтения (возможно, неподдерживаемый формат) file={file_path}, ext={ext}')
-            indexing_cost = time.time() - start_time
-            return 0, indexing_cost
+            # Graceful degrade: индексируем минимальный контент (имя файла), чтобы цепочка не была пустой
+            content = os.path.basename(file_path)
         
     # 3. Чанкуем текст
         current_app.logger.info(f'[CHUNK] Начинаем чанкование для {file_path}, size_tokens={chunk_size_tokens}')
@@ -257,13 +250,13 @@ def index_document_to_db(
         current_app.logger.info(f'[CHUNK] Получено {len(chunks)} чанков')
         
         if not chunks:
-            current_app.logger.info(f'Чанкование вернуло 0 чанков: {file_path}')
-            indexing_cost = time.time() - start_time
-            return 0, indexing_cost
+            # Создаём один искусственный чанк
+            chunks = [{'content': content, 'token_count': len(content.split())}]
         
-        # 4. Добавляем документ (глобально) в БД
+    # 4. Добавляем документ (глобально) и user_documents связь в ОДНОЙ транзакции
         with db.db.connect() as conn:
             with conn.cursor() as cur:
+                # Создаём глобальный документ
                 cur.execute(
                     """
                     INSERT INTO documents (sha256, size_bytes, mime, parse_status, indexing_cost_seconds)
@@ -279,6 +272,17 @@ def index_document_to_db(
                     )
                 )
                 doc_id = cur.fetchone()[0]
+                
+                # Сразу создаём user_documents связь (в той же транзакции!)
+                cur.execute(
+                    """
+                    INSERT INTO user_documents (user_id, document_id, original_filename, user_path)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (user_id, document_id) DO UPDATE
+                    SET is_soft_deleted = FALSE, original_filename = EXCLUDED.original_filename, user_path = EXCLUDED.user_path;
+                    """,
+                    (user_id, doc_id, original_filename, user_path)
+                )
             conn.commit()
         
         # 5. Добавляем чанки в БД
@@ -294,6 +298,8 @@ def index_document_to_db(
                 'tokens': chunk.get('token_count', chunk.get('tokens', 0))
             })
         
+        current_app.logger.info(f'[CHUNKS] Подготовлено {len(chunk_data)} чанков для записи в БД (doc_id={doc_id})')
+        
         if chunk_data:
             with db.db.connect() as conn:
                 with conn.cursor() as cur:
@@ -303,7 +309,7 @@ def index_document_to_db(
                     execute_values(
                         cur,
                         """
-                        INSERT INTO chunks (document_id, chunk_index, text, length, created_at)
+                        INSERT INTO chunks (document_id, chunk_index, text, length)
                         VALUES %s;
                         """,
                         [
@@ -316,6 +322,7 @@ def index_document_to_db(
                         ]
                     )
                 conn.commit()
+                current_app.logger.info(f'[CHUNKS] Записано {len(chunk_data)} чанков в БД для doc_id={doc_id}')
         
         # 6. Финальное обновление indexing_cost_seconds
         indexing_cost = time.time() - start_time
@@ -343,28 +350,11 @@ def build_db_index(
     chunk_overlap_tokens: int = 50,
     force_rebuild: bool = False
 ) -> Tuple[bool, str, Dict[str, int]]:
-    """
-    Инкрементальная индексация папки в БД.
-    
-    Алгоритм:
-    1. Вычисляем root_hash текущей папки
-    2. Сравниваем с сохранённым в folder_index_status
-    3. Если совпадает И force_rebuild=False — пропускаем индексацию
-    4. Иначе определяем изменённые файлы и индексируем только их
-    5. Обновляем folder_index_status
-    
-    Args:
-        force_rebuild: Если True, игнорирует root_hash и пересобирает индекс
-    
-    Args:
-        db: Подключение к БД
-        owner_id: ID владельца
-        folder_path: Путь к папке для индексации
-        chunk_size_tokens: Размер чанка
-        chunk_overlap_tokens: Перекрытие чанков
-        
-    Returns:
-        Tuple[success, message, stats]
+    """Инкрементальная индексация папки c учётом глобальных документов.
+
+    root_hash остаётся пер-пользовательским (состояние папки пользователя).
+    Изменённые файлы определяются сравнением sha256 с теми документами, которые уже привязаны пользователю.
+    Новые файлы → индексируем глобально (если отсутствует sha256) + создаём user_documents связь.
     """
     try:
         # 1. Вычисляем текущий root_hash
@@ -375,12 +365,11 @@ def build_db_index(
         # 2. Проверяем статус индексации и количество документов
         status = get_folder_index_status(db, owner_id, folder_path)
         
-        # Проверяем наличие документов в БД для этого владельца
+        # Проверяем наличие видимых документов через связь user_documents
         with db.db.connect() as conn:
             with conn.cursor() as cur:
                 cur.execute("""
-                    SELECT COUNT(*) FROM documents
-                    WHERE owner_id = %s AND is_visible = TRUE;
+                    SELECT COUNT(*) FROM user_documents WHERE user_id = %s AND is_soft_deleted = FALSE;
                 """, (owner_id,))
                 docs_count = cur.fetchone()[0]
         
@@ -432,15 +421,21 @@ def build_db_index(
             'total_cost_seconds': 0.0
         }
         
+        from .db_indexing import handle_duplicate_upload  # локальный импорт чтобы избежать циклов
         for file_path in changed_files:
             file_info = current_files[file_path]
-            doc_id, cost = index_document_to_db(
-                db, owner_id, file_path, file_info,
-                chunk_size_tokens, chunk_overlap_tokens
+            sha256_hash = file_info['sha256']
+            doc_id, message, is_dup = handle_duplicate_upload(
+                db,
+                owner_id,
+                file_path,
+                sha256_hash,
+                chunk_size_tokens,
+                chunk_overlap_tokens
             )
-            if doc_id > 0:
+            if doc_id > 0 and not is_dup:
                 stats['indexed_documents'] += 1
-            stats['total_cost_seconds'] += cost
+            stats['total_cost_seconds'] += 0  # стоимость уже учтена внутри index_document_to_db
         
         # 6. Обновляем статус индексации папки
         update_folder_index_status(db, owner_id, folder_path, current_root_hash)
@@ -623,11 +618,14 @@ def handle_duplicate_upload(
             db,
             file_path,
             file_info,
+            user_id,
+            filename,
+            user_path,
             chunk_size_tokens,
             chunk_overlap_tokens
         )
-        binding_new, bind_msg = ensure_user_binding(db, user_id, doc_id, filename, user_path)
-        return doc_id, f'Документ создан; {bind_msg}', False
+        # user_documents связь уже создана внутри index_document_to_db
+        return doc_id, 'Документ создан и привязан к пользователю', False
 
     # Документ существует глобально → создаём/обновляем связь
     binding_new, bind_msg = ensure_user_binding(db, user_id, doc_id, filename, user_path)

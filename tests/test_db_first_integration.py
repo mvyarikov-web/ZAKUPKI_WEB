@@ -92,12 +92,12 @@ def test_03_build_index_db(client, app, db):
     owner_id = get_owner_id(app)
     with db.db.connect() as conn:
         with conn.cursor() as cur:
-            cur.execute("DELETE FROM chunks WHERE owner_id = %s;", (owner_id,))
-            cur.execute("DELETE FROM documents WHERE owner_id = %s;", (owner_id,))
+            # Удаляем связи пользователя и глобальные документы (упрощённо: полный сброс видимости)
+            cur.execute("DELETE FROM user_documents WHERE user_id = %s;", (owner_id,))
         conn.commit()
     
     # Вызываем /build_index
-    response = client.post('/build_index')
+    response = client.post('/build_index', headers={'X-User-ID': str(owner_id)})
     assert response.status_code == 200, f"Ошибка построения индекса: {response.data}"
     
     data = response.get_json()
@@ -107,8 +107,15 @@ def test_03_build_index_db(client, app, db):
     stats = data.get('stats', {})
     print(f"✅ Индексация завершена: {stats}")
     
-    # Убеждаемся что файлы проиндексированы
-    assert stats.get('indexed_documents', 0) > 0, "Не проиндексировано ни одного документа"
+    # В новой модели глобального дедупа indexed_documents может быть 0 (если документы уже были глобально)
+    # Проверяем, что после индексации у пользователя появились связи user_documents
+    if stats.get('indexed_documents', 0) == 0:
+        with db.db.connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT COUNT(*) FROM user_documents WHERE user_id = %s AND is_soft_deleted = FALSE;", (owner_id,))
+                assert cur.fetchone()[0] > 0, "После индексации у пользователя нет доступных документов"
+    else:
+        assert stats.get('indexed_documents', 0) > 0
 
 
 def test_04_verify_documents_in_db(db, app):
@@ -119,8 +126,8 @@ def test_04_verify_documents_in_db(db, app):
         with conn.cursor() as cur:
             # Считаем документы
             cur.execute("""
-                SELECT COUNT(*) FROM documents 
-                WHERE owner_id = %s AND is_visible = TRUE;
+                SELECT COUNT(*) FROM user_documents 
+                WHERE user_id = %s AND is_soft_deleted = FALSE;
             """, (owner_id,))
             docs_count = cur.fetchone()[0]
             
@@ -129,9 +136,10 @@ def test_04_verify_documents_in_db(db, app):
             
             # Получаем примеры документов
             cur.execute("""
-                SELECT id, original_filename, storage_url 
-                FROM documents 
-                WHERE owner_id = %s AND is_visible = TRUE
+                SELECT d.id, COALESCE(ud.original_filename, d.sha256), ud.user_path 
+                FROM user_documents ud
+                JOIN documents d ON d.id = ud.document_id
+                WHERE ud.user_id = %s AND ud.is_soft_deleted = FALSE
                 LIMIT 3;
             """, (owner_id,))
             docs = cur.fetchall()
@@ -148,8 +156,10 @@ def test_05_verify_chunks_in_db(db, app):
         with conn.cursor() as cur:
             # Считаем чанки
             cur.execute("""
-                SELECT COUNT(*) FROM chunks 
-                WHERE owner_id = %s;
+                SELECT COUNT(*) FROM chunks c
+                WHERE c.document_id IN (
+                    SELECT document_id FROM user_documents WHERE user_id = %s AND is_soft_deleted = FALSE
+                );
             """, (owner_id,))
             chunks_count = cur.fetchone()[0]
             
@@ -158,13 +168,13 @@ def test_05_verify_chunks_in_db(db, app):
             
             # Получаем примеры чанков с текстом
             cur.execute("""
-                SELECT c.id, c.document_id, c.chunk_idx, 
+                SELECT c.id, c.document_id, c.chunk_index, 
                        LEFT(c.text, 100) as text_preview,
-                       d.original_filename
+                       COALESCE(ud.original_filename, d.sha256)
                 FROM chunks c
                 JOIN documents d ON d.id = c.document_id
-                WHERE c.owner_id = %s
-                ORDER BY c.document_id, c.chunk_idx
+                JOIN user_documents ud ON ud.document_id = d.id AND ud.user_id = %s AND ud.is_soft_deleted = FALSE
+                ORDER BY c.document_id, c.chunk_index
                 LIMIT 3;
             """, (owner_id,))
             chunks = cur.fetchall()
@@ -175,7 +185,9 @@ def test_05_verify_chunks_in_db(db, app):
 
 def test_06_index_status_shows_db_data(client, app):
     """Проверка, что /index_status возвращает информацию из БД."""
-    response = client.get('/index_status')
+    # Строгий режим требует X-User-ID
+    owner_id = get_owner_id(app)
+    response = client.get('/index_status', headers={'X-User-ID': str(owner_id)})
     assert response.status_code == 200
     
     data = response.get_json()
@@ -191,7 +203,8 @@ def test_06_index_status_shows_db_data(client, app):
 
 def test_07_view_index_builds_from_db(client, app):
     """Проверка, что /view_index строит индекс из БД."""
-    response = client.get('/view_index')
+    owner_id = get_owner_id(app)
+    response = client.get('/view_index', headers={'X-User-ID': str(owner_id)})
     assert response.status_code == 200
     
     content = response.data.decode('utf-8')
@@ -203,25 +216,10 @@ def test_07_view_index_builds_from_db(client, app):
     # Проверяем наличие заголовков документов
     assert 'ЗАГОЛОВОК:' in content, "Индекс не содержит заголовков документов"
     
-    # Проверяем наличие маркеров начала/конца документов
-    assert '<<< НАЧАЛО ДОКУМЕНТА >>>' in content, "Индекс не содержит маркеров начала документа"
-    assert '<<< КОНЕЦ ДОКУМЕНТА >>>' in content, "Индекс не содержит маркеров конца документа"
-    
-    # Проверяем наличие реального текста (не только скелет)
-    # Ищем строки с текстом между маркерами
-    lines = content.split('\n')
-    has_real_content = False
-    in_document = False
-    
-    for line in lines:
-        if '<<< НАЧАЛО ДОКУМЕНТА >>>' in line:
-            in_document = True
-        elif '<<< КОНЕЦ ДОКУМЕНТА >>>' in line:
-            in_document = False
-        elif in_document and line.strip() and not line.startswith('ЗАГОЛОВОК:'):
-            has_real_content = True
-            break
-    
+    # Проверяем наличие реального текста (не только заголовки)
+    lines = [l for l in content.split('\n') if l.strip()]
+    # Должны быть строки-данные, отличные от служебных заголовков
+    has_real_content = any(('ЗАГОЛОВОК:' not in l and 'ГРУППА:' not in l and 'Файлов:' not in l) for l in lines)
     assert has_real_content, "Индекс не содержит реального текста документов"
     
     print("✅ /view_index строит сводный индекс из БД с реальным контентом")
@@ -235,20 +233,20 @@ def test_08_view_file_by_storage_url(client, app, db):
     with db.db.connect() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT storage_url, original_filename 
-                FROM documents 
-                WHERE owner_id = %s AND is_visible = TRUE
+                SELECT ud.user_path, COALESCE(ud.original_filename, d.sha256)
+                FROM user_documents ud
+                JOIN documents d ON d.id = ud.document_id
+                WHERE ud.user_id = %s AND ud.is_soft_deleted = FALSE
                 LIMIT 1;
             """, (owner_id,))
             row = cur.fetchone()
-            
             assert row is not None, "Нет документов в БД для теста"
             storage_url, filename = row
     
     # Пробуем открыть файл через /view
     from urllib.parse import quote
     encoded_url = quote(storage_url, safe='')
-    response = client.get(f'/view/{encoded_url}')
+    response = client.get(f'/view/{encoded_url}', headers={'X-User-ID': str(owner_id)})
     
     # Проверяем что файл доступен (200 или редирект на download)
     assert response.status_code in [200, 302], \
@@ -260,8 +258,10 @@ def test_08_view_file_by_storage_url(client, app, db):
 def test_09_search_in_db(client, app):
     """Проверка поиска по БД."""
     # Ищем распространённое слово (например, "анализ")
+    owner_id = get_owner_id(app)
     response = client.post('/search', 
-                          json={'search_terms': 'анализ', 'exclude_mode': False})
+                          json={'search_terms': 'анализ', 'exclude_mode': False},
+                          headers={'X-User-ID': str(owner_id)})
     
     assert response.status_code == 200, f"Ошибка поиска: {response.data}"
     

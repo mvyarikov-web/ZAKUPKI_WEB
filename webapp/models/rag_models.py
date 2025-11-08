@@ -47,71 +47,109 @@ class DatabaseConnection:
 class RAGDatabase:
     """Класс для работы с RAG-базой данных."""
     
-    def __init__(self, database_url: str):
+    def __init__(self, database_url: Optional[str] = None):
         """
         Инициализация.
         
         Args:
             database_url: URL подключения к PostgreSQL
         """
+        # Разрешаем не указывать URL: берём из ConfigService или окружения
+        if not database_url:
+            try:
+                # Ленивая загрузка, чтобы избежать циклических импортов
+                from webapp.config.config_service import get_config  # type: ignore
+                cfg = get_config()
+                database_url = cfg.database_url
+            except Exception:
+                import os as _os
+                database_url = _os.getenv('DATABASE_URL')
+        if not database_url:
+            raise TypeError("RAGDatabase requires database_url (не удалось получить из конфигурации/окружения)")
+        # psycopg2 не понимает '+psycopg2' в схеме
+        if database_url.startswith('postgresql+psycopg2://'):
+            database_url = database_url.replace('postgresql+psycopg2://', 'postgresql://', 1)
         self.database_url = database_url
         self.db = DatabaseConnection(database_url)
     
     def initialize_schema(self):
-        """Создать таблицы и расширения для RAG."""
+        """Создать таблицы и индексы под новую модель (documents, user_documents, chunks, folder_index_status)."""
         with self.db.connect() as conn:
             with conn.cursor() as cur:
-                # Устанавливаем расширение pgvector
-                cur.execute("CREATE EXTENSION IF NOT EXISTS vector;")
-                
-                # Таблица документов
-                cur.execute("""
+                # Базовые расширения (без обязательного pgvector)
+                try:
+                    cur.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto;")
+                except Exception:
+                    pass
+
+                # Глобальные документы
+                cur.execute(
+                    """
                     CREATE TABLE IF NOT EXISTS documents (
                         id SERIAL PRIMARY KEY,
-                        file_path TEXT NOT NULL UNIQUE,
-                        file_name TEXT NOT NULL,
-                        file_hash TEXT,
-                        file_size BIGINT,
-                        indexed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        metadata JSONB
+                        sha256 TEXT NOT NULL UNIQUE,
+                        size_bytes BIGINT DEFAULT 0,
+                        mime TEXT,
+                        parse_status TEXT,
+                        access_count INTEGER DEFAULT 0,
+                        indexing_cost_seconds DOUBLE PRECISION DEFAULT 0,
+                        last_accessed_at TIMESTAMP,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     );
-                """)
-                
-                # Таблица чанков с векторами
-                cur.execute("""
+                    """
+                )
+
+                # Видимость документов для пользователей
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS user_documents (
+                        id SERIAL PRIMARY KEY,
+                        user_id INTEGER NOT NULL,
+                        document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+                        original_filename TEXT,
+                        user_path TEXT,
+                        is_soft_deleted BOOLEAN DEFAULT FALSE,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        UNIQUE(user_id, document_id)
+                    );
+                    """
+                )
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_user_documents_user ON user_documents(user_id);")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_user_documents_doc ON user_documents(document_id);")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_user_documents_path ON user_documents(user_path);")
+
+                # Текстовые чанки
+                cur.execute(
+                    """
                     CREATE TABLE IF NOT EXISTS chunks (
                         id SERIAL PRIMARY KEY,
                         document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
                         chunk_index INTEGER NOT NULL,
-                        content TEXT NOT NULL,
-                        content_hash TEXT,
-                        embedding vector(1536),
-                        token_count INTEGER,
-                        page_range TEXT,
-                        section TEXT,
-                        metadata JSONB,
+                        text TEXT NOT NULL,
+                        length INTEGER,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         UNIQUE(document_id, chunk_index)
                     );
-                """)
-                
-                # Индексы для быстрого поиска
-                cur.execute("""
-                    CREATE INDEX IF NOT EXISTS idx_chunks_document_id 
-                    ON chunks(document_id);
-                """)
-                
-                cur.execute("""
-                    CREATE INDEX IF NOT EXISTS idx_chunks_embedding 
-                    ON chunks USING ivfflat (embedding vector_cosine_ops)
-                    WITH (lists = 100);
-                """)
-                
-                cur.execute("""
-                    CREATE INDEX IF NOT EXISTS idx_documents_file_path 
-                    ON documents(file_path);
-                """)
-                
+                    """
+                )
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_chunks_doc ON chunks(document_id);")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_chunks_doc_idx ON chunks(document_id, chunk_index);")
+
+                # Статус индексации папок на пользователя
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS folder_index_status (
+                        id SERIAL PRIMARY KEY,
+                        owner_id INTEGER NOT NULL,
+                        folder_path TEXT NOT NULL,
+                        root_hash TEXT,
+                        last_indexed_at TIMESTAMP,
+                        UNIQUE(owner_id, folder_path)
+                    );
+                    """
+                )
+
                 conn.commit()
     
     def add_document(

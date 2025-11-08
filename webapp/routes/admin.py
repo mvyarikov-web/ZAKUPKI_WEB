@@ -240,9 +240,10 @@ def get_user_quota(user_id: int):
                 cur.execute("""
                     SELECT 
                         COUNT(*) as doc_count,
-                        SUM(COALESCE(indexing_cost_seconds, 0)) as total_cost
-                    FROM documents
-                    WHERE owner_id = %s AND is_visible = TRUE;
+                        SUM(COALESCE(d.indexing_cost_seconds, 0)) as total_cost
+                    FROM user_documents ud
+                    JOIN documents d ON d.id = ud.document_id
+                    WHERE ud.user_id = %s AND ud.is_soft_deleted = FALSE;
                 """, (user_id,))
                 row = cur.fetchone()
                 doc_count = row[0] if row else 0
