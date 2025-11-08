@@ -778,7 +778,10 @@ function pollIndexGroupStatus(fill, text) {
         const checkStatus = () => {
             attempts++;
             
-            fetch('/index_status')
+            const userId = window.APP_USER_ID || localStorage.getItem('app_user_id') || '';
+            fetch('/index_status', {
+                headers: userId ? { 'X-User-ID': userId } : {}
+            })
                 .then(res => res.json())
                 .then(data => {
                     const status = data.status || 'idle';
@@ -1107,7 +1110,10 @@ document.addEventListener('DOMContentLoaded', function() {
 // --- Index status ---
 function refreshIndexStatus() {
     if (!indexStatus) return;
-    fetch('/index_status')
+    const userId = window.APP_USER_ID || localStorage.getItem('app_user_id') || '';
+    fetch('/index_status', {
+        headers: userId ? { 'X-User-ID': userId } : {}
+    })
         .then(res => res.json())
         .then(data => {
             // Сохраняем последний ответ для использования времени групп

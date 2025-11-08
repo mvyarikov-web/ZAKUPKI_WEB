@@ -206,16 +206,19 @@ LIMIT 500;
                             # Не ломаем общий поиск из-за проблем подсчёта
                             pass
                     
-                    # Преобразуем _per_term в per_term для ответа
+                    # Преобразуем _per_term в per_term для ответа (убираем термины с 0 совпадений)
                     results = []
                     for fm in file_matches.values():
                         per_term = []
                         for term, data in fm.get('_per_term', {}).items():
-                            per_term.append({
-                                'term': term,
-                                'count': int(data.get('count', 0)),
-                                'snippets': data.get('snippets', [])
-                            })
+                            count = int(data.get('count', 0))
+                            # Пропускаем термины с нулевым количеством совпадений
+                            if count > 0:
+                                per_term.append({
+                                    'term': term,
+                                    'count': count,
+                                    'snippets': data.get('snippets', [])
+                                })
                         # Сортируем по убыванию количества
                         per_term.sort(key=lambda x: x['count'], reverse=True)
                         fm['per_term'] = per_term
