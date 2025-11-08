@@ -1,3 +1,9 @@
+// --- Инициализация user_id ---
+// Устанавливаем дефолтный user_id=1, если не задан
+if (!window.APP_USER_ID && !localStorage.getItem('app_user_id')) {
+    localStorage.setItem('app_user_id', '1');
+}
+
 // --- Drag & Drop ---
 const selectFolderBtn = document.getElementById('selectFolderBtn');
 const selectFilesBtn = document.getElementById('selectFilesBtn');

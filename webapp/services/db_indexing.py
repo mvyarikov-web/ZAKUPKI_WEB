@@ -433,6 +433,7 @@ def build_db_index(
                 chunk_size_tokens,
                 chunk_overlap_tokens
             )
+            current_app.logger.info(f'[INDEX] {os.path.basename(file_path)}: doc_id={doc_id}, is_dup={is_dup}, msg={message}')
             if doc_id > 0 and not is_dup:
                 stats['indexed_documents'] += 1
             stats['total_cost_seconds'] += 0  # стоимость уже учтена внутри index_document_to_db
