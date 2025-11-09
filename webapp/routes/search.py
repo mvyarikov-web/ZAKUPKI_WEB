@@ -10,6 +10,7 @@ from webapp.services.state import FilesState
 from webapp.services.db_indexing import build_db_index, get_folder_index_status, rebuild_all_documents
 from webapp.models.rag_models import RAGDatabase
 from webapp.config.config_service import get_config
+from webapp.utils.path_utils import normalize_path
 
 search_bp = Blueprint('search', __name__)
 
@@ -164,13 +165,16 @@ LIMIT 500;
                     for row in rows:
                         doc_id, filename, storage_url, chunk_idx, text = row
                         
+                        # Нормализуем storage_url для согласованности
+                        normalized_path = normalize_path(storage_url)
+                        
                         if filename not in file_matches:
                             file_matches[filename] = {
                                 'file': filename,
-                                'storage_url': storage_url,
+                                'storage_url': normalized_path,
                                 'filename': filename,   # совместимость для фронта
-                                'source': storage_url,  # ключ группировки в UI
-                                'path': storage_url,    # совместимость
+                                'source': normalized_path,  # ключ группировки в UI
+                                'path': normalized_path,    # совместимость
                                 'matches': [],
                                 'match_count': 0,
                                 'doc_id': doc_id,
@@ -309,6 +313,11 @@ def search():
     try:
         # Поиск с фильтрацией по owner_id и is_visible=TRUE
         results = _search_in_db(db, owner_id, filtered, exclude_mode)
+        
+        # Логируем пути для отладки
+        if results:
+            sample_paths = [r.get('source', 'N/A') for r in results[:3]]
+            current_app.logger.debug(f"Примеры путей в результатах поиска: {sample_paths}")
         
         # Обновляем метрики использования (access_count, last_accessed_at)
         _update_document_access_metrics(db, results)
