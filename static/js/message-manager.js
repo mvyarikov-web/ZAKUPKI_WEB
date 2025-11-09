@@ -30,6 +30,10 @@
      * @param {number} duration - Длительность показа в мс (0 = не скрывать автоматически)
      */
     function show(text, type = MessageType.INFO, context = Context.MAIN, duration = 0) {
+        // Для главного экрана duration всегда 0 (не скрывать автоматически)
+        if (context === Context.MAIN || context === 'main') {
+            duration = 0;
+        }
         const messageArea = getMessageArea(context);
         
         if (!messageArea) {

@@ -7,6 +7,15 @@ function getAuthToken() {
     return localStorage.getItem('auth_token');
 }
 
+// Получить заголовки авторизации для fetch запросов
+function getAuthHeaders() {
+    const token = getAuthToken();
+    if (token) {
+        return { 'Authorization': `Bearer ${token}` };
+    }
+    return {};
+}
+
 // Сохранить токен в localStorage
 function setAuthToken(token) {
     localStorage.setItem('auth_token', token);
@@ -112,7 +121,13 @@ async function renderUserPanel() {
         </button>
     `;
     
-    document.body.appendChild(userPanel);
+    // Добавляем в header вместо body
+    const header = document.querySelector('header');
+    if (header) {
+        header.appendChild(userPanel);
+    } else {
+        document.body.appendChild(userPanel);
+    }
 }
 
 // Добавить токен ко всем fetch-запросам
@@ -136,8 +151,9 @@ window.fetch = function(...args) {
 
 // Инициализация при загрузке страницы
 document.addEventListener('DOMContentLoaded', function() {
-    // Отображаем панель пользователя на всех страницах кроме логина
-    if (!window.location.pathname.includes('/auth/login_page')) {
+    // Отображаем панель пользователя только на главной странице (index)
+    const isMainPage = window.location.pathname === '/' || window.location.pathname === '/index';
+    if (isMainPage) {
         renderUserPanel();
     }
 });

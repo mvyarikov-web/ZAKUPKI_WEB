@@ -220,7 +220,7 @@
         <header>
             <h1>⚙️ Административная панель</h1>
             <p>Управление хранилищем и индексацией документов</p>
-            <button class="btn btn-secondary" style="margin-top: 15px;" onclick="window.history.back()">← Назад</button>
+            <button class="btn btn-secondary" style="margin-top: 15px;" onclick="window.location.href='/auth/profile'">← Назад</button>
         </header>
 
         <main>
@@ -387,16 +387,18 @@
     </div>
 
     <script>
-        // Если токен пришёл в query (?token=...), сохраняем его в localStorage
+        // Если токен пришёл в query (?token=...), сохраняем его в localStorage СРАЗУ
         (function persistTokenFromQuery(){
             try {
                 const params = new URLSearchParams(window.location.search);
                 const token = params.get('token');
                 if (token && typeof setAuthToken === 'function') {
                     setAuthToken(token);
+                    console.log('Токен сохранён из URL');
                 }
             } catch (_) {}
         })();
+        
         // Открытие новой вкладки с передачей JWT через query-параметр token
         function openAdminPageWithToken(path) {
             try {
@@ -413,6 +415,7 @@
 
         // Загрузка статистики при открытии страницы
         document.addEventListener('DOMContentLoaded', function() {
+            console.log('Загрузка статистики с токеном:', getAuthToken() ? 'есть' : 'нет');
             loadStats();
             checkUploadsStatus();
             loadAuditLog();
@@ -433,8 +436,20 @@
         async function loadStats() {
             try {
                 showMessage('statsMessage', 'Загрузка статистики...', 'info');
-                const response = await fetch('/admin/storage/stats');
-                if (!response.ok) throw new Error('Ошибка загрузки статистики');
+                const response = await fetch('/admin/storage/stats', {
+                    headers: getAuthHeaders()
+                });
+                
+                if (response.status === 401) {
+                    showMessage('statsMessage', 'Требуется авторизация. Перенаправление...', 'error');
+                    setTimeout(() => window.location.href = '/auth/login', 1500);
+                    return;
+                }
+                
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({}));
+                    throw new Error(errorData.error || 'Ошибка загрузки статистики');
+                }
                 
                 const data = await response.json();
                 document.getElementById('statTotalDocs').textContent = data.total_documents || 0;
@@ -464,7 +479,10 @@
                 showMessage('restartMessage', 'Запрос на перезагрузку отправлен...', 'info');
                 const resp = await fetch('/admin/server/restart', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        ...getAuthHeaders()
+                    },
                     body: JSON.stringify({ port: port, command: command, wait: wait })
                 });
                 if (!resp.ok) {
@@ -483,7 +501,9 @@
         async function loadCandidates() {
             try {
                 showMessage('gcMessage', 'Поиск кандидатов на удаление...', 'info');
-                const response = await fetch('/admin/gc/candidates?threshold=-1.0&limit=100');
+                const response = await fetch('/admin/gc/candidates?threshold=-1.0&limit=100', {
+                    headers: getAuthHeaders()
+                });
                 if (!response.ok) throw new Error('Ошибка загрузки кандидатов');
                 
                 const data = await response.json();
@@ -527,7 +547,10 @@
                 
                 const response = await fetch('/admin/gc/run', {
                     method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
+                    headers: {
+                        'Content-Type': 'application/json',
+                        ...getAuthHeaders()
+                    },
                     body: JSON.stringify({
                         dry_run: dryRun,
                         threshold: -1.0,
@@ -554,7 +577,9 @@
         // Проверка статуса загрузок
         async function checkUploadsStatus() {
             try {
-                const response = await fetch('/admin/config');
+                const response = await fetch('/admin/config', {
+                    headers: getAuthHeaders()
+                });
                 if (response.ok) {
                     const data = await response.json();
                     uploadsEnabled = !data.uploads_disabled;
@@ -574,7 +599,10 @@
                 showMessage('uploadsMessage', 'Изменение настроек...', 'info');
                 const response = await fetch('/admin/uploads/toggle', {
                     method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
+                    headers: {
+                        'Content-Type': 'application/json',
+                        ...getAuthHeaders()
+                    },
                     body: JSON.stringify({disable: !newState})
                 });
                 
@@ -607,7 +635,9 @@
         // Загрузка логов аудита
         async function loadAuditLog() {
             try {
-                const response = await fetch('/admin/audit_log?limit=50');
+                const response = await fetch('/admin/audit_log?limit=50', {
+                    headers: getAuthHeaders()
+                });
                 if (!response.ok) throw new Error('Ошибка загрузки логов');
                 
                 const data = await response.json();
@@ -635,7 +665,9 @@
         // Проверка статуса планировщика
         async function checkSchedulerStatus() {
             try {
-                const response = await fetch('/admin/scheduler/status');
+                const response = await fetch('/admin/scheduler/status', {
+                    headers: getAuthHeaders()
+                });
                 if (!response.ok) throw new Error('Ошибка получения статуса');
                 
                 const data = await response.json();
@@ -709,7 +741,10 @@
                 showMessage('schedulerMessage', 'Изменение настроек планировщика...', 'info');
                 const response = await fetch('/admin/scheduler/toggle', {
                     method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
+                    headers: {
+                        'Content-Type': 'application/json',
+                        ...getAuthHeaders()
+                    },
                     body: JSON.stringify({enabled: newState})
                 });
                 

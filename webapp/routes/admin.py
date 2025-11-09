@@ -450,7 +450,7 @@ def db_cleanup_page():
 @admin_bp.get('/db/tables')
 @require_role('admin')
 def db_list_tables():
-    """Вернуть список всех таблиц schema=public с примерной статистикой (кол-во строк)."""
+    """Вернуть список всех таблиц schema=public с примерной статистикой (кол-во строк и размер)."""
     try:
         db = _get_db()
         tables = []
@@ -463,18 +463,36 @@ def db_list_tables():
                     ORDER BY tablename;
                 """)
                 names = [r[0] for r in cur.fetchall()]
-            # Подсчёт строк по-отдельности (простота важнее точности/скорости)
+            # Подсчёт строк и размера по-отдельности
             with conn.cursor() as cur:
                 for name in names:
                     row_count = None
+                    size_str = None
                     try:
                         cur.execute(sql.SQL('SELECT COUNT(*) FROM {};').format(sql.Identifier(name)))
                         row_count = cur.fetchone()[0]
                     except Exception:
                         row_count = None
+                    
+                    try:
+                        # Получаем размер таблицы с индексами в байтах
+                        cur.execute(sql.SQL("SELECT pg_total_relation_size({});").format(sql.Literal(name)))
+                        size_bytes = cur.fetchone()[0]
+                        if size_bytes is not None:
+                            # Форматируем в МБ/ГБ
+                            if size_bytes < 1024 * 1024:  # < 1 МБ
+                                size_str = f"{size_bytes / 1024:.1f} КБ"
+                            elif size_bytes < 1024 * 1024 * 1024:  # < 1 ГБ
+                                size_str = f"{size_bytes / (1024 * 1024):.1f} МБ"
+                            else:
+                                size_str = f"{size_bytes / (1024 * 1024 * 1024):.2f} ГБ"
+                    except Exception:
+                        size_str = None
+                    
                     tables.append({
                         'name': name,
                         'rows': row_count,
+                        'size': size_str,
                         'protected': name in protected
                     })
         return jsonify({'tables': tables})

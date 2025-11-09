@@ -596,27 +596,12 @@ if (rebuildIndexBtn) {
         if (!confirm('Пересобрать индекс всех документов? Это может занять некоторое время.')) {
             return;
         }
-        
+        rebuildIndexBtn.disabled = true;
+        rebuildIndexBtn.textContent = '🔄 Пересборка...';
         try {
-            rebuildIndexBtn.disabled = true;
-            rebuildIndexBtn.textContent = '🔄 Пересборка...';
-            
-            const response = await fetch('/rebuild_index', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' }
-            });
-            
-            const data = await response.json();
-            
-            if (data.success) {
-                MessageManager.success(data.message || 'Индекс успешно пересобран', 'main');
-                refreshIndexStatus();
-            } else {
-                MessageManager.error('Ошибка пересборки: ' + (data.message || 'Неизвестная ошибка'), 'main');
-            }
+            await rebuildIndexWithProgress();
         } catch (error) {
-            console.error('Ошибка пересборки индекса:', error);
-            MessageManager.error('Ошибка пересборки индекса: ' + error.message, 'main');
+            MessageManager.error('Ошибка пересборки индекса: ' + (error.message || error), 'main');
         } finally {
             rebuildIndexBtn.disabled = false;
             rebuildIndexBtn.innerHTML = '<i class="icon">🔄</i> Перестроить индекс';
@@ -657,7 +642,10 @@ if (deleteFilesBtn) {
                 if (uploadBar) uploadBar.style.display = 'none';
                 if (uploadFill) uploadFill.style.width = '0%';
                 if (uploadText) uploadText.textContent = '0%';
-                if (indexBar) indexBar.style.display = 'none';
+                if (indexBar) {
+                    indexBar.style.display = 'block';
+                    indexBar.style.visibility = 'visible';
+                }
                 if (indexFill) {
                     indexFill.style.width = '0%';
                     indexFill.classList.remove('completed');
@@ -816,10 +804,10 @@ function pollIndexGroupStatus(fill, text) {
     return new Promise((resolve, reject) => {
         const maxAttempts = 120; // 120 секунд максимум (2 минуты)
         let attempts = 0;
-        
+
         const checkStatus = () => {
             attempts++;
-            
+
             const userId = window.APP_USER_ID || localStorage.getItem('app_user_id') || '';
             fetch('/index_status', {
                 headers: userId ? { 'X-User-ID': userId } : {}
@@ -829,54 +817,32 @@ function pollIndexGroupStatus(fill, text) {
                     const status = data.status || 'idle';
                     const groupStatus = data.group_status || {};
                     const currentGroup = data.current_group || '';
-                    
-                    // Обновляем прогресс-бар и текст
+
+                    // Обновляем прогресс-бар
                     let progress = 10;
-                    let statusText = 'Построение индекса…';
-                    
-                    if (groupStatus.fast === 'completed') {
-                        progress = 33;
-                        statusText = '✅ Быстрые файлы готовы';
-                    }
-                    if (groupStatus.medium === 'completed') {
-                        progress = 66;
-                        statusText = '✅ Средние файлы готовы';
-                    }
-                    if (groupStatus.slow === 'completed' || status === 'completed') {
-                        progress = 100;
-                        statusText = '✅ Все файлы обработаны';
-                    }
-                    
-                    // Добавляем индикацию текущей группы, если индексация идёт
-                    if (status === 'running' && currentGroup) {
-                        const groupLabels = {
-                            'fast': '🔄 Обработка быстрых файлов',
-                            'medium': '🔄 Обработка средних файлов',
-                            'slow': '🔄 Обработка медленных файлов'
-                        };
-                        statusText = groupLabels[currentGroup] || statusText;
-                    }
-                    
+                    if (groupStatus.fast === 'completed') progress = 33;
+                    if (groupStatus.medium === 'completed') progress = 66;
+                    if (groupStatus.slow === 'completed' || status === 'completed') progress = 100;
+
                     // Плавное заполнение полоски с CSS transition
                     if (fill) {
                         fill.style.transition = 'width 0.5s ease-out';
                         fill.style.width = progress + '%';
-                        
-                        // Убираем анимацию "бегущих полосок" когда завершено
                         if (status === 'completed' || progress === 100) {
                             fill.classList.add('completed');
                         } else {
                             fill.classList.remove('completed');
                         }
                     }
-                    if (text) text.textContent = statusText;
-                    
+                    // Очищаем текст под полоской всегда
+                    if (text) text.textContent = '';
+
                     // Обновляем список файлов и статус индекса после каждой группы
                     if (progress >= 33) {
                         refreshIndexStatus();
                         updateFilesList();
                     }
-                    
+
                     // Проверяем завершение
                     if (status === 'completed' || progress === 100) {
                         refreshIndexStatus();
@@ -896,6 +862,12 @@ function pollIndexGroupStatus(fill, text) {
                 })
                 .catch(err => {
                     console.error('Ошибка опроса статуса:', err);
+                    // Сброс прогресс-бара при ошибке
+                    if (fill) {
+                        fill.style.width = '0%';
+                        // Удаляем completed всегда, даже если был добавлен
+                        fill.classList.remove('completed');
+                    }
                     if (attempts >= maxAttempts) {
                         reject(err);
                     } else {
@@ -1140,7 +1112,20 @@ async function restoreFolderStates() {
 document.addEventListener('DOMContentLoaded', function() {
     // Инициализируем флаг поиска как false при загрузке страницы
     window.searchWasPerformed = false;
-    
+
+    // Всегда показываем прогресс-бар индекса (пусть будет пустым)
+    const bar = document.getElementById('indexBuildProgress');
+    const fill = document.getElementById('indexBuildFill');
+    if (bar) {
+        bar.style.display = 'block';
+        bar.style.visibility = 'visible';
+    }
+                    if (fill) {
+                        fill.style.width = '0%';
+                        // Удаляем completed всегда, даже если был добавлен
+                        fill.classList.remove('completed');
+                    }
+
     refreshIndexStatus();
     setInterval(refreshIndexStatus, 8000);
     // Первая инициализация списка файлов через API
@@ -1158,10 +1143,7 @@ function refreshIndexStatus() {
     })
         .then(res => res.json())
         .then(data => {
-            // Сохраняем последний ответ для использования времени групп
             window.__lastIndexStatus = data;
-            
-            // Проверяем статус индексации
             const currentStatus = data.status || 'idle';
             const dbInfo = data.db || {};
             const docs = (typeof dbInfo.documents === 'number') ? dbInfo.documents : null;
@@ -1174,7 +1156,10 @@ function refreshIndexStatus() {
                     (lastIdxStr ? `обновлён: ${lastIdxStr}` : null)
                   ].filter(Boolean).join(', ')
                 : '';
-            
+
+            // --- Новое: меняем подпись под прогресс-баром ---
+            const indexText = document.getElementById('indexBuildText');
+            if (indexText) indexText.textContent = '';
             if (!data.exists) {
                 indexStatus.textContent = 'Индекс (БД): не создан' + dbSuffix;
                 indexStatus.style.color = '#a00';
@@ -1191,8 +1176,7 @@ function refreshIndexStatus() {
                     indexStatus.style.color = '#2a2';
                 }
             }
-            
-            // Обновляем индикатор групп (increment-014)
+
             if (data.group_status) {
                 updateGroupsIndicator(data.group_status, currentStatus);
             }
@@ -1200,6 +1184,8 @@ function refreshIndexStatus() {
         .catch(() => {
             indexStatus.textContent = 'Индекс (БД): ошибка запроса';
             indexStatus.style.color = '#a00';
+            const indexText = document.getElementById('indexBuildText');
+            if (indexText) indexText.textContent = 'Ошибка получения статуса индекса';
         });
 }
 

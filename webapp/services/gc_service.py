@@ -336,21 +336,21 @@ def get_storage_stats(db: RAGDatabase) -> Dict[str, Any]:
     try:
         with db.db.connect() as conn:
             with conn.cursor() as cur:
-                # Статистика документов
+                # Статистика документов через user_documents (связь пользователей с документами)
                 cur.execute("""
                     SELECT 
-                        COUNT(*) as total,
-                        SUM(CASE WHEN is_visible THEN 1 ELSE 0 END) as visible,
-                        SUM(CASE WHEN NOT is_visible THEN 1 ELSE 0 END) as deleted,
-                        COUNT(DISTINCT owner_id) as users
-                    FROM documents;
+                        COUNT(DISTINCT ud.document_id) as total,
+                        SUM(CASE WHEN NOT COALESCE(ud.is_soft_deleted, FALSE) THEN 1 ELSE 0 END) as visible,
+                        SUM(CASE WHEN COALESCE(ud.is_soft_deleted, FALSE) THEN 1 ELSE 0 END) as deleted,
+                        COUNT(DISTINCT ud.user_id) as users
+                    FROM user_documents ud;
                 """)
                 row = cur.fetchone()
                 if row:
-                    stats['total_documents'] = row[0]
-                    stats['visible_documents'] = row[1]
-                    stats['deleted_documents'] = row[2]
-                    stats['total_users'] = row[3]
+                    stats['total_documents'] = row[0] or 0
+                    stats['visible_documents'] = row[1] or 0
+                    stats['deleted_documents'] = row[2] or 0
+                    stats['total_users'] = row[3] or 0
                 
                 # Статистика чанков
                 cur.execute("SELECT COUNT(*) FROM chunks;")

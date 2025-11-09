@@ -6,30 +6,167 @@
     <title>Очистка БД</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
     <script src="{{ url_for('static', filename='js/auth.js') }}"></script>
+    <style>
+        .cleanup-container {
+            max-width: 1200px;
+            margin: 20px auto;
+            padding: 20px;
+        }
+        
+        .cleanup-header {
+            margin-bottom: 20px;
+        }
+        
+        .cleanup-header h2 {
+            margin: 0 0 10px 0;
+            color: #1f2937;
+        }
+        
+        .text-muted {
+            color: #6b7280;
+            font-size: 14px;
+        }
+        
+        .tables-card {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        
+        .card-header {
+            font-size: 18px;
+            font-weight: 600;
+            color: #1f2937;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #e5e7eb;
+        }
+        
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        
+        th {
+            text-align: left;
+            padding: 12px;
+            background: #f9fafb;
+            border-bottom: 2px solid #e5e7eb;
+            font-weight: 600;
+            color: #374151;
+            font-size: 13px;
+        }
+        
+        th:first-child {
+            width: 50px;
+            text-align: center;
+        }
+        
+        td {
+            padding: 12px;
+            border-bottom: 1px solid #e5e7eb;
+            font-size: 14px;
+        }
+        
+        td:first-child {
+            text-align: center;
+        }
+        
+        td:nth-child(3),
+        td:nth-child(4),
+        th:nth-child(3),
+        th:nth-child(4) {
+            text-align: right;
+        }
+        
+        tbody tr:hover {
+            background: #f9fafb;
+        }
+        
+        .table-checkbox {
+            cursor: pointer;
+        }
+        
+        label[for^="table_"] {
+            cursor: pointer;
+        }
+        
+        .result-block {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .result-block h5 {
+            margin: 0 0 10px 0;
+            color: #1f2937;
+        }
+        
+        .result-block pre {
+            background: #f9fafb;
+            padding: 15px;
+            border-radius: 6px;
+            overflow-x: auto;
+            font-size: 13px;
+            font-family: 'Courier New', monospace;
+        }
+    </style>
 </head>
 <body>
-<div class="container" style="max-width: 960px;">
-  <h2>Очистка базы данных</h2>
-  <p class="text-muted">Отметьте таблицы для очистки. Внимание: операция безвозвратна. Используется TRUNCATE ... RESTART IDENTITY CASCADE.</p>
-
-  <div class="mb-3">
-    <label><input type="checkbox" id="preservePrompts" checked> Сохранить таблицу prompts</label>
+<div class="cleanup-container">
+  <div class="cleanup-header">
+    <h2>Очистка базы данных</h2>
+    <p class="text-muted">Отметьте таблицы для очистки. Внимание: операция безвозвратна. Используется TRUNCATE ... RESTART IDENTITY CASCADE.</p>
+    <button class="btn btn-secondary" style="margin-top: 15px;" onclick="const token = typeof getAuthToken === 'function' ? getAuthToken() : ''; window.location.href='/admin/storage' + (token ? '?token=' + token : '');">← Назад</button>
   </div>
 
-  <div id="tablesBlock" class="card">
-    <div class="card-header">Таблицы (public)</div>
-    <div class="list-group list-group-flush" id="tablesList">
-      <div class="list-group-item">Загрузка списка таблиц…</div>
+  <!-- Блок с итогами -->
+  <div class="tables-card" style="margin-bottom: 15px; background: #f0f9ff; border-left: 4px solid #3b82f6;">
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; padding: 15px;">
+      <div>
+        <div style="font-size: 13px; color: #6b7280; margin-bottom: 5px;">Всего таблиц</div>
+        <div id="totalTables" style="font-size: 20px; font-weight: 600; color: #1f2937;">0</div>
+      </div>
+      <div>
+        <div style="font-size: 13px; color: #6b7280; margin-bottom: 5px;">Общее количество записей</div>
+        <div id="totalRows" style="font-size: 20px; font-weight: 600; color: #1f2937;">0</div>
+      </div>
+      <div>
+        <div style="font-size: 13px; color: #6b7280; margin-bottom: 5px;">Суммарный объем</div>
+        <div id="totalSize" style="font-size: 20px; font-weight: 600; color: #1f2937;">0 МБ</div>
+      </div>
     </div>
   </div>
 
-  <div class="mt-3">
+  <div class="tables-card">
+    <div class="card-header">Таблицы (public)</div>
+    <div style="overflow-x: auto;">
+      <table>
+        <thead>
+          <tr>
+            <th><input type="checkbox" id="selectAll" title="Выбрать все"></th>
+            <th>Название таблицы</th>
+            <th>Записей</th>
+            <th>Объем на диске</th>
+          </tr>
+        </thead>
+        <tbody id="tablesList">
+          <tr><td colspan="4" style="text-align: center;">Загрузка списка таблиц…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div style="margin-bottom: 20px;">
     <button id="runCleanup" class="btn btn-danger">Очистить выбранные</button>
   </div>
 
-  <div class="mt-4" id="resultBlock" style="display:none;">
+  <div id="resultBlock" class="result-block" style="display:none;">
     <h5>Результат</h5>
-    <pre id="resultPre" style="white-space: pre-wrap;"></pre>
+    <pre id="resultPre"></pre>
   </div>
 </div>
 
@@ -46,35 +183,113 @@
 })();
 (async function() {
   const listEl = document.getElementById('tablesList');
-  const preserveEl = document.getElementById('preservePrompts');
   const resultBlock = document.getElementById('resultBlock');
   const resultPre = document.getElementById('resultPre');
 
   function renderTables(tables) {
     listEl.innerHTML = '';
+    if (!tables || tables.length === 0) {
+      listEl.innerHTML = '<tr><td colspan="4" style="text-align: center;">Нет доступных таблиц</td></tr>';
+      updateTotals(tables);
+      return;
+    }
     tables.forEach(t => {
       const id = `table_${t.name}`;
-      const item = document.createElement('label');
-      item.className = 'list-group-item d-flex justify-content-between align-items-center';
-      const left = document.createElement('div');
+      const tr = document.createElement('tr');
+      
+      // Чекбокс
+      const tdCheck = document.createElement('td');
       const cb = document.createElement('input');
       cb.type = 'checkbox';
       cb.value = t.name;
       cb.id = id;
-      cb.disabled = t.protected === true; // спец. таблицы защитим
-      left.appendChild(cb);
-      const span = document.createElement('span');
-      span.textContent = ' ' + t.name;
-      left.appendChild(span);
-
-      const right = document.createElement('small');
-      right.className = 'text-muted';
-      right.textContent = (t.rows === null || t.rows === undefined) ? 'строк: —' : `строк: ${t.rows}`;
-
-      item.appendChild(left);
-      item.appendChild(right);
-      listEl.appendChild(item);
+      cb.className = 'table-checkbox';
+      cb.disabled = t.protected === true;
+      tdCheck.appendChild(cb);
+      
+      // Название таблицы
+      const tdName = document.createElement('td');
+      const label = document.createElement('label');
+      label.setAttribute('for', id);
+      label.textContent = t.name;
+      label.style.cursor = 'pointer';
+      tdName.appendChild(label);
+      
+      // Количество записей
+      const tdRows = document.createElement('td');
+      tdRows.style.textAlign = 'right';
+      tdRows.textContent = (t.rows === null || t.rows === undefined) ? '—' : t.rows.toLocaleString('ru-RU');
+      
+      // Объем на диске
+      const tdSize = document.createElement('td');
+      tdSize.style.textAlign = 'right';
+      tdSize.textContent = t.size || '—';
+      
+      tr.appendChild(tdCheck);
+      tr.appendChild(tdName);
+      tr.appendChild(tdRows);
+      tr.appendChild(tdSize);
+      listEl.appendChild(tr);
     });
+    
+    // Обработчик для "Выбрать все"
+    const selectAll = document.getElementById('selectAll');
+    selectAll.onclick = function() {
+      const checkboxes = listEl.querySelectorAll('.table-checkbox:not(:disabled)');
+      checkboxes.forEach(cb => cb.checked = selectAll.checked);
+    };
+    
+    // Обновляем итоги
+    updateTotals(tables);
+  }
+
+  function updateTotals(tables) {
+    if (!tables || tables.length === 0) {
+      document.getElementById('totalTables').textContent = '0';
+      document.getElementById('totalRows').textContent = '0';
+      document.getElementById('totalSize').textContent = '0 МБ';
+      return;
+    }
+    
+    let totalRows = 0;
+    let totalSizeBytes = 0;
+    
+    tables.forEach(t => {
+      if (t.rows !== null && t.rows !== undefined) {
+        totalRows += t.rows;
+      }
+      
+      // Парсим размер из строки (например "12.5 МБ", "1.2 ГБ", "256 КБ")
+      if (t.size && typeof t.size === 'string') {
+        const match = t.size.match(/([\d.]+)\s*(КБ|МБ|ГБ)/i);
+        if (match) {
+          const value = parseFloat(match[1]);
+          const unit = match[2].toUpperCase();
+          if (unit === 'КБ') {
+            totalSizeBytes += value * 1024;
+          } else if (unit === 'МБ') {
+            totalSizeBytes += value * 1024 * 1024;
+          } else if (unit === 'ГБ') {
+            totalSizeBytes += value * 1024 * 1024 * 1024;
+          }
+        }
+      }
+    });
+    
+    // Форматируем итоги
+    document.getElementById('totalTables').textContent = tables.length.toLocaleString('ru-RU');
+    document.getElementById('totalRows').textContent = totalRows.toLocaleString('ru-RU');
+    
+    // Форматируем размер
+    let sizeStr;
+    if (totalSizeBytes < 1024 * 1024) {
+      sizeStr = (totalSizeBytes / 1024).toFixed(1) + ' КБ';
+    } else if (totalSizeBytes < 1024 * 1024 * 1024) {
+      sizeStr = (totalSizeBytes / (1024 * 1024)).toFixed(1) + ' МБ';
+    } else {
+      sizeStr = (totalSizeBytes / (1024 * 1024 * 1024)).toFixed(2) + ' ГБ';
+    }
+    document.getElementById('totalSize').textContent = sizeStr;
   }
 
   async function loadTables() {
@@ -84,12 +299,12 @@
       if (data.error) throw new Error(data.error);
       renderTables(data.tables || []);
     } catch (e) {
-      listEl.innerHTML = `<div class="list-group-item text-danger">Ошибка загрузки списка таблиц: ${e.message}</div>`;
+      listEl.innerHTML = `<tr><td colspan="4" class="text-danger" style="text-align: center;">Ошибка загрузки списка таблиц: ${e.message}</td></tr>`;
     }
   }
 
   document.getElementById('runCleanup').addEventListener('click', async () => {
-    const checked = Array.from(listEl.querySelectorAll('input[type="checkbox"]:checked')).map(cb => cb.value);
+    const checked = Array.from(listEl.querySelectorAll('.table-checkbox:checked')).map(cb => cb.value);
     if (checked.length === 0) {
       alert('Выберите хотя бы одну таблицу');
       return;
@@ -101,7 +316,7 @@
       const resp = await fetch('/admin/db/cleanup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tables: checked, preserve_prompts: preserveEl.checked })
+        body: JSON.stringify({ tables: checked })
       });
       const data = await resp.json();
       resultBlock.style.display = 'block';
