@@ -1,9 +1,13 @@
 """Blueprint для модуля AI анализа через GPT."""
 import os
-from flask import Blueprint, request, jsonify, current_app, render_template
+from typing import Dict, List, Tuple
+
+from flask import Blueprint, request, jsonify, current_app, render_template, g
+
+from webapp.config.config_service import get_config
+from webapp.models.rag_models import RAGDatabase
 from webapp.services.gpt_analysis import GPTAnalysisService, PromptManager
 from webapp.services.state import FilesState
-from document_processor.core import DocumentProcessor
 
 
 ai_analysis_bp = Blueprint('ai_analysis', __name__, url_prefix='/ai_analysis')
@@ -13,6 +17,156 @@ def _get_files_state():
     """Получить экземпляр FilesState."""
     results_file = current_app.config['SEARCH_RESULTS_FILE']
     return FilesState(results_file)
+
+
+def _get_db() -> RAGDatabase:
+    """Получить объект работы с БД (кешируется в контексте запроса)."""
+    if 'db' not in g:
+        config = get_config()
+        dsn = config.database_url
+        if dsn.startswith('postgresql+psycopg2://'):
+            dsn = dsn.replace('postgresql+psycopg2://', 'postgresql://', 1)
+        g.db = RAGDatabase(dsn)
+    return g.db
+
+
+def _required_user_id() -> int:
+    """Строго получить идентификатор пользователя с учётом STRICT_USER_ID."""
+    config = get_config()
+    strict = config.strict_user_id
+
+    # g.user.id
+    user = getattr(g, 'user', None)
+    if user and getattr(user, 'id', None):
+        return int(user.id)
+
+    # Заголовок X-User-ID
+    header_id = request.headers.get('X-User-ID')
+    if header_id and str(header_id).isdigit():
+        return int(header_id)
+
+    if strict:
+        raise ValueError('user_id отсутствует (STRICT_USER_ID)')
+    return 1
+
+
+def _sanitize_paths(file_paths: List[str]) -> Tuple[List[str], List[str], Dict[str, str]]:
+    """Проверить и нормализовать пути, сохранив исходные значения.
+
+    Returns:
+        tuple: (валидные, отклонённые, отображение нормализованных путей к исходным)
+    """
+    valid: List[str] = []
+    rejected: List[str] = []
+    mapping: Dict[str, str] = {}
+
+    for raw in file_paths:
+        if not isinstance(raw, str):
+            rejected.append(str(raw))
+            continue
+        candidate = raw.strip()
+        if not candidate:
+            rejected.append(raw)
+            continue
+        norm = os.path.normpath(candidate).replace('\\', '/')
+        if norm.startswith('../') or norm.startswith('..\\') or norm == '..':
+            rejected.append(raw)
+            continue
+        if os.path.isabs(norm):
+            rejected.append(raw)
+            continue
+        if any(part == '..' for part in norm.split('/') if part):
+            rejected.append(raw)
+            continue
+        if norm == '.':
+            rejected.append(raw)
+            continue
+        mapping[norm] = raw
+        if norm not in valid:
+            valid.append(norm)
+
+    return valid, rejected, mapping
+
+
+def _fetch_documents_from_db(db: RAGDatabase, owner_id: int, file_paths: List[str]) -> Tuple[str, List[Dict[str, str]], List[str]]:
+    """Получить тексты документов из БД по user_path."""
+    if not file_paths:
+        return '', [], []
+
+    valid, rejected, mapping = _sanitize_paths(file_paths)
+    if not valid:
+        return '', [], rejected
+
+    docs: List[Dict[str, str]] = []
+    missing: List[str] = rejected.copy()
+    combined_parts: List[str] = []
+
+    try:
+        with db.db.connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT ud.user_path, d.id, COALESCE(ud.original_filename, d.sha256) AS display_name
+                    FROM user_documents ud
+                    JOIN documents d ON d.id = ud.document_id
+                    WHERE ud.user_id = %s
+                      AND ud.is_soft_deleted = FALSE
+                      AND ud.user_path = ANY(%s);
+                    """,
+                    (owner_id, valid)
+                )
+                rows = cur.fetchall()
+
+                path_to_doc: Dict[str, Tuple[int, str]] = {
+                    row[0]: (int(row[1]), row[2]) for row in rows
+                }
+
+                if not path_to_doc:
+                    return '', [], [mapping.get(v, v) for v in valid]
+
+                doc_ids = [doc_id for doc_id, _ in path_to_doc.values()]
+                chunk_rows = []
+                if doc_ids:
+                    cur.execute(
+                        """
+                        SELECT c.document_id, c.chunk_index, c.text
+                        FROM chunks c
+                        WHERE c.document_id = ANY(%s)
+                        ORDER BY c.document_id, c.chunk_index;
+                        """,
+                        (doc_ids,)
+                    )
+                    chunk_rows = cur.fetchall()
+
+        chunks_by_doc: Dict[int, List[str]] = {}
+        for doc_id, _, text in chunk_rows:
+            chunks_by_doc.setdefault(int(doc_id), []).append(text or '')
+
+        for norm_path in valid:
+            if norm_path not in path_to_doc:
+                missing.append(mapping.get(norm_path, norm_path))
+                continue
+            doc_id, display_name = path_to_doc[norm_path]
+            chunk_list = chunks_by_doc.get(doc_id, [])
+            text = '\n\n'.join(chunk_list).strip()
+            original = mapping.get(norm_path, norm_path)
+            docs.append({
+                'path': original,
+                'display_name': display_name,
+                'text': text,
+                'length': len(text)
+            })
+            if text:
+                combined_parts.append(f"=== {display_name or os.path.basename(original)} ===")
+                combined_parts.append(text)
+                combined_parts.append('')
+
+    except Exception:
+        current_app.logger.exception('Не удалось получить тексты документов из БД')
+        raise
+
+    combined_text = '\n'.join(combined_parts).strip()
+    return combined_text, docs, missing
 
 
 @ai_analysis_bp.route('/get_text_size', methods=['POST'])
@@ -47,19 +201,34 @@ def get_text_size():
                 'message': 'Не выбраны файлы для анализа'
             }), 400
         
-        # В DB-first режимах файловый индекс отключён
-        if current_app.config.get('use_database', False):
-            return jsonify({'success': False, 'message': 'Файловый индекс отключён (DB-first).'}), 400
+        if not current_app.config.get('use_database', False):
+            return jsonify({
+                'success': False,
+                'message': 'Режим БД отключён, AI анализ недоступен'
+            }), 400
 
-        # В legacy-режиме извлекаем текст напрямую из файлов
-        combined_text = None
-        upload_folder = current_app.config['UPLOAD_FOLDER']
-        combined_text = _extract_text_from_files(file_paths, upload_folder)
+        try:
+            db = _get_db()
+            owner_id = _required_user_id()
+        except ValueError:
+            return jsonify({
+                'success': False,
+                'message': 'Не указан идентификатор пользователя (X-User-ID)'
+            }), 400
+
+        combined_text, _, missing = _fetch_documents_from_db(db, owner_id, file_paths)
+
+        if missing:
+            current_app.logger.warning('AI анализ: отсутствуют файлы %s', missing)
+            return jsonify({
+                'success': False,
+                'message': f"Файлы не найдены в индексе: {', '.join(missing)}"
+            }), 404
         
         if not combined_text:
             return jsonify({
                 'success': False,
-                'message': 'Не удалось извлечь текст из файлов'
+                'message': 'Не удалось получить текст документов'
             }), 400
         
         # Считаем размеры
@@ -128,27 +297,48 @@ def analyze():
             }), 400
         
         current_app.logger.info(f'AI анализ: получено {len(file_paths)} файлов')
-        
-        # В DB-first режимах файловый индекс отключён
-        if current_app.config.get('use_database', False):
-            return jsonify({'success': False, 'message': 'Файловый индекс отключён (DB-first).'}), 400
 
-        # Если передан override_text (из окна оптимизации) — используем его
-        if isinstance(override_text, str) and override_text.strip():
-            combined_text = override_text
+        if not current_app.config.get('use_database', False):
+            return jsonify({
+                'success': False,
+                'message': 'Режим БД отключён, AI анализ недоступен'
+            }), 400
+
+        try:
+            db = _get_db()
+            owner_id = _required_user_id()
+        except ValueError:
+            return jsonify({
+                'success': False,
+                'message': 'Не указан идентификатор пользователя (X-User-ID)'
+            }), 400
+
+        override_text_clean = override_text.strip() if isinstance(override_text, str) else ''
+        combined_text = ''
+
+        if override_text_clean:
+            # Проверяем доступность файлов, но используем предоставленный текст
+            _, _, missing = _fetch_documents_from_db(db, owner_id, file_paths)
+            if missing:
+                current_app.logger.warning('AI анализ: отсутствуют файлы %s', missing)
+                return jsonify({
+                    'success': False,
+                    'message': f"Файлы не найдены в индексе: {', '.join(missing)}"
+                }), 404
+            combined_text = override_text_clean
         else:
-            combined_text = None  # DB-first: не извлекаем из файлового индекса
-
-        # Безопасный фолбэк: если по какой-то причине текста нет в индексе (не должен происходить при валидном индексе),
-        # пробуем старый способ извлечения из исходных файлов. Это не блокирует UI и сработает только точечно.
-        if not combined_text:
-            upload_folder = current_app.config['UPLOAD_FOLDER']
-            combined_text = _extract_text_from_files(file_paths, upload_folder)
+            combined_text, _, missing = _fetch_documents_from_db(db, owner_id, file_paths)
+            if missing:
+                current_app.logger.warning('AI анализ: отсутствуют файлы %s', missing)
+                return jsonify({
+                    'success': False,
+                    'message': f"Файлы не найдены в индексе: {', '.join(missing)}"
+                }), 404
         
         if not combined_text:
             return jsonify({
                 'success': False,
-                'message': 'Не удалось извлечь текст из файлов'
+                'message': 'Не удалось получить текст документов'
             }), 400
         
         current_app.logger.info(f'Извлечено {len(combined_text)} символов текста')
@@ -205,27 +395,18 @@ def get_texts():
         if not file_paths:
             return jsonify({'success': False, 'message': 'Не выбраны файлы'}), 400
 
-        if current_app.config.get('use_database', False):
-            return jsonify({'success': False, 'message': 'Файловый индекс отключён (DB-first).'}), 400
+        if not current_app.config.get('use_database', False):
+            return jsonify({'success': False, 'message': 'Режим БД отключён, тексты недоступны'}), 400
 
-        # Legacy-режим: извлекаем тексты напрямую из исходных файлов
-        docs = []
         try:
-            upload_folder = current_app.config['UPLOAD_FOLDER']
-            processor = DocumentProcessor()
-            for rel_path in file_paths:
-                try:
-                    full_path = os.path.join(upload_folder, rel_path)
-                    if not os.path.exists(full_path):
-                        text = ''
-                    else:
-                        text = processor.extract_text(full_path) or ''
-                except Exception:
-                    current_app.logger.debug('Ошибка извлечения текста для %s', rel_path, exc_info=True)
-                    text = ''
-                docs.append({'path': rel_path, 'text': text, 'length': len(text)})
-        except Exception:
-            return jsonify({'success': False, 'message': 'Не удалось извлечь тексты'}), 500
+            db = _get_db()
+            owner_id = _required_user_id()
+        except ValueError:
+            return jsonify({'success': False, 'message': 'Не указан идентификатор пользователя (X-User-ID)'}), 400
+
+        _, docs, missing = _fetch_documents_from_db(db, owner_id, file_paths)
+        if missing:
+            return jsonify({'success': False, 'message': f"Файлы не найдены в индексе: {', '.join(missing)}"}), 404
 
         return jsonify({'success': True, 'docs': docs}), 200
     except Exception as e:
@@ -293,31 +474,6 @@ def get_workspace():
     except Exception as e:
         current_app.logger.exception('Ошибка в /ai_analysis/workspace: %s', e)
         return jsonify({'success': False, 'message': str(e)}), 500
-
-
-def _extract_single_from_index(index_content: str, rel_path: str) -> str:
-    """Извлечь текст одного документа из содержимого индекса по rel_path."""
-    try:
-        DOC_START_MARKER = "<<< НАЧАЛО ДОКУМЕНТА >>>"
-        DOC_END_MARKER = "<<< КОНЕЦ ДОКУМЕНТА >>>"
-        # Ищем заголовок соответствующего файла
-        marker = f"ЗАГОЛОВОК: {rel_path}\n"
-        start_pos = index_content.find(marker)
-        if start_pos == -1:
-            return ''
-        # От начала заголовка ищем маркер начала документа
-        doc_start = index_content.find(DOC_START_MARKER, start_pos)
-        if doc_start == -1:
-            return ''
-        doc_start += len(DOC_START_MARKER) + 1  # +\n
-        # Ищем конец документа
-        doc_end = index_content.find(DOC_END_MARKER, doc_start)
-        if doc_end == -1:
-            return ''
-        body = index_content[doc_start:doc_end]
-        return body.strip()
-    except Exception:
-        return ''
 
 
 @ai_analysis_bp.route('/test_models', methods=['GET'])
@@ -490,113 +646,6 @@ def list_prompts():
             'success': False,
             'message': f'Ошибка получения списка промптов: {str(e)}'
         }), 500
-
-
-def _extract_text_from_files(file_paths, upload_folder):
-    """
-    Извлечь текст из указанных файлов.
-    
-    Args:
-        file_paths: Список относительных путей к файлам
-        upload_folder: Базовая папка с файлами
-        
-    Returns:
-        Объединённый текст из всех файлов
-    """
-    processor = DocumentProcessor()
-    combined_text = []
-    
-    for rel_path in file_paths:
-        try:
-            # Формируем полный путь
-            full_path = os.path.join(upload_folder, rel_path)
-            
-            if not os.path.exists(full_path):
-                current_app.logger.warning(f'Файл не найден: {full_path}')
-                continue
-            
-            # Извлекаем текст
-            text = processor.extract_text(full_path)
-            
-            if text:
-                # Добавляем заголовок файла
-                combined_text.append(f"=== {os.path.basename(rel_path)} ===")
-                combined_text.append(text)
-                combined_text.append("")  # Пустая строка между файлами
-            
-        except Exception as e:
-            current_app.logger.error(f'Ошибка извлечения текста из {rel_path}: {e}')
-    
-    return '\n'.join(combined_text)
-
-
-def _extract_text_from_index_for_files(file_paths, index_path: str) -> str:
-    """Извлекает текст для набора файлов из сводного индекса.
-
-    Использует маркеры начала/конца документа, чтобы получить тело, и не обращается к исходным файлам.
-    Совместимо с виртуальными путями из архивов (zip://, rar://). Возвращает объединённый текст
-    c простыми разделителями между файлами.
-
-    Args:
-        file_paths: Список относительных путей к файлам (как в UI/индексе)
-        index_path: Полный путь к '_search_index.txt'
-
-    Returns:
-        Строка объединённого текста
-    """
-    DOC_START_MARKER = "<<< НАЧАЛО ДОКУМЕНТА >>>"
-    DOC_END_MARKER = "<<< КОНЕЦ ДОКУМЕНТА >>>"
-
-    try:
-        import re
-        # Читаем индекс один раз для эффективности
-        with open(index_path, 'r', encoding='utf-8', errors='ignore') as f:
-            content = f.read()
-
-        chunks: list[str] = []
-
-        for rel_path in file_paths:
-            try:
-                # Нормализуем для поиска по индексу
-                norm = (rel_path or '').replace('\\', '/')
-                norm_clean = re.sub(r'^(zip://|rar://)', '', norm)
-
-                # Пытаемся найти соответствующий заголовок
-                patterns = [
-                    rf"ЗАГОЛОВОК: {re.escape(norm)}\n",
-                    rf"ЗАГОЛОВОК: {re.escape(norm_clean)}\n",
-                    rf"ЗАГОЛОВОК: .*{re.escape(os.path.basename(norm))}\n",
-                    rf"ЗАГОЛОВОК: .*{re.escape(os.path.basename(norm_clean))}\n",
-                ]
-
-                extracted = ''
-                for pat in patterns:
-                    for m in re.finditer(pat, content, re.MULTILINE | re.IGNORECASE):
-                        start_pos = content.find(DOC_START_MARKER, m.end())
-                        if start_pos == -1:
-                            continue
-                        end_pos = content.find(DOC_END_MARKER, start_pos + len(DOC_START_MARKER))
-                        if end_pos == -1:
-                            body = content[start_pos + len(DOC_START_MARKER):].strip()
-                        else:
-                            body = content[start_pos + len(DOC_START_MARKER):end_pos].strip()
-                        if body:
-                            extracted = body
-                            break
-                    if extracted:
-                        break
-
-                if extracted:
-                    chunks.append(f"=== {os.path.basename(rel_path)} ===\n{extracted}\n")
-                else:
-                    current_app.logger.debug("Текст в индексе не найден для: %s", rel_path)
-            except Exception:
-                current_app.logger.debug("Ошибка извлечения из индекса для: %s", rel_path, exc_info=True)
-
-        return '\n'.join(chunks).strip()
-    except Exception:
-        current_app.logger.exception('Сбой извлечения текста из индекса для AI-анализа')
-        return ''
 
 
 @ai_analysis_bp.route('/optimize/preview', methods=['POST'])
