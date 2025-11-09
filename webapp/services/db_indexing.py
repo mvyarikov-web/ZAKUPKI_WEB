@@ -15,6 +15,7 @@ from flask import current_app
 from webapp.models.rag_models import RAGDatabase
 from webapp.services.chunking import chunk_document
 from document_processor.extractors.text_extractor import extract_text
+from webapp.utils.path_utils import normalize_path, get_relative_path
 
 
 def calculate_file_hash(file_path: str) -> str:
@@ -590,20 +591,12 @@ def handle_duplicate_upload(
     """
     filename = os.path.basename(file_path)
 
-    # Относительный путь для user_path (в пределах uploads)
+    # Относительный путь для user_path (в пределах uploads) с нормализацией
     uploads_root = current_app.config.get('UPLOAD_FOLDER')
-    try:
-        if uploads_root:
-            abs_file = os.path.abspath(file_path)
-            abs_root = os.path.abspath(uploads_root)
-            if os.path.commonpath([abs_file, abs_root]) == abs_root:
-                user_path = os.path.relpath(abs_file, abs_root)
-            else:
-                user_path = os.path.basename(file_path)
-        else:
-            user_path = os.path.basename(file_path)
-    except Exception:
-        user_path = os.path.basename(file_path)
+    if uploads_root:
+        user_path = get_relative_path(file_path, uploads_root)
+    else:
+        user_path = normalize_path(os.path.basename(file_path))
 
     # Проверяем существование глобального документа
     with db.db.connect() as conn:

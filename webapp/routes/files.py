@@ -8,6 +8,7 @@ from webapp.services.state import FilesState
 from webapp.services.db_indexing import calculate_file_hash, handle_duplicate_upload
 from webapp.models.rag_models import RAGDatabase
 from webapp.config.config_service import get_config
+from webapp.utils.path_utils import normalize_path, get_relative_path
 
 files_bp = Blueprint('files', __name__)
 
@@ -448,7 +449,7 @@ def _build_tree_recursive(base_path: str, current_path: str, allowed_extensions:
             continue
         
         item_path = os.path.join(current_path, item)
-        rel_path = os.path.relpath(item_path, base_path)
+        rel_path = normalize_path(os.path.relpath(item_path, base_path))
         
         if os.path.isdir(item_path):
             # Рекурсивно обрабатываем подпапку

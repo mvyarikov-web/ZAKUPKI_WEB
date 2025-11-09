@@ -6,6 +6,7 @@ from markupsafe import Markup
 from webapp.services.files import allowed_file, is_safe_subpath
 from webapp.services.state import FilesState
 from webapp.middleware.auth_middleware import require_auth
+from webapp.utils.path_utils import normalize_path
 
 pages_bp = Blueprint('pages', __name__)
 
@@ -182,7 +183,9 @@ def view_file(filepath):
 
     try:
         decoded_filepath = unquote(filepath)
-        current_app.logger.info(f"Просмотр файла: {decoded_filepath}")
+        # Нормализуем путь для согласованности с БД
+        normalized_filepath = normalize_path(decoded_filepath)
+        current_app.logger.info(f"Просмотр файла: {normalized_filepath} (original: {decoded_filepath})")
         
         # Проверка безопасности пути
         if not is_safe_subpath(current_app.config['UPLOAD_FOLDER'], decoded_filepath):
@@ -201,6 +204,7 @@ def view_file(filepath):
         with db.db.connect() as conn:
             with conn.cursor() as cur:
                 # Ищем документ по user_path через связь user_documents
+                # Используем нормализованный путь для поиска
                 cur.execute(
                     """
                     SELECT d.id, COALESCE(ud.original_filename, d.sha256) AS filename, 'indexed' AS status
@@ -209,11 +213,11 @@ def view_file(filepath):
                     WHERE ud.user_id = %s AND ud.is_soft_deleted = FALSE AND ud.user_path = %s
                     LIMIT 1;
                     """,
-                    (owner_id, decoded_filepath)
+                    (owner_id, normalized_filepath)
                 )
                 doc_row = cur.fetchone()
                 if not doc_row:
-                    current_app.logger.warning(f"Документ не найден в БД: {decoded_filepath}")
+                    current_app.logger.warning(f"Документ не найден в БД: {normalized_filepath}")
                     return jsonify({'error': 'Документ не найден в индексе.'}), 404
                 doc_id, filename, status = doc_row
                 document = {'id': doc_id, 'filename': filename, 'status': status}
