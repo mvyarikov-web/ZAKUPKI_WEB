@@ -466,6 +466,66 @@ class TokenUsage(Base):
     def __repr__(self):
         return f"<TokenUsage(id={self.id}, model_id='{self.model_id}', total_tokens={self.total_tokens})>"
 
+
+class AIModelConfig(Base):
+    """Конфигурация AI моделей (замена models.json)."""
+    __tablename__ = 'ai_model_configs'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    model_id = Column(String(127), nullable=False, unique=True, index=True)
+    display_name = Column(String(255), nullable=False)
+    provider = Column(String(63), nullable=False)  # openai, perplexity, deepseek, etc.
+    context_window_tokens = Column(Integer, nullable=False, default=4096)
+    max_output_tokens = Column(Integer)
+    price_input_per_1m = Column(Integer, default=0)  # центы
+    price_output_per_1m = Column(Integer, default=0)  # центы
+    price_per_1000_requests = Column(Integer)  # центы, для моделей с посчётом за запросы
+    pricing_model = Column(String(31), default='per_token')  # per_token или per_request
+    supports_system_role = Column(Boolean, default=True)
+    supports_streaming = Column(Boolean, default=True)
+    supports_function_calling = Column(Boolean, default=False)
+    is_enabled = Column(Boolean, default=True)
+    is_default = Column(Boolean, default=False)
+    timeout_seconds = Column(Integer, default=60)
+    config_json = Column(JSON)  # дополнительные настройки
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    __table_args__ = (
+        Index('idx_ai_model_configs_provider_enabled', 'provider', 'is_enabled'),
+        Index('idx_ai_model_configs_default', 'is_default'),
+    )
+    
+    def __repr__(self):
+        return f"<AIModelConfig(id={self.id}, model_id='{self.model_id}', provider='{self.provider}')>"
+
+
+class FileSearchState(Base):
+    """Состояния файлов при поиске (замена search_results.json)."""
+    __tablename__ = 'file_search_state'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    file_path = Column(String(1000), nullable=False)  # относительный путь от uploads/
+    status = Column(String(63), nullable=False)  # not_checked, processing, contains_keywords, no_keywords, error
+    search_terms = Column(Text)  # последние поисковые термины
+    result_json = Column(JSON)  # детали результата
+    last_checked_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Связи
+    user = relationship('User', foreign_keys=[user_id])
+    
+    __table_args__ = (
+        Index('idx_file_search_state_user_file', 'user_id', 'file_path', unique=True),
+        Index('idx_file_search_state_status', 'status'),
+        Index('idx_file_search_state_updated', 'updated_at'),
+    )
+    
+    def __repr__(self):
+        return f"<FileSearchState(id={self.id}, user_id={self.user_id}, file_path='{self.file_path}', status='{self.status}')>"
+
+
 # Экспорт всех моделей
 __all__ = [
     'User',
@@ -483,4 +543,6 @@ __all__ = [
     'HTTPRequestLog',
     'ErrorLog',
     'TokenUsage',
+    'AIModelConfig',
+    'FileSearchState',
 ]
