@@ -258,6 +258,28 @@
                 <div id="statsMessage" class="message-box"></div>
             </div>
 
+            <!-- Перезагрузка сервера -->
+            <div class="admin-section">
+                <h2>🔁 Перезагрузка сервера</h2>
+                <p style="color:#7f8c8d; margin-bottom:12px;">Запланировать безопасную перезагрузку сервера: порт будет освобождён, затем сервер запустится вновь указанной командой.</p>
+                <div class="admin-controls" style="gap: 15px; align-items: flex-end; flex-wrap: wrap;">
+                    <div>
+                        <div class="stat-label">Порт</div>
+                        <input id="restartPort" type="number" min="1" max="65535" value="5000" style="padding:8px; width:140px;">
+                    </div>
+                    <div style="flex:1; min-width: 260px;">
+                        <div class="stat-label">Команда запуска</div>
+                        <input id="restartCommand" type="text" value=".venv/bin/python app.py" style="padding:8px; width:100%;">
+                    </div>
+                    <div>
+                        <div class="stat-label">Ожидание (сек)</div>
+                        <input id="restartWait" type="number" min="0" step="0.1" value="2.5" style="padding:8px; width:120px;">
+                    </div>
+                    <button class="btn-admin warning" onclick="restartServer()">🔁 Перезагрузить сервер</button>
+                </div>
+                <div id="restartMessage" class="message-box"></div>
+            </div>
+
             <!-- Очистка базы данных -->
             <div class="admin-section">
                 <h2>🧹 Очистка базы данных</h2>
@@ -405,6 +427,33 @@
             } catch (error) {
                 console.error('Ошибка загрузки статистики:', error);
                 showMessage('statsMessage', 'Ошибка: ' + error.message, 'error');
+            }
+        }
+
+        // Перезагрузка сервера
+        async function restartServer() {
+            if (!confirm('Перезагрузить сервер? Текущее соединение может быть потеряно на несколько секунд.')) {
+                return;
+            }
+            const port = parseInt(document.getElementById('restartPort').value || '5000', 10);
+            const command = document.getElementById('restartCommand').value || '.venv/bin/python app.py';
+            const wait = parseFloat(document.getElementById('restartWait').value || '2.5');
+            try {
+                showMessage('restartMessage', 'Запрос на перезагрузку отправлен...', 'info');
+                const resp = await fetch('/admin/server/restart', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ port: port, command: command, wait: wait })
+                });
+                if (!resp.ok) {
+                    const txt = await resp.text();
+                    throw new Error('HTTP ' + resp.status + ': ' + txt);
+                }
+                const data = await resp.json();
+                showMessage('restartMessage', data.message || 'Перезагрузка запланирована', 'success');
+            } catch (e) {
+                console.error('Ошибка перезагрузки:', e);
+                showMessage('restartMessage', 'Ошибка: ' + e.message, 'error');
             }
         }
 

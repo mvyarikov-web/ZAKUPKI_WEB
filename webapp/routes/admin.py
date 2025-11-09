@@ -1,5 +1,8 @@
 """Blueprint для административной панели управления хранилищем."""
 from flask import Blueprint, request, jsonify, current_app, render_template, g
+import threading
+import time
+import os
 from webapp.middleware.auth_middleware import require_role
 from webapp.services.gc_service import (
     run_garbage_collection,
@@ -556,3 +559,63 @@ def db_cleanup_run():
     except Exception:
         current_app.logger.exception('Ошибка очистки таблиц БД')
         return jsonify({'error': 'Не удалось выполнить очистку'}), 500
+
+
+# ===== Перезагрузка сервера =====
+
+@admin_bp.post('/server/restart')
+@require_role('admin')
+def server_restart():
+    """Запланировать перезагрузку сервера.
+
+    Т.к. текущий процесс держит порт, прямая попытка освободить его сразу
+    внутри запроса может убить соединение до ответа. Поэтому используем
+    отложенный фоновой поток: возвращаем ответ клиенту, затем через небольшую
+    паузу выполняем перезагрузку (освобождение порта + запуск новой команды) и
+    завершаем текущий процесс.
+
+    JSON Body (опционально): {"port": 5000, "command": ".venv/bin/python app.py", "wait": 2.5}
+    Если параметры не переданы, применяются дефолты.
+    """
+    try:
+        data = request.get_json(silent=True) or {}
+        port = int(data.get('port', 5000))
+        start_command = data.get('command', '.venv/bin/python app.py')
+        wait_time = float(data.get('wait', 2.5))
+
+        if port <= 0 or port > 65535:
+            return jsonify({'error': 'Некорректный порт'}), 400
+        if not isinstance(start_command, str) or not start_command.strip():
+            return jsonify({'error': 'Команда запуска должна быть непустой строкой'}), 400
+
+        current_app.logger.warning(f"Администратор инициировал перезагрузку сервера: port={port}, cmd={start_command}")
+
+        def _delayed_restart():
+            try:
+                from restart_server import ServerReloader
+                # Небольшая пауза, чтобы ответ успел уйти клиенту
+                time.sleep(0.5)
+                reloader = ServerReloader(port=port, start_command=start_command, wait_time=wait_time)
+                reloader.restart()
+            except Exception:
+                current_app.logger.exception('Ошибка фоновой перезагрузки сервера')
+            finally:
+                # Завершаем текущий процесс Flask после попытки запуска нового
+                try:
+                    current_app.logger.info('Текущий процесс завершается после перезагрузки')
+                except Exception:
+                    pass
+                os._exit(0)  # жёсткое завершение, чтобы порт освободился
+
+        threading.Thread(target=_delayed_restart, daemon=True).start()
+
+        return jsonify({
+            'status': 'scheduled',
+            'port': port,
+            'command': start_command,
+            'wait_time': wait_time,
+            'message': 'Перезагрузка запланирована; сервер будет перезапущен через ~0.5s'
+        })
+    except Exception:
+        current_app.logger.exception('Ошибка планирования перезагрузки')
+        return jsonify({'error': 'Не удалось запланировать перезагрузку'}), 500
