@@ -8,6 +8,7 @@ from webapp.services.gc_service import (
 )
 from webapp.models.rag_models import RAGDatabase
 from webapp.config.config_service import get_config
+from psycopg2 import sql
 
 admin_bp = Blueprint('admin', __name__, url_prefix='/admin')
 
@@ -432,3 +433,126 @@ def scheduler_toggle():
     except Exception as e:
         current_app.logger.exception('Ошибка переключения планировщика')
         return jsonify({'error': str(e)}), 500
+
+
+# ===== Очистка БД (UI + API) =====
+
+@admin_bp.get('/db/cleanup')
+@require_role('admin')
+def db_cleanup_page():
+    """Страница с чекбоксами для очистки выбранных таблиц."""
+    return render_template('admin_cleanup_db.html')
+
+
+@admin_bp.get('/db/tables')
+@require_role('admin')
+def db_list_tables():
+    """Вернуть список всех таблиц schema=public с примерной статистикой (кол-во строк)."""
+    try:
+        db = _get_db()
+        tables = []
+        protected = {'users', 'alembic_version', 'roles', 'sessions'}  # базовые таблицы, не чистим по умолчанию
+        with db.db.connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT tablename FROM pg_catalog.pg_tables
+                    WHERE schemaname = 'public'
+                    ORDER BY tablename;
+                """)
+                names = [r[0] for r in cur.fetchall()]
+            # Подсчёт строк по-отдельности (простота важнее точности/скорости)
+            with conn.cursor() as cur:
+                for name in names:
+                    row_count = None
+                    try:
+                        cur.execute(sql.SQL('SELECT COUNT(*) FROM {};').format(sql.Identifier(name)))
+                        row_count = cur.fetchone()[0]
+                    except Exception:
+                        row_count = None
+                    tables.append({
+                        'name': name,
+                        'rows': row_count,
+                        'protected': name in protected
+                    })
+        return jsonify({'tables': tables})
+    except Exception:
+        current_app.logger.exception('Ошибка получения списка таблиц БД')
+        return jsonify({'error': 'Не удалось получить список таблиц'}), 500
+
+
+@admin_bp.post('/db/cleanup')
+@require_role('admin')
+def db_cleanup_run():
+    """Очистить выбранные таблицы через TRUNCATE ... RESTART IDENTITY CASCADE.
+
+    Body JSON: {"tables": ["name1", ...], "preserve_prompts": true/false}
+    """
+    try:
+        data = request.get_json() or {}
+        requested: list = data.get('tables') or []
+        preserve_prompts: bool = bool(data.get('preserve_prompts', True))
+        if not isinstance(requested, list) or not all(isinstance(t, str) for t in requested):
+            return jsonify({'error': 'Неверный формат: ожидался список имён таблиц'}), 400
+        if not requested:
+            return jsonify({'error': 'Не выбраны таблицы для очистки'}), 400
+
+        db = _get_db()
+        with db.db.connect() as conn:
+            # Получаем список существующих таблиц
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT tablename FROM pg_catalog.pg_tables
+                    WHERE schemaname = 'public';
+                """)
+                existing = {r[0] for r in cur.fetchall()}
+
+            # Фильтруем к очистке
+            to_truncate = [t for t in requested if t in existing]
+            skipped = [t for t in requested if t not in existing]
+
+            # Уважение флага сохранения prompts
+            if preserve_prompts and 'prompts' in to_truncate:
+                to_truncate.remove('prompts')
+
+            if not to_truncate:
+                return jsonify({'error': 'Нет валидных таблиц для очистки', 'skipped': skipped}), 400
+
+            before = {}
+            after = {}
+            # Подсчёт до
+            with conn.cursor() as cur:
+                for name in to_truncate:
+                    try:
+                        cur.execute(sql.SQL('SELECT COUNT(*) FROM {};').format(sql.Identifier(name)))
+                        before[name] = cur.fetchone()[0]
+                    except Exception:
+                        before[name] = None
+
+            # Выполняем TRUNCATE
+            with conn.cursor() as cur:
+                stmt = sql.SQL('TRUNCATE TABLE {} RESTART IDENTITY CASCADE;').format(
+                    sql.SQL(', ').join(sql.Identifier(n) for n in to_truncate)
+                )
+                cur.execute(stmt)
+            conn.commit()
+
+            # Подсчёт после
+            with conn.cursor() as cur:
+                for name in to_truncate:
+                    try:
+                        cur.execute(sql.SQL('SELECT COUNT(*) FROM {};').format(sql.Identifier(name)))
+                        after[name] = cur.fetchone()[0]
+                    except Exception:
+                        after[name] = None
+
+        return jsonify({
+            'truncated': to_truncate,
+            'skipped': skipped,
+            'preserve_prompts': preserve_prompts,
+            'before': before,
+            'after': after,
+            'message': 'Очистка выполнена'
+        })
+    except Exception:
+        current_app.logger.exception('Ошибка очистки таблиц БД')
+        return jsonify({'error': 'Не удалось выполнить очистку'}), 500

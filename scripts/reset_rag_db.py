@@ -25,6 +25,9 @@ TARGET_TABLES: List[str] = [
     # Порядок не критичен при CASCADE, но сначала зависимые ради информативного вывода
     'chunks',
     'documents',
+    # Добавлены: user_documents (связи видимости), folder_index_status (статус индексации папок на пользователя)
+    'user_documents',
+    'folder_index_status',
     'search_history',
     'ai_messages',
     'ai_conversations',
