@@ -72,8 +72,13 @@ def main(argv: List[str]) -> None:
     conn = psycopg2.connect(db_url)
     try:
         existing = fetch_existing_tables(conn)
+        # Если нужно сохранить prompts, уважим флаг из окружения
+        preserve_prompts = os.getenv('PRESERVE_PROMPTS', '0') == '1'
+        effective_tables = list(TARGET_TABLES)
+        if preserve_prompts and 'prompts' in effective_tables:
+            effective_tables.remove('prompts')
 
-        to_truncate = [t for t in TARGET_TABLES if t in existing]
+        to_truncate = [t for t in effective_tables if t in existing]
         if not to_truncate:
             print('Нет целевых таблиц для очистки (возможно схема не применилась).')
             return
@@ -100,7 +105,10 @@ def main(argv: List[str]) -> None:
             else:
                 print(f'  {t}: недоступно')
 
-        print('\nГотово. Пользователи и сессии сохранены.')
+        if preserve_prompts:
+            print('\nГотово. Пользователи, сессии и prompts сохранены.')
+        else:
+            print('\nГотово. Пользователи и сессии сохранены.')
     finally:
         conn.close()
 

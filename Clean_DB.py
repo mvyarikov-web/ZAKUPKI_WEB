@@ -103,6 +103,9 @@ def main(argv=None) -> int:
 
     py_exec = get_python_exec(project_root)
     cmd = [py_exec, reset_script, dsn]
+    # Сохраняем промпты: передаём флаг через окружение для reset_rag_db.py
+    # По умолчанию НЕ удаляем таблицу prompts
+    os.environ.setdefault('PRESERVE_PROMPTS', '1')
     print(f'Запуск очистки через: {cmd[0]} {reset_script} (dsn скрыт)')
     try:
         result = subprocess.run(cmd, check=True)
