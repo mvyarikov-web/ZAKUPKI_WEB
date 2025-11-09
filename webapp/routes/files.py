@@ -4,7 +4,7 @@ import shutil
 from flask import Blueprint, request, jsonify, current_app, send_file, Response, g
 from urllib.parse import unquote, quote as url_quote
 from webapp.services.files import is_safe_subpath, safe_filename, allowed_file
-from webapp.services.state import FilesState
+from webapp.services.file_search_state_service import FileSearchStateService
 from webapp.services.db_indexing import calculate_file_hash, handle_duplicate_upload
 from webapp.models.rag_models import RAGDatabase
 from webapp.config.config_service import get_config
@@ -58,9 +58,9 @@ def required_user_id() -> int:
 
 
 def _get_files_state():
-    """Получить экземпляр FilesState для текущего приложения."""
-    results_file = current_app.config['SEARCH_RESULTS_FILE']
-    return FilesState(results_file)
+    """Получить экземпляр FileSearchStateService для текущего приложения."""
+    # Сервис сам определит путь к файлу из конфига
+    return FileSearchStateService()
 
 
 @files_bp.route('/upload', methods=['POST'])

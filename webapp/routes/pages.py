@@ -4,7 +4,7 @@ from urllib.parse import unquote
 from flask import Blueprint, render_template, jsonify, request, current_app, send_from_directory, g
 from markupsafe import Markup
 from webapp.services.files import allowed_file, is_safe_subpath
-from webapp.services.state import FilesState
+from webapp.services.file_search_state_service import FileSearchStateService
 from webapp.middleware.auth_middleware import require_auth
 from webapp.utils.path_utils import normalize_path
 
@@ -12,9 +12,9 @@ pages_bp = Blueprint('pages', __name__)
 
 
 def _get_files_state():
-    """Получить экземпляр FilesState для текущего приложения."""
-    results_file = current_app.config['SEARCH_RESULTS_FILE']
-    return FilesState(results_file)
+    """Получить экземпляр FileSearchStateService для текущего приложения."""
+    # Сервис сам определит путь к файлу из конфига
+    return FileSearchStateService()
 
 
 @pages_bp.route('/')

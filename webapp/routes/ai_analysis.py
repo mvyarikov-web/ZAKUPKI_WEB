@@ -7,16 +7,16 @@ from flask import Blueprint, request, jsonify, current_app, render_template, g
 from webapp.config.config_service import get_config
 from webapp.models.rag_models import RAGDatabase
 from webapp.services.gpt_analysis import GPTAnalysisService, PromptManager
-from webapp.services.state import FilesState
+from webapp.services.file_search_state_service import FileSearchStateService
 
 
 ai_analysis_bp = Blueprint('ai_analysis', __name__, url_prefix='/ai_analysis')
 
 
 def _get_files_state():
-    """Получить экземпляр FilesState."""
-    results_file = current_app.config['SEARCH_RESULTS_FILE']
-    return FilesState(results_file)
+    """Получить экземпляр FileSearchStateService."""
+    # Сервис сам определит путь к файлу из конфига
+    return FileSearchStateService()
 
 
 def _get_db() -> RAGDatabase:
