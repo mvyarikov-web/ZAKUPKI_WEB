@@ -213,8 +213,7 @@
         <div class="profile-card" id="adminPanelCard" style="display:none;">
             <h2>Администрирование</h2>
             <p style="color:#555; margin-bottom:15px;">Дополнительные инструменты управления системой доступны только администраторам.</p>
-            <a href="/admin/storage" target="_blank" class="btn btn-secondary" style="margin-right:10px;">⚙️ Открыть админ-панель</a>
-            <a href="/admin/db/cleanup" target="_blank" class="btn btn-secondary">🧹 Очистка БД</a>
+            <button type="button" class="btn btn-secondary" onclick="openAdminPage('/admin/storage')">⚙️ Открыть админ-панель</button>
         </div>
 
         <div class="profile-card">
@@ -524,6 +523,13 @@
                     if (card) card.style.display = 'block';
                 }
             } catch (_) {}
+        }
+
+        // Открытие админских страниц с добавлением токена в query (для новой вкладки без потери авторизации)
+        function openAdminPage(path) {
+            const token = getAuthToken();
+            const url = token ? `${path}?token=${encodeURIComponent(token)}` : path;
+            window.open(url, '_blank');
         }
 
         // Загрузка при старте

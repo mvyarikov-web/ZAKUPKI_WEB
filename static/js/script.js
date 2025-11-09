@@ -589,6 +589,41 @@ searchBtn.addEventListener('click', () => {
     performSearch(terms);
 });
 
+// Кнопка "Перестроить индекс" - принудительная пересборка всех документов
+const rebuildIndexBtn = document.getElementById('rebuildIndexBtn');
+if (rebuildIndexBtn) {
+    rebuildIndexBtn.addEventListener('click', async () => {
+        if (!confirm('Пересобрать индекс всех документов? Это может занять некоторое время.')) {
+            return;
+        }
+        
+        try {
+            rebuildIndexBtn.disabled = true;
+            rebuildIndexBtn.textContent = '🔄 Пересборка...';
+            
+            const response = await fetch('/rebuild_index', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            });
+            
+            const data = await response.json();
+            
+            if (data.success) {
+                MessageManager.success(data.message || 'Индекс успешно пересобран', 'main');
+                refreshIndexStatus();
+            } else {
+                MessageManager.error('Ошибка пересборки: ' + (data.message || 'Неизвестная ошибка'), 'main');
+            }
+        } catch (error) {
+            console.error('Ошибка пересборки индекса:', error);
+            MessageManager.error('Ошибка пересборки индекса: ' + error.message, 'main');
+        } finally {
+            rebuildIndexBtn.disabled = false;
+            rebuildIndexBtn.innerHTML = '<i class="icon">🔄</i> Перестроить индекс';
+        }
+    });
+}
+
 // FR-008: "Удалить файлы" - удаляет загруженные данные и результаты (кнопка "Очистить всё" удалена)
 if (deleteFilesBtn) {
     deleteFilesBtn.addEventListener('click', () => {

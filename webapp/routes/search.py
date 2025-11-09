@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from flask import Blueprint, request, jsonify, current_app, Response, g
 from webapp.services.files import allowed_file
 from webapp.services.state import FilesState
-from webapp.services.db_indexing import build_db_index, get_folder_index_status
+from webapp.services.db_indexing import build_db_index, get_folder_index_status, rebuild_all_documents
 from webapp.models.rag_models import RAGDatabase
 from webapp.config.config_service import get_config
 
@@ -379,6 +379,49 @@ def build_index_route():
     
     except Exception as e:
         current_app.logger.exception("Ошибка при сборке индекса")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@search_bp.post('/rebuild_index')
+def rebuild_index_route():
+    """Принудительная пересборка индекса для всех документов пользователя.
+    
+    Извлекает текст заново из каждого файла и перезаписывает chunks в БД.
+    Если документ вернул 0 символов — пропускаем или помечаем ошибку.
+    """
+    try:
+        db = _get_db()
+        try:
+            owner_id = required_user_id()
+        except ValueError:
+            return jsonify({'success': False, 'message': 'Не указан идентификатор пользователя (X-User-ID)'}), 400
+        
+        config = get_config()
+        uploads = current_app.config['UPLOAD_FOLDER']
+        
+        current_app.logger.info(f"Запуск принудительной пересборки индекса для user_id={owner_id}")
+        
+        success, message, stats = rebuild_all_documents(
+            db=db,
+            owner_id=owner_id,
+            folder_path=uploads,
+            chunk_size_tokens=config.chunk_size_tokens,
+            chunk_overlap_tokens=config.chunk_overlap_tokens
+        )
+        
+        if not success:
+            current_app.logger.error(f"Ошибка пересборки индекса: {message}")
+            return jsonify({'success': False, 'message': message}), 500
+        
+        current_app.logger.info(f"Пересборка индекса завершена: {message}")
+        return jsonify({
+            'success': True,
+            'message': message,
+            'stats': stats
+        })
+        
+    except Exception as e:
+        current_app.logger.exception("Ошибка при пересборке индекса")
         return jsonify({'success': False, 'message': str(e)}), 500
 
 

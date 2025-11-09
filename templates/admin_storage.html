@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Административная панель — Управление хранилищем</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+    <script src="{{ url_for('static', filename='js/auth.js') }}"></script>
     <style>
         .admin-section {
             background: white;
@@ -219,7 +220,7 @@
         <header>
             <h1>⚙️ Административная панель</h1>
             <p>Управление хранилищем и индексацией документов</p>
-            <a href="/" class="btn btn-secondary" style="margin-top: 15px;">← Вернуться на главную</a>
+            <button class="btn btn-secondary" style="margin-top: 15px;" onclick="window.history.back()">← Назад</button>
         </header>
 
         <main>
@@ -285,7 +286,7 @@
                 <h2>🧹 Очистка базы данных</h2>
                 <p style="color:#7f8c8d; margin-bottom:12px;">Вы можете перейти на страницу выбора таблиц для очистки и выполнить TRUNCATE с сбросом идентификаторов. По умолчанию таблица prompts сохраняется.</p>
                 <div class="admin-controls">
-                    <a href="/admin/db/cleanup" class="btn-admin danger" target="_blank">Перейти к очистке БД</a>
+                    <button class="btn-admin danger" onclick="openAdminPageWithToken('/admin/db/cleanup')">Перейти к очистке БД</button>
                 </div>
             </div>
 
@@ -386,7 +387,28 @@
     </div>
 
     <script>
-        // Глобальное состояние
+        // Если токен пришёл в query (?token=...), сохраняем его в localStorage
+        (function persistTokenFromQuery(){
+            try {
+                const params = new URLSearchParams(window.location.search);
+                const token = params.get('token');
+                if (token && typeof setAuthToken === 'function') {
+                    setAuthToken(token);
+                }
+            } catch (_) {}
+        })();
+        // Открытие новой вкладки с передачей JWT через query-параметр token
+        function openAdminPageWithToken(path) {
+            try {
+                const token = (typeof getAuthToken === 'function') ? getAuthToken() : null;
+                const url = token ? `${path}?token=${encodeURIComponent(token)}` : path;
+                window.open(url, '_blank');
+            } catch (_) {
+                window.open(path, '_blank');
+            }
+        }
+
+    // Глобальное состояние
         let uploadsEnabled = true;
 
         // Загрузка статистики при открытии страницы

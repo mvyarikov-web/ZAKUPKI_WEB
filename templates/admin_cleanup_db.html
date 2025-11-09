@@ -1,6 +1,13 @@
-{% extends "layout.html" %}
-{% block title %}Очистка БД{% endblock %}
-{% block content %}
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Очистка БД</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+    <script src="{{ url_for('static', filename='js/auth.js') }}"></script>
+</head>
+<body>
 <div class="container" style="max-width: 960px;">
   <h2>Очистка базы данных</h2>
   <p class="text-muted">Отметьте таблицы для очистки. Внимание: операция безвозвратна. Используется TRUNCATE ... RESTART IDENTITY CASCADE.</p>
@@ -26,7 +33,17 @@
   </div>
 </div>
 
+<script src="{{ url_for('static', filename='js/auth.js') }}"></script>
 <script>
+(function persistTokenFromQuery(){
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get('token');
+    if (token && typeof setAuthToken === 'function') {
+      setAuthToken(token);
+    }
+  } catch(_) {}
+})();
 (async function() {
   const listEl = document.getElementById('tablesList');
   const preserveEl = document.getElementById('preservePrompts');
@@ -102,4 +119,5 @@
   await loadTables();
 })();
 </script>
-{% endblock %}
+</body>
+</html>

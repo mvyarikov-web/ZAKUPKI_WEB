@@ -635,3 +635,124 @@ def handle_duplicate_upload(
     # Документ существует глобально → создаём/обновляем связь
     binding_new, bind_msg = ensure_user_binding(db, user_id, doc_id, filename, user_path)
     return doc_id, bind_msg, True
+
+
+def rebuild_all_documents(
+    db: RAGDatabase,
+    owner_id: int,
+    folder_path: str,
+    chunk_size_tokens: int = 500,
+    chunk_overlap_tokens: int = 50
+) -> Tuple[bool, str, Dict[str, int]]:
+    """Полная пересборка индекса всех документов пользователя.
+    
+    Перечитывает текст заново из каждого файла и перезаписывает chunks в БД.
+    Пропускает документы с 0 символов или ошибками извлечения.
+    
+    Args:
+        db: Подключение к БД
+        owner_id: ID пользователя
+        folder_path: Корневая папка (uploads)
+        chunk_size_tokens: Размер чанка
+        chunk_overlap_tokens: Перекрытие чанков
+    
+    Returns:
+        (success, message, stats)
+    """
+    try:
+        stats = {
+            'total_docs': 0,
+            'reindexed': 0,
+            'skipped_empty': 0,
+            'errors': 0
+        }
+        
+        # Получаем все документы пользователя
+        with db.db.connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT ud.document_id, ud.original_filename, ud.user_path, d.sha256
+                    FROM user_documents ud
+                    JOIN documents d ON d.id = ud.document_id
+                    WHERE ud.user_id = %s AND ud.is_soft_deleted = FALSE;
+                """, (owner_id,))
+                docs = cur.fetchall()
+        
+        stats['total_docs'] = len(docs)
+        current_app.logger.info(f"Пересборка индекса: найдено {len(docs)} документов для user_id={owner_id}")
+        
+        for doc_id, filename, user_path, sha256 in docs:
+            # Находим файл в папке
+            file_path = os.path.join(folder_path, user_path) if user_path else None
+            if not file_path or not os.path.exists(file_path):
+                current_app.logger.warning(f"Файл не найден: {user_path}, пропускаем document_id={doc_id}")
+                stats['errors'] += 1
+                continue
+            
+            try:
+                # Извлекаем текст заново
+                start = time.time()
+                text = extract_text(file_path)
+                extract_time = time.time() - start
+                
+                if not text or len(text.strip()) == 0:
+                    current_app.logger.warning(f"Пустой текст из {filename}, пропускаем")
+                    stats['skipped_empty'] += 1
+                    continue
+                
+                # Создаём чанки
+                chunks_data = chunk_document(
+                    text,
+                    chunk_size_tokens=chunk_size_tokens,
+                    chunk_overlap_tokens=chunk_overlap_tokens
+                )
+                
+                if not chunks_data:
+                    current_app.logger.warning(f"Нет чанков для {filename}, пропускаем")
+                    stats['skipped_empty'] += 1
+                    continue
+                
+                # Удаляем старые чанки и вставляем новые
+                with db.db.connect() as conn:
+                    with conn.cursor() as cur:
+                        # Удаляем старые чанки
+                        cur.execute("DELETE FROM chunks WHERE document_id = %s;", (doc_id,))
+                        
+                        # Вставляем новые чанки
+                        for idx, chunk in enumerate(chunks_data):
+                            cur.execute("""
+                                INSERT INTO chunks (document_id, chunk_index, text)
+                                VALUES (%s, %s, %s);
+                            """, (doc_id, idx, chunk['text']))
+                        
+                        # Обновляем метаданные документа
+                        cur.execute("""
+                            UPDATE documents
+                            SET indexing_cost_seconds = %s,
+                                last_accessed_at = NOW()
+                            WHERE id = %s;
+                        """, (extract_time, doc_id))
+                    conn.commit()
+                
+                stats['reindexed'] += 1
+                current_app.logger.info(f"Переиндексирован {filename}: {len(chunks_data)} чанков, {extract_time:.2f}с")
+                
+            except Exception as e:
+                current_app.logger.exception(f"Ошибка переиндексации {filename}: {e}")
+                stats['errors'] += 1
+                continue
+        
+        # Обновляем root_hash после полной пересборки
+        current_root_hash = calculate_root_hash(folder_path)
+        if current_root_hash:
+            update_folder_index_status(db, owner_id, folder_path, current_root_hash)
+        
+        message = (
+            f"Пересборка завершена: переиндексировано {stats['reindexed']} из {stats['total_docs']} документов, "
+            f"пропущено пустых: {stats['skipped_empty']}, ошибок: {stats['errors']}"
+        )
+        return True, message, stats
+        
+    except Exception as e:
+        current_app.logger.exception("Ошибка полной пересборки индекса")
+        return False, str(e), {}
