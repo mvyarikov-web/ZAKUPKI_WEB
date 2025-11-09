@@ -18,6 +18,7 @@ from docx.oxml.shared import OxmlElement
 from docx.oxml.ns import qn
 
 from webapp.services.rag_service import get_rag_service
+from webapp.services.ai_model_config_service import get_ai_model_config_service
 from webapp.utils.api_keys_adapter import get_api_keys_manager
 from utils.token_tracker import (
     log_token_usage,
@@ -30,88 +31,25 @@ ai_rag_bp = Blueprint("ai_rag", __name__, url_prefix="/ai_rag")
 
 
 # ==========================
-# models.json helpers + cost
+# models.json helpers + cost (теперь через сервис)
 # ==========================
 
-def _models_config_path() -> str:
-    try:
-        root = current_app.root_path if current_app else os.getcwd()
-    except Exception:
-        root = os.getcwd()
-    # Поддержка кастомного пути из конфига тестов
-    override = None
-    try:
-        override = current_app.config.get("RAG_MODELS_FILE") if current_app else None
-    except Exception:
-        override = None
-    if override:
-        return override
-    return os.path.join(root, "index", "models.json")
-
-
-def _load_models_config_with_migration() -> Tuple[Dict[str, Any], bool]:
-    """Загрузить конфиг моделей, при необходимости выполнить миграцию формата.
-
-    Возвращает (cfg, migrated_flag).
-    """
-    path = _models_config_path()
-    migrated = False
-    try:
-        if os.path.exists(path):
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            if isinstance(data, list):
-                # Старый формат: просто массив моделей
-                data = {
-                    "models": data,
-                    "default_model": data[0]["model_id"] if data else None,
-                }
-                migrated = True
-            data.setdefault("models", [])
-            if "default_model" not in data:
-                data["default_model"] = data["models"][0]["model_id"] if data["models"] else None
-                migrated = True
-            # Приводим ключи цены из старого вида к новому
-            for m in data["models"]:
-                if "price_input_per_1M" in m and "price_input_per_1m" not in m:
-                    m["price_input_per_1m"] = m.pop("price_input_per_1M")
-                    migrated = True
-                if "price_output_per_1M" in m and "price_output_per_1m" not in m:
-                    m["price_output_per_1m"] = m.pop("price_output_per_1M")
-                    migrated = True
-            return data, migrated
-    except Exception:
-        current_app.logger.exception("Ошибка чтения index/models.json") if current_app else None
-    # Дефолтная конфигурация
-    return (
-        {
-            "models": [
-                {
-                    "model_id": "gpt-4o-mini",
-                    "display_name": "GPT-4o Mini",
-                    "context_window_tokens": 128000,
-                    "price_input_per_1m": 0.15,
-                    "price_output_per_1m": 0.60,
-                    "enabled": True,
-                    "supports_system_role": True,
-                }
-            ],
-            "default_model": "gpt-4o-mini",
-        },
-        False,
-    )
+def _load_models_config() -> Dict[str, Any]:
+    """Загрузить конфигурацию моделей через сервис."""
+    service = get_ai_model_config_service()
+    return service.load_config()
 
 
 def _load_models_config() -> Dict[str, Any]:
-    cfg, _ = _load_models_config_with_migration()
-    return cfg
+    """Загрузить конфигурацию моделей через сервис."""
+    service = get_ai_model_config_service()
+    return service.load_config()
 
 
 def _save_models_config(cfg: Dict[str, Any]) -> None:
-    path = _models_config_path()
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(cfg, f, ensure_ascii=False, indent=2)
+    """Сохранить конфигурацию моделей через сервис."""
+    service = get_ai_model_config_service()
+    service.save_config(cfg)
 
 
 def _calculate_cost(model_config: Dict[str, Any], usage: Dict[str, int], request_count: int = 1) -> Dict[str, Any]:
