@@ -210,6 +210,13 @@
             <a href="/" class="back-link">← Вернуться на главную</a>
         </div>
 
+        <div class="profile-card" id="adminPanelCard" style="display:none;">
+            <h2>Администрирование</h2>
+            <p style="color:#555; margin-bottom:15px;">Дополнительные инструменты управления системой доступны только администраторам.</p>
+            <a href="/admin/storage" target="_blank" class="btn btn-secondary" style="margin-right:10px;">⚙️ Открыть админ-панель</a>
+            <a href="/admin/db/cleanup" target="_blank" class="btn btn-secondary">🧹 Очистка БД</a>
+        </div>
+
         <div class="profile-card">
             <h2>Основная информация</h2>
             
@@ -508,8 +515,20 @@
             });
         });
 
+        // Показ админ-блока если роль admin
+        async function showAdminIfRole() {
+            try {
+                const user = await getCurrentUser();
+                if (user && user.role === 'admin') {
+                    const card = document.getElementById('adminPanelCard');
+                    if (card) card.style.display = 'block';
+                }
+            } catch (_) {}
+        }
+
         // Загрузка при старте
         loadUserInfo();
+        showAdminIfRole();
     </script>
 </body>
 </html>

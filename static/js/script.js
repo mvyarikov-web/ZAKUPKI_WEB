@@ -17,23 +17,7 @@ const searchInput = document.getElementById('searchInput');
 const searchBtn = document.getElementById('searchBtn');
 const deleteFilesBtn = document.getElementById('deleteFilesBtn');
 const indexStatus = document.getElementById('indexStatus');
-const adminPanelBtn = document.getElementById('adminPanelBtn');
-
-// Показ кнопки админки при роли admin (через /auth/me)
-async function checkAdmin() {
-    try {
-        const resp = await fetch('/auth/me');
-        if (!resp.ok) return;
-        const data = await resp.json();
-        const role = data && (data.role || (data.user && data.user.role));
-        if (role === 'admin') {
-            if (adminPanelBtn) adminPanelBtn.style.display = 'inline-block';
-        }
-    } catch (e) {
-        // игнорируем
-    }
-}
-checkAdmin();
+// Кнопка админ-панели перенесена в профиль пользователя; удалена динамическая логика показа здесь.
 
 // --- Folder Select ---
 selectFolderBtn.addEventListener('click', () => {
