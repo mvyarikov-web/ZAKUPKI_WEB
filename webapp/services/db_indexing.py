@@ -646,13 +646,13 @@ def rebuild_all_documents(
 ) -> Tuple[bool, str, Dict[str, int]]:
     """Полная пересборка индекса всех документов пользователя.
     
-    Перечитывает текст заново из каждого файла и перезаписывает chunks в БД.
-    Пропускает документы с 0 символов или ошибками извлечения.
+    Сканирует папку folder_path, находит документы в БД по SHA256,
+    перечитывает текст заново и перезаписывает chunks.
     
     Args:
         db: Подключение к БД
         owner_id: ID пользователя
-        folder_path: Корневая папка (uploads)
+        folder_path: Корневая папка с файлами (uploads или подпапка)
         chunk_size_tokens: Размер чанка
         chunk_overlap_tokens: Перекрытие чанков
     
@@ -667,29 +667,47 @@ def rebuild_all_documents(
             'errors': 0
         }
         
-        # Получаем все документы пользователя
-        with db.db.connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute("""
-                    SELECT ud.document_id, ud.original_filename, ud.user_path, d.sha256
-                    FROM user_documents ud
-                    JOIN documents d ON d.id = ud.document_id
-                    WHERE ud.user_id = %s AND ud.is_soft_deleted = FALSE;
-                """, (owner_id,))
-                docs = cur.fetchall()
+        # Сканируем папку и находим все файлы
+        files_to_process = []
+        for root, dirs, files in os.walk(folder_path):
+            for filename in files:
+                # Пропускаем служебные файлы
+                if filename.startswith('.') or filename.startswith('~$') or filename == '_search_index.txt':
+                    continue
+                file_path = os.path.join(root, filename)
+                files_to_process.append((file_path, filename))
         
-        stats['total_docs'] = len(docs)
-        current_app.logger.info(f"Пересборка индекса: найдено {len(docs)} документов для user_id={owner_id}")
+        stats['total_docs'] = len(files_to_process)
+        current_app.logger.info(f"Пересборка индекса: найдено {len(files_to_process)} файлов в {folder_path} для user_id={owner_id}")
         
-        for doc_id, filename, user_path, sha256 in docs:
-            # Находим файл в папке
-            file_path = os.path.join(folder_path, user_path) if user_path else None
-            if not file_path or not os.path.exists(file_path):
-                current_app.logger.warning(f"Файл не найден: {user_path}, пропускаем document_id={doc_id}")
-                stats['errors'] += 1
-                continue
-            
+        for file_path, filename in files_to_process:
             try:
+                # Вычисляем SHA256 файла
+                file_sha256 = calculate_file_hash(file_path)
+                if not file_sha256:
+                    current_app.logger.warning(f"Не удалось вычислить SHA256 для {filename}, пропускаем")
+                    stats['errors'] += 1
+                    continue
+                
+                # Ищем документ в БД по SHA256 и owner_id
+                with db.db.connect() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute("""
+                            SELECT ud.document_id, d.sha256
+                            FROM user_documents ud
+                            JOIN documents d ON d.id = ud.document_id
+                            WHERE ud.user_id = %s AND d.sha256 = %s AND ud.is_soft_deleted = FALSE
+                            LIMIT 1;
+                        """, (owner_id, file_sha256))
+                        doc_row = cur.fetchone()
+                
+                if not doc_row:
+                    current_app.logger.debug(f"Документ {filename} (SHA256={file_sha256[:8]}...) не найден в БД, пропускаем")
+                    stats['errors'] += 1
+                    continue
+                
+                doc_id = doc_row[0]
+                
                 # Извлекаем текст заново
                 start = time.time()
                 text = extract_text(file_path)
@@ -703,8 +721,9 @@ def rebuild_all_documents(
                 # Создаём чанки
                 chunks_data = chunk_document(
                     text,
+                    file_path=filename,
                     chunk_size_tokens=chunk_size_tokens,
-                    chunk_overlap_tokens=chunk_overlap_tokens
+                    overlap_sentences=2
                 )
                 
                 if not chunks_data:
