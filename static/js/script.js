@@ -18,7 +18,6 @@ const searchBtn = document.getElementById('searchBtn');
 const deleteFilesBtn = document.getElementById('deleteFilesBtn');
 const indexStatus = document.getElementById('indexStatus');
 const adminPanelBtn = document.getElementById('adminPanelBtn');
-const adminCleanupBtn = document.getElementById('adminCleanupBtn');
 
 // Показ кнопки админки при роли admin (через /auth/me)
 async function checkAdmin() {
@@ -29,7 +28,6 @@ async function checkAdmin() {
         const role = data && (data.role || (data.user && data.user.role));
         if (role === 'admin') {
             if (adminPanelBtn) adminPanelBtn.style.display = 'inline-block';
-            if (adminCleanupBtn) adminCleanupBtn.style.display = 'inline-block';
         }
     } catch (e) {
         // игнорируем
