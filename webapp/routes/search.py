@@ -6,7 +6,7 @@ import html as htmllib
 from datetime import datetime, timedelta
 from flask import Blueprint, request, jsonify, current_app, Response, g
 from webapp.services.files import allowed_file
-from webapp.services.state import FilesState
+from webapp.services.file_search_state_service import FileSearchStateService
 from webapp.services.db_indexing import build_db_index, get_folder_index_status, rebuild_all_documents
 from webapp.models.rag_models import RAGDatabase
 from webapp.config.config_service import get_config
@@ -267,9 +267,9 @@ def _update_document_access_metrics(db: RAGDatabase, results: list) -> None:
 
 
 def _get_files_state():
-    """Получить экземпляр FilesState для текущего приложения."""
-    results_file = current_app.config['SEARCH_RESULTS_FILE']
-    return FilesState(results_file)
+    """Получить экземпляр FileSearchStateService для текущего приложения."""
+    # Сервис сам определит путь к файлу из конфига
+    return FileSearchStateService()
 
 
 @search_bp.route('/search', methods=['POST'])

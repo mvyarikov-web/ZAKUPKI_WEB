@@ -27,15 +27,25 @@ _MEM_BUFFER: List[Dict] = []  # процессный буфер на случа�
 
 
 def _load_models_config() -> Dict:
-    """Загружает конфигурацию моделей с ценами"""
+    """Загружает конфигурацию моделей с ценами через сервис."""
     try:
-        models_file = Path(__file__).parent.parent / 'index' / 'models.json'
-        with open(models_file, 'r', encoding='utf-8') as f:
-            config = json.load(f)
-            return {m['model_id']: m for m in config.get('models', [])}
+        # Пробуем загрузить через сервис (работает как с БД, так и с файлом)
+        from webapp.services.ai_model_config_service import get_ai_model_config_service
+        service = get_ai_model_config_service()
+        config = service.load_config()
+        # Конвертируем в словарь {model_id: model_dict}
+        return {m['model_id']: m for m in config.get('models', [])}
     except Exception as e:
-        logger.error(f"Ошибка загрузки конфигурации моделей: {e}")
-        return {}
+        logger.error(f"Ошибка загрузки конфигурации моделей через сервис: {e}")
+        # Fallback на прямое чтение файла
+        try:
+            models_file = Path(__file__).parent.parent / 'index' / 'models.json'
+            with open(models_file, 'r', encoding='utf-8') as f:
+                config = json.load(f)
+                return {m['model_id']: m for m in config.get('models', [])}
+        except Exception as e2:
+            logger.error(f"Ошибка загрузки конфигурации моделей из файла: {e2}")
+            return {}
 
 
 def _calculate_cost(model_id: str, prompt_tokens: int, completion_tokens: int) -> Dict:
