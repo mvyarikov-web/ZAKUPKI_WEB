@@ -536,7 +536,8 @@ def view_index():
         try:
             owner_id = required_user_id()
         except ValueError:
-            owner_id = None  # В строгом режиме без user_id просто покажем пустой индекс
+            # Fallback: для просмотра индекса позволяем owner_id=1, чтобы не был пустой экран
+            owner_id = 1
         
     # Загружаем все документы и их чанки для текущего пользователя через user_documents
         docs_by_group = {'fast': [], 'medium': [], 'slow': []}
@@ -707,14 +708,7 @@ def view_index():
         q = request.args.get('q') or ''
         
         # Если не передан параметр q, пытаемся взять термины из последнего поиска
-        if not q:
-            try:
-                files_state = _get_files_state()
-                last_terms = files_state.get_last_search_terms()
-                if last_terms:
-                    q = last_terms
-            except Exception:
-                pass  # Игнорируем ошибки чтения
+        # Больше НЕ используем автоматически last_search_terms — подсветка только если явно передан q
         
         terms = [t.strip() for t in q.split(',') if t and t.strip()]
 

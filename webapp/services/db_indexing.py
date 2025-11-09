@@ -236,8 +236,12 @@ def index_document_to_db(
             current_app.logger.warning(f'Ошибка извлечения текста {file_path}: {e}')
         
         if not content:
-            # Graceful degrade: индексируем минимальный контент (имя файла), чтобы цепочка не была пустой
-            content = os.path.basename(file_path)
+            # Graceful degrade: создаём осмысленный placeholder, чтобы PDF не выглядел "пустым"
+            ext = os.path.splitext(file_path)[1].lower()
+            if ext == '.pdf':
+                content = f'[ПУСТОЙ PDF ИЛИ ОШИБКА ИЗВЛЕЧЕНИЯ] {os.path.basename(file_path)}'
+            else:
+                content = os.path.basename(file_path)
         
     # 3. Чанкуем текст
         current_app.logger.info(f'[CHUNK] Начинаем чанкование для {file_path}, size_tokens={chunk_size_tokens}')
@@ -249,8 +253,8 @@ def index_document_to_db(
         )
         current_app.logger.info(f'[CHUNK] Получено {len(chunks)} чанков')
         
-        if not chunks:
-            # Создаём один искусственный чанк
+        if not chunks or all(not (c.get('content') or c.get('text')) for c in chunks):
+            # Создаём один fallback чанк
             chunks = [{'content': content, 'token_count': len(content.split())}]
         
     # 4. Добавляем документ (глобально) и user_documents связь в ОДНОЙ транзакции

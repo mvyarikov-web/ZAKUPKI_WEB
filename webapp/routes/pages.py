@@ -30,59 +30,104 @@ def index():
     
     current_app.logger.info(f"Проверяем папку: {current_app.config['UPLOAD_FOLDER']}")
     
-    if os.path.exists(current_app.config['UPLOAD_FOLDER']):
-        # Рекурсивно обходим все файлы и папки
-        for root, dirs, files in os.walk(current_app.config['UPLOAD_FOLDER']):
-            for filename in files:
-                # Скрываем служебный индексный файл и временные файлы Office
-                if filename == '_search_index.txt' or filename.startswith('~$') or filename.startswith('$'):
-                    continue
-                file_path = os.path.join(root, filename)
-                # Определяем относительную папку
-                relative_folder = os.path.relpath(root, current_app.config['UPLOAD_FOLDER'])
-
-                # Правильно определяем название папки
-                if relative_folder == '.':
-                    folder_display_name = '📁 Загруженные файлы'
+    use_db = current_app.config.get('use_database')
+    if use_db:
+        # DB-first: берём документы из user_documents
+        try:
+            from webapp.models.rag_models import RAGDatabase
+            from webapp.config.config_service import get_config as _gc
+            cfg = _gc()
+            dsn = cfg.database_url.replace('postgresql+psycopg2://', 'postgresql://')
+            db = RAGDatabase(dsn)
+            owner_id = 1
+            try:
+                user = getattr(g, 'user', None)
+                if user and getattr(user, 'id', None):
+                    owner_id = int(user.id)
+            except Exception:
+                pass
+            with db.db.connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT ud.user_path, COALESCE(ud.original_filename, d.sha256) AS filename, d.indexing_cost_seconds
+                        FROM user_documents ud
+                        JOIN documents d ON d.id = ud.document_id
+                        WHERE ud.user_id = %s AND ud.is_soft_deleted = FALSE
+                        ORDER BY filename;
+                        """,
+                        (owner_id,)
+                    )
+                    rows = cur.fetchall()
+            for user_path, filename, cost in rows:
+                # Определяем папку из пути
+                rel_folder = os.path.dirname(user_path) if os.path.dirname(user_path) else '.'
+                if rel_folder == '.':
+                    folder_display_name = '📁 Документы (БД)'
                     folder_key = 'root'
                 else:
-                    folder_parts = relative_folder.split(os.sep)
-                    original_folder_name = folder_parts[-1]
-                    folder_display_name = f'📂 {original_folder_name}'
-                    folder_key = relative_folder
-
-                file_size = os.path.getsize(file_path)
-                file_key = os.path.join(relative_folder, filename) if relative_folder != '.' else filename
-                file_data = file_status.get(file_key, {})
-                status = file_data.get('status', 'not_checked')
-                # Если формат не поддерживается — пометим явно
-                if not allowed_file(filename, current_app.config['ALLOWED_EXTENSIONS']):
-                    status = 'unsupported'
-                    file_data = {**file_data, 'status': 'unsupported', 'error': 'Неподдерживаемый формат'}
-                    files_state.set_file_status(file_key, 'unsupported', 
-                                               {'error': 'Неподдерживаемый формат'})
-
-                display_name = file_data.get('original_name', filename)
+                    folder_display_name = f'📂 {os.path.basename(rel_folder)}'
+                    folder_key = rel_folder
+                file_key = user_path
                 file_info = {
-                    'name': display_name,
-                    'size': file_size,
-                    'status': status,
+                    'name': filename,
+                    'size': int((cost or 0) * 1024 * 1024),  # приблизительный размер
+                    'status': 'indexed',
                     'path': file_key,
-                    'relative_folder': relative_folder
+                    'relative_folder': rel_folder
                 }
-
                 if folder_key not in files_by_folder:
                     files_by_folder[folder_key] = {
                         'display_name': folder_display_name,
-                        'relative_path': relative_folder,
+                        'relative_path': rel_folder,
                         'files': []
                     }
-
                 files_by_folder[folder_key]['files'].append(file_info)
                 total_files += 1
-                current_app.logger.debug(f"Добавлен файл: {filename} в папку {folder_display_name}, размер: {file_size}, статус: {status}")
+        except Exception:
+            current_app.logger.exception('Ошибка загрузки документов из БД для главной страницы')
     else:
-        current_app.logger.warning("Папка uploads не существует")
+        if os.path.exists(current_app.config['UPLOAD_FOLDER']):
+            for root, dirs, files in os.walk(current_app.config['UPLOAD_FOLDER']):
+                for filename in files:
+                    if filename == '_search_index.txt' or filename.startswith('~$') or filename.startswith('$'):
+                        continue
+                    file_path = os.path.join(root, filename)
+                    relative_folder = os.path.relpath(root, current_app.config['UPLOAD_FOLDER'])
+                    if relative_folder == '.':
+                        folder_display_name = '📁 Загруженные файлы'
+                        folder_key = 'root'
+                    else:
+                        folder_parts = relative_folder.split(os.sep)
+                        original_folder_name = folder_parts[-1]
+                        folder_display_name = f'📂 {original_folder_name}'
+                        folder_key = relative_folder
+                    file_size = os.path.getsize(file_path)
+                    file_key = os.path.join(relative_folder, filename) if relative_folder != '.' else filename
+                    file_data = file_status.get(file_key, {})
+                    status = file_data.get('status', 'not_checked')
+                    if not allowed_file(filename, current_app.config['ALLOWED_EXTENSIONS']):
+                        status = 'unsupported'
+                        file_data = {**file_data, 'status': 'unsupported', 'error': 'Неподдерживаемый формат'}
+                        files_state.set_file_status(file_key, 'unsupported', {'error': 'Неподдерживаемый формат'})
+                    display_name = file_data.get('original_name', filename)
+                    file_info = {
+                        'name': display_name,
+                        'size': file_size,
+                        'status': status,
+                        'path': file_key,
+                        'relative_folder': relative_folder
+                    }
+                    if folder_key not in files_by_folder:
+                        files_by_folder[folder_key] = {
+                            'display_name': folder_display_name,
+                            'relative_path': relative_folder,
+                            'files': []
+                        }
+                    files_by_folder[folder_key]['files'].append(file_info)
+                    total_files += 1
+        else:
+            current_app.logger.warning('Папка uploads не существует')
     
     current_app.logger.info(f"Всего файлов для отображения: {total_files}, папок: {len(files_by_folder)}")
     

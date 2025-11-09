@@ -17,6 +17,25 @@ const searchInput = document.getElementById('searchInput');
 const searchBtn = document.getElementById('searchBtn');
 const deleteFilesBtn = document.getElementById('deleteFilesBtn');
 const indexStatus = document.getElementById('indexStatus');
+const adminPanelBtn = document.getElementById('adminPanelBtn');
+const adminCleanupBtn = document.getElementById('adminCleanupBtn');
+
+// Показ кнопки админки при роли admin (через /auth/me)
+async function checkAdmin() {
+    try {
+        const resp = await fetch('/auth/me');
+        if (!resp.ok) return;
+        const data = await resp.json();
+        const role = data && (data.role || (data.user && data.user.role));
+        if (role === 'admin') {
+            if (adminPanelBtn) adminPanelBtn.style.display = 'inline-block';
+            if (adminCleanupBtn) adminCleanupBtn.style.display = 'inline-block';
+        }
+    } catch (e) {
+        // игнорируем
+    }
+}
+checkAdmin();
 
 // --- Folder Select ---
 selectFolderBtn.addEventListener('click', () => {
