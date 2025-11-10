@@ -6,6 +6,7 @@
 - Измерение indexing_cost_seconds
 - Поддержка дедупликации по sha256
 - Работа с таблицами documents, chunks, folder_index_status
+- Извлечение текста из documents.blob (режим pure DB)
 """
 import os
 import hashlib
@@ -14,7 +15,7 @@ from typing import List, Dict, Any, Optional, Tuple
 from flask import current_app
 from webapp.models.rag_models import RAGDatabase
 from webapp.services.chunking import chunk_document
-from document_processor.extractors.text_extractor import extract_text
+from document_processor.extractors.text_extractor import extract_text_from_bytes
 from webapp.utils.path_utils import normalize_path, get_relative_path
 
 
@@ -216,33 +217,67 @@ def index_document_to_db(
     start_time = time.time()
     
     try:
-        # 1. Проверка существования документа по sha256
+        # 1. Проверка существования документа по sha256 и получение blob
+        document_blob = None
+        document_id = None
+        has_chunks = False
+        
         with db.db.connect() as conn:
             with conn.cursor() as cur:
                 cur.execute("""
-                    SELECT id FROM documents WHERE sha256 = %s;
+                    SELECT id, blob FROM documents WHERE sha256 = %s;
                 """, (file_info['sha256'],))
                 row = cur.fetchone()
                 if row:
-                    indexing_cost = time.time() - start_time
-                    return row[0], indexing_cost
+                    document_id = row[0]
+                    document_blob = row[1]
+                    
+                    # Проверяем есть ли chunks у этого документа
+                    cur.execute("""
+                        SELECT COUNT(*) FROM chunks WHERE document_id = %s;
+                    """, (document_id,))
+                    chunks_count = cur.fetchone()[0]
+                    has_chunks = chunks_count > 0
+                    
+                    if has_chunks:
+                        # Документ уже проиндексирован, возвращаем его ID
+                        indexing_cost = time.time() - start_time
+                        current_app.logger.info(f'[INDEX] Документ {document_id} уже проиндексирован ({chunks_count} chunks), пропускаем')
+                        return document_id, indexing_cost
+                    else:
+                        current_app.logger.info(f'[INDEX] Документ {document_id} найден, но chunks отсутствуют - выполняем индексацию')
         
-        # 2. Извлекаем текст через общий экстрактор и чанкуем
+        # 2. Извлекаем текст из blob (если есть) или из файла (fallback)
         content = ""
         try:
-            current_app.logger.info(f'[EXTRACT] Вызов extract_text для: {file_path}, exists={os.path.exists(file_path)}')
-            content = extract_text(file_path) or ""
-            current_app.logger.info(f'[EXTRACT] extract_text вернул {len(content)} символов')
+            if document_blob:
+                # Читаем из blob (преобразуем memoryview в bytes)
+                blob_bytes = bytes(document_blob) if not isinstance(document_blob, bytes) else document_blob
+                current_app.logger.info(f'[EXTRACT] Извлечение текста из blob, размер: {len(blob_bytes)} байт')
+                ext = os.path.splitext(original_filename)[1].lower().lstrip('.')
+                content = extract_text_from_bytes(blob_bytes, ext) or ""
+                current_app.logger.info(f'[EXTRACT] extract_text_from_bytes вернул {len(content)} символов')
+            else:
+                # Fallback: читаем из файловой системы (временная совместимость)
+                current_app.logger.warning(f'[EXTRACT] Blob отсутствует, fallback на чтение из файла: {file_path}')
+                if os.path.exists(file_path):
+                    with open(file_path, 'rb') as f:
+                        file_bytes = f.read()
+                    ext = os.path.splitext(file_path)[1].lower().lstrip('.')
+                    content = extract_text_from_bytes(file_bytes, ext) or ""
+                    current_app.logger.info(f'[EXTRACT] Извлечено {len(content)} символов из файла')
+                else:
+                    current_app.logger.error(f'[EXTRACT] Файл не найден и blob отсутствует: {file_path}')
         except Exception as e:
-            current_app.logger.warning(f'Ошибка извлечения текста {file_path}: {e}')
+            current_app.logger.warning(f'Ошибка извлечения текста {original_filename}: {e}')
         
         if not content:
             # Graceful degrade: создаём осмысленный placeholder, чтобы PDF не выглядел "пустым"
-            ext = os.path.splitext(file_path)[1].lower()
+            ext = os.path.splitext(original_filename)[1].lower()
             if ext == '.pdf':
-                content = f'[ПУСТОЙ PDF ИЛИ ОШИБКА ИЗВЛЕЧЕНИЯ] {os.path.basename(file_path)}'
+                content = f'[ПУСТОЙ PDF ИЛИ ОШИБКА ИЗВЛЕЧЕНИЯ] {original_filename}'
             else:
-                content = os.path.basename(file_path)
+                content = original_filename
         
     # 3. Чанкуем текст
         current_app.logger.info(f'[CHUNK] Начинаем чанкование для {file_path}, size_tokens={chunk_size_tokens}')
@@ -259,36 +294,53 @@ def index_document_to_db(
             chunks = [{'content': content, 'token_count': len(content.split())}]
         
     # 4. Добавляем документ (глобально) и user_documents связь в ОДНОЙ транзакции
-        with db.db.connect() as conn:
-            with conn.cursor() as cur:
-                # Создаём глобальный документ
-                cur.execute(
-                    """
-                    INSERT INTO documents (sha256, size_bytes, mime, parse_status, indexing_cost_seconds)
-                    VALUES (%s, %s, %s, %s, %s)
-                    RETURNING id;
-                    """,
-                    (
-                        file_info['sha256'],
-                        file_info.get('size', 0),
-                        file_info.get('content_type', 'text/plain'),
-                        'indexed',
-                        0.0
+        # Если документ уже существует (но без chunks), используем существующий ID
+        if document_id is None:
+            with db.db.connect() as conn:
+                with conn.cursor() as cur:
+                    # Создаём глобальный документ
+                    cur.execute(
+                        """
+                        INSERT INTO documents (sha256, size_bytes, mime, parse_status, indexing_cost_seconds)
+                        VALUES (%s, %s, %s, %s, %s)
+                        RETURNING id;
+                        """,
+                        (
+                            file_info['sha256'],
+                            file_info.get('size', 0),
+                            file_info.get('content_type', 'text/plain'),
+                            'indexed',
+                            0.0
+                        )
                     )
-                )
-                doc_id = cur.fetchone()[0]
-                
-                # Сразу создаём user_documents связь (в той же транзакции!)
-                cur.execute(
-                    """
-                    INSERT INTO user_documents (user_id, document_id, original_filename, user_path)
-                    VALUES (%s, %s, %s, %s)
-                    ON CONFLICT (user_id, document_id) DO UPDATE
-                    SET is_soft_deleted = FALSE, original_filename = EXCLUDED.original_filename, user_path = EXCLUDED.user_path;
-                    """,
-                    (user_id, doc_id, original_filename, user_path)
-                )
-            conn.commit()
+                    doc_id = cur.fetchone()[0]
+                    
+                    # Сразу создаём user_documents связь (в той же транзакции!)
+                    cur.execute(
+                        """
+                        INSERT INTO user_documents (user_id, document_id, original_filename, user_path)
+                        VALUES (%s, %s, %s, %s)
+                        ON CONFLICT (user_id, document_id) DO UPDATE
+                        SET is_soft_deleted = FALSE, original_filename = EXCLUDED.original_filename, user_path = EXCLUDED.user_path;
+                        """,
+                        (user_id, doc_id, original_filename, user_path)
+                    )
+                conn.commit()
+        else:
+            # Документ уже существует, используем его ID и обновляем связь
+            doc_id = document_id
+            with db.db.connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        INSERT INTO user_documents (user_id, document_id, original_filename, user_path)
+                        VALUES (%s, %s, %s, %s)
+                        ON CONFLICT (user_id, document_id) DO UPDATE
+                        SET is_soft_deleted = FALSE, original_filename = EXCLUDED.original_filename, user_path = EXCLUDED.user_path;
+                        """,
+                        (user_id, doc_id, original_filename, user_path)
+                    )
+                conn.commit()
         
         # 5. Добавляем чанки в БД
         chunk_data = []
@@ -314,7 +366,7 @@ def index_document_to_db(
                     execute_values(
                         cur,
                         """
-                        INSERT INTO chunks (document_id, chunk_idx, text, length)
+                        INSERT INTO chunks (document_id, chunk_idx, text, tokens, created_at)
                         VALUES %s;
                         """,
                         [
@@ -322,9 +374,10 @@ def index_document_to_db(
                                 c['document_id'],
                                 c['chunk_index'],
                                 c['text'],
-                                len(c['text'])
+                                c['tokens']
                             ) for c in chunk_data
-                        ]
+                        ],
+                        template="(%s, %s, %s, %s, NOW())"
                     )
                 conn.commit()
                 current_app.logger.info(f'[CHUNKS] Записано {len(chunk_data)} чанков в БД для doc_id={doc_id}')
@@ -708,11 +761,12 @@ def rebuild_all_documents(
                     stats['errors'] += 1
                     continue
                 
-                # Ищем документ в БД по SHA256 и owner_id
+                # Ищем документ в БД по SHA256 и owner_id, получаем blob
+                document_blob = None
                 with db.db.connect() as conn:
                     with conn.cursor() as cur:
                         cur.execute("""
-                            SELECT ud.document_id, d.sha256
+                            SELECT ud.document_id, d.sha256, d.blob
                             FROM user_documents ud
                             JOIN documents d ON d.id = ud.document_id
                             WHERE ud.user_id = %s AND d.sha256 = %s AND ud.is_soft_deleted = FALSE
@@ -726,10 +780,28 @@ def rebuild_all_documents(
                     continue
                 
                 doc_id = doc_row[0]
+                document_blob = doc_row[2]
                 
-                # Извлекаем текст заново
+                # Извлекаем текст из blob или файла (fallback)
                 start = time.time()
-                text = extract_text(file_path)
+                text = ""
+                try:
+                    if document_blob:
+                        # Преобразуем memoryview в bytes
+                        blob_bytes = bytes(document_blob) if not isinstance(document_blob, bytes) else document_blob
+                        ext = os.path.splitext(filename)[1].lower().lstrip('.')
+                        text = extract_text_from_bytes(blob_bytes, ext) or ""
+                    else:
+                        # Fallback: чтение из файла
+                        current_app.logger.warning(f"Blob отсутствует для {filename}, fallback на файл")
+                        if os.path.exists(file_path):
+                            with open(file_path, 'rb') as f:
+                                file_bytes = f.read()
+                            ext = os.path.splitext(filename)[1].lower().lstrip('.')
+                            text = extract_text_from_bytes(file_bytes, ext) or ""
+                except Exception as e:
+                    current_app.logger.error(f"Ошибка извлечения текста для {filename}: {e}")
+                
                 extract_time = time.time() - start
                 
                 if not text or len(text.strip()) == 0:

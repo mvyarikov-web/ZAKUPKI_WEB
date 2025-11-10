@@ -129,6 +129,8 @@ class Document(Base):
     Глобальное хранилище документов (легаси-архитектура).
     Документы независимы от пользователей, дедуплицируются по SHA256.
     Связь с пользователями через таблицу user_documents.
+    
+    С инкремента 020: добавлено поле blob для хранения файлов в БД.
     """
     __tablename__ = 'documents'
     
@@ -137,6 +139,7 @@ class Document(Base):
     size_bytes = Column(Integer, nullable=False)
     mime = Column(String(127))  # тип файла
     parse_status = Column(Text)  # статус обработки: 'indexed', 'error', etc.
+    blob = Column(LargeBinary, nullable=True)  # Бинарное содержимое файла (PURE_DB_MODE)
     
     # Поля для расчёта ценности документа при GC
     access_count = Column(Integer, default=0, nullable=False)  # счётчик обращений
@@ -595,6 +598,7 @@ class FolderIndexStatus(Base):
     folder_path = Column(Text, nullable=False)
     root_hash = Column(Text)
     last_indexed_at = Column(DateTime)
+    status_data = Column(JSON, nullable=True)  # JSONB данные прогресса индексации (инкремент 020)
     
     # Связи
     owner = relationship('User', backref='folder_statuses')
@@ -608,6 +612,19 @@ class FolderIndexStatus(Base):
         return f"<FolderIndexStatus(id={self.id}, owner_id={self.owner_id}, folder_path='{self.folder_path}')>"
 
 
+class AppSettings(Base):
+    """Глобальные настройки приложения (инкремент 020)."""
+    __tablename__ = 'app_settings'
+    
+    key = Column(String(255), primary_key=True)
+    value = Column(Text, nullable=False)
+    description = Column(Text, nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    
+    def __repr__(self):
+        return f"<AppSettings(key='{self.key}', value='{self.value[:50]}...')>"
+
+
 # Экспорт всех моделей
 __all__ = [
     'User',
@@ -615,12 +632,7 @@ __all__ = [
     'Document',
     'Chunk',
     'AIConversation',
-    'User',
-    'Session',
-    'Document',
     'UserDocument',
-    'Chunk',
-    'AIConversation',
     'AIMessage',
     'SearchHistory',
     'APIKey',
@@ -635,4 +647,5 @@ __all__ = [
     'FileSearchState',
     'SearchIndex',
     'FolderIndexStatus',
+    'AppSettings',
 ]

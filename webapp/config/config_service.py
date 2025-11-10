@@ -232,6 +232,24 @@ class ConfigService:
         value = os.getenv('USE_DATABASE', 'false').lower()
         return value in ('true', '1', 'yes', 'on')
     
+    @property
+    def pure_db_mode(self) -> bool:
+        """
+        Чистый режим БД (инкремент 020): все файлы в documents.blob.
+        false = гибридный режим (uploads/ + БД)
+        true = только БД, без файловой системы
+        """
+        value = os.getenv('PURE_DB_MODE', 'false').lower()
+        return value in ('true', '1', 'yes', 'on')
+    
+    @property
+    def db_size_limit_bytes(self) -> int:
+        """
+        Лимит размера БД в байтах (для автоудаления 30%).
+        По умолчанию: 10 ГБ
+        """
+        return int(os.getenv('DB_SIZE_LIMIT_BYTES', '10737418240'))  # 10 GB
+    
     # ------------------------------------------------------------------------------
     # Логирование
     # ------------------------------------------------------------------------------

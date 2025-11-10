@@ -74,3 +74,47 @@ def auth_client(app):
             return getattr(self._inner, item)
 
     return _AuthClient(client, default_headers)
+
+
+# ==============================================================================
+# Фикстуры для БД (инкремент 020)
+# ==============================================================================
+
+@pytest.fixture(scope="function")
+def db(app):
+    """Создаёт тестовую сессию БД с откатом после каждого теста."""
+    from webapp.db.base import SessionLocal
+    
+    session = SessionLocal()
+    try:
+        yield session
+    finally:
+        session.rollback()
+        session.close()
+
+
+@pytest.fixture(scope="function")
+def test_user(db):
+    """Создаёт тестового пользователя в БД."""
+    from webapp.db.models import User
+    import hashlib
+    import uuid
+    
+    # Уникальный email для каждого теста
+    unique_email = f"test_{uuid.uuid4().hex[:8]}@example.com"
+    
+    user = User(
+        email=unique_email,
+        password_hash=hashlib.sha256(b"testpass").hexdigest(),
+        role="user",
+        first_name="Test",
+        last_name="User"
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    
+    yield user
+    
+    # Откатываем все изменения после теста
+    db.rollback()
