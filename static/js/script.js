@@ -768,25 +768,35 @@ function rebuildIndexWithProgress() {
         fill.classList.remove('completed');
     }
     
-    if (text) text.textContent = 'Построение индекса…';
+    if (text) text.textContent = 'Пересборка индекса…';
     if (timeDisplay) timeDisplay.textContent = '0 сек';
     
     // Запускаем таймер
     startIndexingTimer();
     
-    // Запускаем построение индекса с групповой индексацией
+    // Вызываем /rebuild_index для принудительной пересборки всех чанков
     const userId = window.APP_USER_ID || localStorage.getItem('app_user_id') || '';
-    return fetch('/build_index', { 
+    return fetch('/rebuild_index', { 
         method: 'POST',
         headers: Object.assign({ 'Content-Type': 'application/json' }, userId ? { 'X-User-ID': userId } : {}),
-        body: JSON.stringify({ use_groups: true })
+        body: JSON.stringify({})
     })
         .then(res => res.json())
         .then(data => {
-            if (!data.success) throw new Error(data.message || 'Ошибка построения индекса');
+            if (!data.success) throw new Error(data.message || 'Ошибка пересборки индекса');
             
-            // Запускаем опрос статуса групп
-            return pollIndexGroupStatus(fill, text);
+            // Пересборка завершена успешно
+            if (fill) {
+                fill.style.width = '100%';
+                fill.classList.add('completed');
+            }
+            if (text) {
+                const stats = data.stats || {};
+                text.textContent = `Переиндексировано: ${stats.reindexed || 0} из ${stats.total_docs || 0} документов`;
+            }
+            
+            MessageManager.success(data.message || 'Индекс успешно пересобран', 'main');
+            return Promise.resolve();
         })
         .catch(error => {
             stopIndexingTimer(false);
@@ -795,7 +805,6 @@ function rebuildIndexWithProgress() {
         .finally(() => {
             // Останавливаем таймер, но оставляем финальное время на экране
             stopIndexingTimer(true);
-            // Не скрываем прогресс после завершения — оставляем 100% и статус
         });
 }
 

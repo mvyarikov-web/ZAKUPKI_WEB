@@ -8,7 +8,7 @@ import enum
 
 from sqlalchemy import (
     Column, Integer, String, Text, Boolean, DateTime, 
-    ForeignKey, LargeBinary, Enum as SQLEnum, JSON, Index
+    ForeignKey, LargeBinary, Enum as SQLEnum, JSON, Index, UniqueConstraint, Float
 )
 from sqlalchemy.orm import relationship
 from pgvector.sqlalchemy import Vector
@@ -86,8 +86,7 @@ class User(Base):
     
     # Связи
     sessions = relationship('Session', back_populates='user', cascade='all, delete-orphan')
-    documents = relationship('Document', back_populates='owner')
-    chunks = relationship('Chunk', back_populates='owner')
+    # Легаси-архитектура: пользователи связаны с документами через user_documents
     conversations = relationship('AIConversation', back_populates='user')
     search_history = relationship('SearchHistory', back_populates='user')
     api_keys = relationship('APIKey', back_populates='user')
@@ -96,7 +95,6 @@ class User(Base):
     
     def __repr__(self):
         return f"<User(id={self.id}, email='{self.email}', role='{self.role}')>"
-
 
 class Session(Base):
     """JWT-токены и активные сессии."""
@@ -123,46 +121,79 @@ class Session(Base):
 
 
 # ==============================================================================
-# ДОКУМЕНТЫ И ЧАНКИ
+# ДОКУМЕНТЫ И ЧАНКИ (ЛЕГАСИ-АРХИТЕКТУРА)
 # ==============================================================================
 
 class Document(Base):
-    """Загруженные документы."""
+    """
+    Глобальное хранилище документов (легаси-архитектура).
+    Документы независимы от пользователей, дедуплицируются по SHA256.
+    Связь с пользователями через таблицу user_documents.
+    """
     __tablename__ = 'documents'
     
     id = Column(Integer, primary_key=True, autoincrement=True)
-    owner_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
-    original_filename = Column(String(512), nullable=False)
-    content_type = Column(String(127))
+    sha256 = Column(String(64), nullable=False, unique=True)  # UNIQUE для глобальной дедупликации
     size_bytes = Column(Integer, nullable=False)
-    sha256 = Column(String(64), nullable=False, index=True)
-    blob = Column(LargeBinary)  # Для файлов < 10 МБ
-    storage_url = Column(Text)  # Для файлов > 50 МБ (S3/MinIO)
-    status = Column(SQLEnum('new', 'parsed', 'indexed', 'error', name='document_status'), 
-                   default='new', nullable=False)
-    uploaded_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    indexed_at = Column(DateTime)
+    mime = Column(String(127))  # тип файла
+    parse_status = Column(Text)  # статус обработки: 'indexed', 'error', etc.
+    
+    # Поля для расчёта ценности документа при GC
+    access_count = Column(Integer, default=0, nullable=False)  # счётчик обращений
+    indexing_cost_seconds = Column(Float, default=0.0, nullable=False)  # время индексации
+    last_accessed_at = Column(DateTime)  # последнее обращение
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     
     # Связи
-    owner = relationship('User', back_populates='documents')
     chunks = relationship('Chunk', back_populates='document', cascade='all, delete-orphan')
+    user_links = relationship('UserDocument', back_populates='document', cascade='all, delete-orphan')
     
     __table_args__ = (
-        Index('idx_documents_owner_status', 'owner_id', 'status'),
-        Index('idx_documents_sha256', 'sha256'),
+        UniqueConstraint('sha256', name='uq_documents_sha256'),
     )
     
     def __repr__(self):
-        return f"<Document(id={self.id}, filename='{self.original_filename}', status='{self.status}')>"
+        return f"<Document(id={self.id}, sha256='{self.sha256[:8]}...', size={self.size_bytes})>"
+
+
+class UserDocument(Base):
+    """
+    Связь пользователей с документами (легаси-архитектура).
+    Один документ может принадлежать многим пользователям.
+    """
+    __tablename__ = 'user_documents'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    document_id = Column(Integer, ForeignKey('documents.id', ondelete='CASCADE'), nullable=False)
+    original_filename = Column(Text)  # имя файла у конкретного пользователя
+    user_path = Column(Text)  # путь в папке пользователя
+    is_soft_deleted = Column(Boolean, default=False, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    access_level = Column(String(50), default='read', nullable=False)
+    
+    # Связи
+    user = relationship('User', backref='user_documents')
+    document = relationship('Document', back_populates='user_links')
+    
+    __table_args__ = (
+        UniqueConstraint('user_id', 'document_id', name='uq_user_document'),
+        Index('ix_user_documents_user_id', 'user_id'),
+        Index('ix_user_documents_document_id', 'document_id'),
+    )
+    
+    def __repr__(self):
+        return f"<UserDocument(user_id={self.user_id}, document_id={self.document_id}, filename='{self.original_filename}')>"
+        return f"<UserDocument(user_id={self.user_id}, document_id={self.document_id}, filename='{self.original_filename}')>"
 
 
 class Chunk(Base):
-    """Чанки текста для RAG с pgvector embeddings."""
+    """Чанки текста для RAG (легаси-архитектура, принадлежат глобальным документам)."""
     __tablename__ = 'chunks'
     
     id = Column(Integer, primary_key=True, autoincrement=True)
     document_id = Column(Integer, ForeignKey('documents.id', ondelete='CASCADE'), nullable=False)
-    owner_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
     chunk_idx = Column(Integer, nullable=False)  # Порядковый номер чанка в документе
     text = Column(Text, nullable=False)
     text_sha256 = Column(String(64), index=True)
@@ -172,17 +203,15 @@ class Chunk(Base):
     
     # Связи
     document = relationship('Document', back_populates='chunks')
-    owner = relationship('User', back_populates='chunks')
     
     __table_args__ = (
         Index('idx_chunks_document', 'document_id', 'chunk_idx'),
-        Index('idx_chunks_owner', 'owner_id'),
+        UniqueConstraint('document_id', 'chunk_idx', name='uq_chunks_doc_idx'),
         # IVFFlat индекс будет создан вручную в миграции
     )
     
     def __repr__(self):
         return f"<Chunk(id={self.id}, document_id={self.document_id}, chunk_idx={self.chunk_idx})>"
-
 
 # ==============================================================================
 # AI ДИАЛОГИ И СООБЩЕНИЯ
@@ -526,11 +555,70 @@ class FileSearchState(Base):
         return f"<FileSearchState(id={self.id}, user_id={self.user_id}, file_path='{self.file_path}', status='{self.status}')>"
 
 
+class SearchIndex(Base):
+    """Поисковый индекс документов (замена _search_index.txt)."""
+    __tablename__ = 'search_index'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    document_id = Column(Integer, ForeignKey('documents.id', ondelete='CASCADE'), nullable=False)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    content = Column(Text, nullable=False)  # Текстовое содержимое документа
+    metadata_json = Column('metadata', JSON, nullable=True)  # Метаданные (имя файла, путь, размер и т.д.)
+    search_vector = Column(Text, nullable=True)  # tsvector для полнотекстового поиска (управляется триггером)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Связи
+    document = relationship('Document', foreign_keys=[document_id])
+    user = relationship('User', foreign_keys=[user_id])
+    
+    __table_args__ = (
+        Index('idx_search_index_document', 'document_id'),
+        Index('idx_search_index_user', 'user_id'),
+        Index('idx_search_index_created', 'created_at'),
+    )
+    
+    def __repr__(self):
+        return f"<SearchIndex(id={self.id}, document_id={self.document_id}, user_id={self.user_id})>"
+
+
+# ==============================================================================
+# СТАТУС ИНДЕКСАЦИИ ПАПОК
+# ==============================================================================
+
+class FolderIndexStatus(Base):
+    """Статус индексации папок пользователей."""
+    __tablename__ = 'folder_index_status'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    owner_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    folder_path = Column(Text, nullable=False)
+    root_hash = Column(Text)
+    last_indexed_at = Column(DateTime)
+    
+    # Связи
+    owner = relationship('User', backref='folder_statuses')
+    
+    __table_args__ = (
+        UniqueConstraint('owner_id', 'folder_path', name='uq_folder_status'),
+        Index('ix_folder_index_status_owner', 'owner_id'),
+    )
+    
+    def __repr__(self):
+        return f"<FolderIndexStatus(id={self.id}, owner_id={self.owner_id}, folder_path='{self.folder_path}')>"
+
+
 # Экспорт всех моделей
 __all__ = [
     'User',
     'Session',
     'Document',
+    'Chunk',
+    'AIConversation',
+    'User',
+    'Session',
+    'Document',
+    'UserDocument',
     'Chunk',
     'AIConversation',
     'AIMessage',
@@ -545,4 +633,6 @@ __all__ = [
     'TokenUsage',
     'AIModelConfig',
     'FileSearchState',
+    'SearchIndex',
+    'FolderIndexStatus',
 ]

@@ -168,13 +168,13 @@ def test_05_verify_chunks_in_db(db, app):
             
             # Получаем примеры чанков с текстом
             cur.execute("""
-                SELECT c.id, c.document_id, c.chunk_index, 
+                SELECT c.id, c.document_id, c.chunk_idx, 
                        LEFT(c.text, 100) as text_preview,
                        COALESCE(ud.original_filename, d.sha256)
                 FROM chunks c
                 JOIN documents d ON d.id = c.document_id
                 JOIN user_documents ud ON ud.document_id = d.id AND ud.user_id = %s AND ud.is_soft_deleted = FALSE
-                ORDER BY c.document_id, c.chunk_index
+                ORDER BY c.document_id, c.chunk_idx
                 LIMIT 3;
             """, (owner_id,))
             chunks = cur.fetchall()
@@ -257,10 +257,10 @@ def test_08_view_file_by_storage_url(client, app, db):
 
 def test_09_search_in_db(client, app):
     """Проверка поиска по БД."""
-    # Ищем распространённое слово (например, "анализ")
+    # Ищем распространённое слово (например, "договор" - есть во многих документах)
     owner_id = get_owner_id(app)
     response = client.post('/search', 
-                          json={'search_terms': 'анализ', 'exclude_mode': False},
+                          json={'search_terms': 'договор', 'exclude_mode': False},
                           headers={'X-User-ID': str(owner_id)})
     
     assert response.status_code == 200, f"Ошибка поиска: {response.data}"

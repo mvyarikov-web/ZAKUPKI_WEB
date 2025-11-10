@@ -95,7 +95,94 @@ def _make_snippet(text: str, keywords: list, context_chars: int = 100) -> str:
 
 def _search_in_db(db: RAGDatabase, owner_id: int, keywords: list, exclude_mode: bool = False) -> list:
     """
-    Поиск по чанкам в БД через глобальные documents с видимостью через user_documents.
+    Поиск по search_index с fallback на chunks.
+    
+    Сначала пытаемся использовать search_index (быстрый полнотекстовый поиск через tsvector).
+    Если search_index пуст или произошла ошибка, используем fallback на chunks.
+    
+    Args:
+        db: Подключение к БД
+        owner_id: ID владельца
+        keywords: Список ключевых слов
+        exclude_mode: Если True, ищет файлы БЕЗ ключевых слов
+        
+    Returns:
+        Список результатов поиска
+    """
+    # Пробуем поиск через search_index (приоритетный метод)
+    try:
+        from webapp.db.repositories.search_index_repository import SearchIndexRepository
+        
+        with db.db.connect() as conn:
+            search_repo = SearchIndexRepository(conn)
+            
+            if exclude_mode:
+                # Для exclude_mode используем chunks (search_index не поддерживает NOT)
+                current_app.logger.info("Exclude mode: используем поиск по chunks")
+                return _search_in_chunks(db, owner_id, keywords, exclude_mode=True)
+            
+            # Полнотекстовый поиск через search_index
+            search_results = search_repo.search(owner_id, keywords, limit=500)
+            
+            if search_results:
+                current_app.logger.info(f"Найдено {len(search_results)} результатов через search_index")
+                
+                # Форматируем результаты для фронтенда
+                results = []
+                for sr in search_results:
+                    metadata = sr.get('metadata', {})
+                    filename = metadata.get('original_filename', f"doc_{sr['document_id']}")
+                    user_path = metadata.get('user_path', filename)
+                    normalized_path = normalize_path(user_path)
+                    
+                    # Подсчёт совпадений по терминам
+                    per_term = []
+                    content_lower = sr.get('content', '').lower()
+                    for term in keywords:
+                        pattern = re.compile(r"\b" + re.escape(term.lower()) + r"\w*\b", re.IGNORECASE)
+                        matches = pattern.findall(content_lower)
+                        count = len(matches)
+                        if count > 0:
+                            per_term.append({
+                                'term': term,
+                                'count': count,
+                                'snippets': [sr.get('snippet', _make_snippet(sr.get('content', ''), [term], 100))]
+                            })
+                    
+                    per_term.sort(key=lambda x: x['count'], reverse=True)
+                    
+                    results.append({
+                        'file': filename,
+                        'storage_url': normalized_path,
+                        'filename': filename,
+                        'source': normalized_path,
+                        'path': normalized_path,
+                        'matches': [{
+                            'chunk_idx': 0,
+                            'snippet': sr.get('snippet', ''),
+                            'text': sr.get('content', '')[:200]
+                        }],
+                        'match_count': sum(pt['count'] for pt in per_term),
+                        'doc_id': sr['document_id'],
+                        'per_term': per_term,
+                        'rank': sr.get('rank', 0.0)
+                    })
+                
+                return results
+            else:
+                current_app.logger.info("search_index пуст, fallback на поиск по chunks")
+                return _search_in_chunks(db, owner_id, keywords, exclude_mode)
+                
+    except Exception as e:
+        current_app.logger.warning(f"Ошибка поиска через search_index: {e}, fallback на chunks")
+        return _search_in_chunks(db, owner_id, keywords, exclude_mode)
+
+
+def _search_in_chunks(db: RAGDatabase, owner_id: int, keywords: list, exclude_mode: bool = False) -> list:
+    """
+    FALLBACK: Поиск по чанкам в БД через глобальные documents с видимостью через user_documents.
+    
+    Используется когда search_index недоступен или пуст.
     
     Args:
         db: Подключение к БД
@@ -148,14 +235,14 @@ SELECT
     d.id,
     COALESCE(ud.original_filename, d.sha256) AS filename,
     ud.user_path,
-    c.chunk_index,
+    c.chunk_idx,
     c.text
 FROM user_documents ud
 JOIN documents d ON d.id = ud.document_id
 JOIN chunks c ON c.document_id = d.id
 WHERE ud.user_id = %s AND ud.is_soft_deleted = FALSE
   AND ({where_clause})
-ORDER BY filename, c.chunk_index
+ORDER BY filename, c.chunk_idx
 LIMIT 500;
 """, params)
                     rows = cur.fetchall()
@@ -602,13 +689,13 @@ def view_index():
                             d.id,
                             COALESCE(ud.original_filename, d.sha256) AS filename,
                             ud.user_path,
-                            c.chunk_index,
+                            c.chunk_idx,
                             c.text
                         FROM user_documents ud
                         JOIN documents d ON d.id = ud.document_id
                         LEFT JOIN chunks c ON c.document_id = d.id
                         WHERE ud.user_id = %s AND ud.is_soft_deleted = FALSE
-                        ORDER BY filename, c.chunk_index;
+                        ORDER BY filename, c.chunk_idx;
                     """, (owner_id,))
                     rows = cur.fetchall()
                     

@@ -6,7 +6,6 @@ import traceback
 from datetime import datetime
 from flask import has_request_context, request, g
 from webapp.db.base import SessionLocal
-from webapp.db.models import AppLog, HTTPRequestLog, ErrorLog
 
 
 class DatabaseLogHandler(logging.Handler):
@@ -19,6 +18,9 @@ class DatabaseLogHandler(logging.Handler):
     def emit(self, record):
         """Записать лог в БД."""
         try:
+            # Отложенный импорт моделей для избежания циклических зависимостей
+            from webapp.db.models import AppLog
+            
             session = self.session_factory()
             
             # Определяем user_id если есть контекст запроса
@@ -65,6 +67,8 @@ class HTTPRequestLogHandler:
         """Записать информацию о HTTP запросе."""
         try:
             import time
+            # Отложенный импорт моделей для избежания циклических зависимостей
+            from webapp.db.models import HTTPRequestLog
             
             session = SessionLocal()
             
@@ -118,6 +122,9 @@ class ErrorLogHandler:
     def log_error(app, error, user_id=None, request_path=None, request_data=None, component=None):
         """Записать информацию об ошибке."""
         try:
+            # Отложенный импорт моделей для избежания циклических зависимостей
+            from webapp.db.models import ErrorLog
+            
             session = SessionLocal()
             
             # Получаем информацию об ошибке

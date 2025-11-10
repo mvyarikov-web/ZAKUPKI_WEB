@@ -129,10 +129,10 @@ def _fetch_documents_from_db(db: RAGDatabase, owner_id: int, file_paths: List[st
                 if doc_ids:
                     cur.execute(
                         """
-                        SELECT c.document_id, c.chunk_index, c.text
+                        SELECT c.document_id, c.chunk_idx, c.text
                         FROM chunks c
                         WHERE c.document_id = ANY(%s)
-                        ORDER BY c.document_id, c.chunk_index;
+                        ORDER BY c.document_id, c.chunk_idx;
                         """,
                         (doc_ids,)
                     )

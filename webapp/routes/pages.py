@@ -227,7 +227,7 @@ def view_file(filepath):
                     SELECT text
                     FROM chunks
                     WHERE document_id = %s
-                    ORDER BY chunk_index;
+                    ORDER BY chunk_idx;
                     """,
                     (doc_id,)
                 )

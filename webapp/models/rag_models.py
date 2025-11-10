@@ -72,85 +72,11 @@ class RAGDatabase:
         self.database_url = database_url
         self.db = DatabaseConnection(database_url)
     
+    # DEPRECATED: Таблицы создаются через Alembic миграции, не через initialize_schema()
+    # Этот метод оставлен для обратной совместимости, но ничего не делает
     def initialize_schema(self):
-        """Создать таблицы и индексы под новую модель (documents, user_documents, chunks, folder_index_status)."""
-        with self.db.connect() as conn:
-            with conn.cursor() as cur:
-                # Базовые расширения (без обязательного pgvector)
-                try:
-                    cur.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto;")
-                except Exception:
-                    pass
-
-                # Глобальные документы
-                cur.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS documents (
-                        id SERIAL PRIMARY KEY,
-                        sha256 TEXT NOT NULL UNIQUE,
-                        size_bytes BIGINT DEFAULT 0,
-                        mime TEXT,
-                        parse_status TEXT,
-                        access_count INTEGER DEFAULT 0,
-                        indexing_cost_seconds DOUBLE PRECISION DEFAULT 0,
-                        last_accessed_at TIMESTAMP,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    );
-                    """
-                )
-
-                # Видимость документов для пользователей
-                cur.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS user_documents (
-                        id SERIAL PRIMARY KEY,
-                        user_id INTEGER NOT NULL,
-                        document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
-                        original_filename TEXT,
-                        user_path TEXT,
-                        is_soft_deleted BOOLEAN DEFAULT FALSE,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        UNIQUE(user_id, document_id)
-                    );
-                    """
-                )
-                cur.execute("CREATE INDEX IF NOT EXISTS idx_user_documents_user ON user_documents(user_id);")
-                cur.execute("CREATE INDEX IF NOT EXISTS idx_user_documents_doc ON user_documents(document_id);")
-                cur.execute("CREATE INDEX IF NOT EXISTS idx_user_documents_path ON user_documents(user_path);")
-
-                # Текстовые чанки
-                cur.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS chunks (
-                        id SERIAL PRIMARY KEY,
-                        document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
-                        chunk_index INTEGER NOT NULL,
-                        text TEXT NOT NULL,
-                        length INTEGER,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        UNIQUE(document_id, chunk_index)
-                    );
-                    """
-                )
-                cur.execute("CREATE INDEX IF NOT EXISTS idx_chunks_doc ON chunks(document_id);")
-                cur.execute("CREATE INDEX IF NOT EXISTS idx_chunks_doc_idx ON chunks(document_id, chunk_index);")
-
-                # Статус индексации папок на пользователя
-                cur.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS folder_index_status (
-                        id SERIAL PRIMARY KEY,
-                        owner_id INTEGER NOT NULL,
-                        folder_path TEXT NOT NULL,
-                        root_hash TEXT,
-                        last_indexed_at TIMESTAMP,
-                        UNIQUE(owner_id, folder_path)
-                    );
-                    """
-                )
-
-                conn.commit()
+        """DEPRECATED: Используйте Alembic миграции вместо ручного создания таблиц."""
+        pass
     
     def add_document(
         self,
@@ -240,10 +166,10 @@ class RAGDatabase:
                     cur,
                     """
                     INSERT INTO chunks 
-                    (document_id, chunk_index, content, content_hash, embedding, 
+                    (document_id, chunk_idx, content, content_hash, embedding, 
                      token_count, page_range, section, metadata)
                     VALUES %s
-                    ON CONFLICT (document_id, chunk_index) DO UPDATE
+                    ON CONFLICT (document_id, chunk_idx) DO UPDATE
                     SET content = EXCLUDED.content,
                         content_hash = EXCLUDED.content_hash,
                         embedding = EXCLUDED.embedding,
@@ -282,7 +208,7 @@ class RAGDatabase:
                     SELECT 
                         c.id,
                         c.document_id,
-                        c.chunk_index,
+                        c.chunk_idx,
                         c.content,
                         c.token_count,
                         c.page_range,

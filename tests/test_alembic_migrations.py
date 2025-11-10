@@ -12,9 +12,6 @@ from sqlalchemy import inspect, text
 from webapp.db import engine
 
 
-... (rest of the file content)
-
-
 def test_migration_is_idempotent():
     """Повторное применение миграции безопасно."""
     # Этот тест проверяет, что после upgrade head

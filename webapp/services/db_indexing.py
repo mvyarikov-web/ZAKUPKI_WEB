@@ -314,7 +314,7 @@ def index_document_to_db(
                     execute_values(
                         cur,
                         """
-                        INSERT INTO chunks (document_id, chunk_index, text, length)
+                        INSERT INTO chunks (document_id, chunk_idx, text, length)
                         VALUES %s;
                         """,
                         [
@@ -335,6 +335,32 @@ def index_document_to_db(
             with conn.cursor() as cur:
                 cur.execute("UPDATE documents SET indexing_cost_seconds = %s WHERE id = %s;", (indexing_cost, doc_id))
             conn.commit()
+        
+        # 7. Добавляем запись в поисковый индекс search_index
+        try:
+            from webapp.db.repositories.search_index_repository import SearchIndexRepository
+            import json
+            
+            with db.db.connect() as conn:
+                search_repo = SearchIndexRepository(conn)
+                metadata = {
+                    'original_filename': original_filename,
+                    'user_path': user_path,
+                    'file_size': file_info.get('size', 0),
+                    'content_type': file_info.get('content_type', 'text/plain'),
+                    'chunks_count': len(chunks)
+                }
+                search_repo.create_or_update_index(
+                    document_id=doc_id,
+                    user_id=user_id,
+                    content=content,
+                    metadata=metadata
+                )
+                conn.commit()
+            current_app.logger.info(f'[SEARCH_INDEX] Добавлена запись для doc_id={doc_id}, user_id={user_id}')
+        except Exception as e:
+            current_app.logger.warning(f'Ошибка добавления в search_index: {e}')
+            # Не падаем, индексация документа уже прошла успешно
         
         current_app.logger.info(
             f'Документ {file_path} проиндексирован: ID={doc_id}, {len(chunks)} чанков, {indexing_cost:.2f}с'
@@ -732,10 +758,12 @@ def rebuild_all_documents(
                         
                         # Вставляем новые чанки
                         for idx, chunk in enumerate(chunks_data):
+                            # chunk_document возвращает 'content', а не 'text'
+                            chunk_text = chunk.get('content', chunk.get('text', ''))
                             cur.execute("""
-                                INSERT INTO chunks (document_id, chunk_index, text)
-                                VALUES (%s, %s, %s);
-                            """, (doc_id, idx, chunk['text']))
+                                INSERT INTO chunks (document_id, chunk_idx, text, created_at)
+                                VALUES (%s, %s, %s, NOW());
+                            """, (doc_id, idx, chunk_text))
                         
                         # Обновляем метаданные документа
                         cur.execute("""
@@ -745,6 +773,32 @@ def rebuild_all_documents(
                             WHERE id = %s;
                         """, (extract_time, doc_id))
                     conn.commit()
+                
+                # Обновляем search_index для этого документа
+                try:
+                    from webapp.db.repositories.search_index_repository import SearchIndexRepository
+                    with db.db.connect() as conn:
+                        search_repo = SearchIndexRepository(conn)
+                        # Удаляем старые записи search_index
+                        with conn.cursor() as cur:
+                            cur.execute("DELETE FROM search_index WHERE document_id = %s;", (doc_id,))
+                        conn.commit()
+                        
+                        # Создаём новые записи для каждого чанка
+                        for chunk in chunks_data:
+                            chunk_text = chunk.get('content', chunk.get('text', ''))
+                            search_repo.add_entry(
+                                user_id=owner_id,
+                                document_id=doc_id,
+                                content=chunk_text,
+                                metadata={
+                                    'filename': filename,
+                                    'file_path': file_path
+                                }
+                            )
+                        conn.commit()
+                except Exception as search_err:
+                    current_app.logger.warning(f"Ошибка обновления search_index для {filename}: {search_err}")
                 
                 stats['reindexed'] += 1
                 current_app.logger.info(f"Переиндексирован {filename}: {len(chunks_data)} чанков, {extract_time:.2f}с")
