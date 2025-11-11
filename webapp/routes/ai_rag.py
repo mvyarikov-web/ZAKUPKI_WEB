@@ -138,7 +138,6 @@ def _direct_analyze_without_rag(
     model_id: str,
     max_output_tokens: int,
     temperature: float,
-    upload_folder: str,
     usd_rub_rate: float = None,
     search_enabled: bool = False,
     search_params: Optional[Dict[str, Any]] = None,
@@ -615,7 +614,6 @@ def analyze():
         if not prompt:
             return jsonify({"success": False, "message": "Не указан промпт"}), 400
 
-        upload_folder = current_app.config["UPLOAD_FOLDER"]
         rag_service = get_rag_service()
 
         # Web-only режим или очистка контекста — идём в прямой путь без документов
@@ -627,7 +625,6 @@ def analyze():
                 model_id=model_id,
                 max_output_tokens=max_output_tokens,
                 temperature=temperature,
-                upload_folder=upload_folder,
                 usd_rub_rate=usd_rub_rate,
                 search_enabled=search_enabled,
                 search_params=search_params,
@@ -655,7 +652,6 @@ def analyze():
                 model_id=model_id,
                 max_output_tokens=max_output_tokens,
                 temperature=temperature,
-                upload_folder=upload_folder,
                 usd_rub_rate=usd_rub_rate,
                 search_enabled=search_enabled,
                 search_params=search_params,
@@ -681,7 +677,6 @@ def analyze():
                 top_k=top_k,
                 max_output_tokens=max_output_tokens,
                 temperature=temperature,
-                upload_folder=upload_folder,
                 search_params=search_params if search_enabled else None,
             )
         except Exception as rag_err:
@@ -692,7 +687,6 @@ def analyze():
                 model_id=model_id,
                 max_output_tokens=max_output_tokens,
                 temperature=temperature,
-                upload_folder=upload_folder,
                 usd_rub_rate=usd_rub_rate,
                 search_enabled=search_enabled,
                 search_params=search_params,
@@ -724,7 +718,6 @@ def analyze():
                     model_id=model_id,
                     max_output_tokens=max_output_tokens,
                     temperature=temperature,
-                    upload_folder=upload_folder,
                     usd_rub_rate=usd_rub_rate,
                     search_enabled=search_enabled,
                     search_params=search_params,

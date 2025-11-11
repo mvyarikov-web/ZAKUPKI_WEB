@@ -29,7 +29,7 @@ def index():
     files_by_folder = {}
     total_files = 0
     
-    current_app.logger.info(f"Проверяем папку: {current_app.config['UPLOAD_FOLDER']}")
+    current_app.logger.info("PURE_DB_MODE: Загрузка списка файлов из БД")
     
     use_db = current_app.config.get('use_database')
     if use_db:
@@ -148,8 +148,8 @@ def view_file(filepath):
         normalized_filepath = normalize_path(decoded_filepath)
         current_app.logger.info(f"Просмотр файла: {normalized_filepath} (original: {decoded_filepath})")
         
-        # Проверка безопасности пути
-        if not is_safe_subpath(current_app.config['UPLOAD_FOLDER'], decoded_filepath):
+        # Проверка безопасности пути (PURE DB MODE: проверяем path traversal, не физическую папку)
+        if not is_safe_subpath("", decoded_filepath):  # base_dir не используется в PURE DB MODE
             return jsonify({'error': 'Недопустимый путь к файлу'}), 400
         
         # Получаем документ и чанки из БД через RAGDatabase

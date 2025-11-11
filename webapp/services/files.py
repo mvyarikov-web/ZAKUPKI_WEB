@@ -3,19 +3,30 @@ import os
 
 
 def is_safe_subpath(base_dir: str, user_path: str) -> bool:
-    """Проверяет, что путь user_path находится внутри base_dir (без обхода через ..).
+    """Проверяет, что путь user_path не содержит path traversal атак (.. и абсолютные пути).
+    
+    В PURE DB MODE: файлы не хранятся физически, но проверка нужна для безопасности user_path.
     
     Args:
-        base_dir: Базовая директория
+        base_dir: Базовая директория (используется как логический корень)
         user_path: Пользовательский путь
         
     Returns:
         True, если путь безопасен
     """
     try:
-        base_abs = os.path.realpath(os.path.abspath(base_dir))
-        target_abs = os.path.realpath(os.path.abspath(os.path.join(base_dir, user_path)))
-        return os.path.commonpath([base_abs]) == os.path.commonpath([base_abs, target_abs])
+        # Проверка на абсолютные пути
+        if os.path.isabs(user_path):
+            return False
+        
+        # Нормализуем путь и проверяем на обход через ..
+        normalized = os.path.normpath(user_path)
+        
+        # Если после нормализации путь начинается с .. - это попытка обхода
+        if normalized.startswith('..') or normalized.startswith(os.sep):
+            return False
+        
+        return True
     except Exception:
         return False
 
