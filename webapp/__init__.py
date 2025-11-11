@@ -74,6 +74,11 @@ def create_app(config_name=None):
     app.config['PREVIEW_INLINE_EXTENSIONS'] = config_service.PREVIEW_INLINE_EXTENSIONS
     app.config['WEB_VIEWABLE_EXTENSIONS'] = config_service.WEB_VIEWABLE_EXTENSIONS
     app.config['FERNET_ENCRYPTION_KEY'] = config_service.fernet_key.decode('utf-8')
+    # Явно прокидываем DATABASE_URL для тестов и вспомогательного кода
+    try:
+        app.config['DATABASE_URL'] = config_service.database_url
+    except Exception:
+        pass
     
     # Создаем необходимые директории (DB MODE: uploads не используется, файлы в blob)
     os.makedirs(app.config['INDEX_FOLDER'], exist_ok=True)
