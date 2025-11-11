@@ -383,11 +383,20 @@ def search():
     search_terms = request.json.get('search_terms', '')
     exclude_mode = request.json.get('exclude_mode', False)
     
-    if not search_terms.strip():
+    # Поддержка и списка и строки
+    if isinstance(search_terms, list):
+        raw_terms = [str(t).strip() for t in search_terms if str(t).strip()]
+    elif isinstance(search_terms, str):
+        if not search_terms.strip():
+            return jsonify({'error': 'Введите ключевые слова для поиска'}), 400
+        raw_terms = [t.strip() for t in search_terms.split(',') if t.strip()]
+    else:
+        return jsonify({'error': 'Неверный формат search_terms (ожидается строка или массив)'}), 400
+    
+    if not raw_terms:
         return jsonify({'error': 'Введите ключевые слова для поиска'}), 400
     
     # Валидация: не более 10 терминов, длина 2..64, удаление дубликатов
-    raw_terms = [t.strip() for t in search_terms.split(',') if t.strip()]
     if len(raw_terms) > 50:  # жёсткий предел на вход
         raw_terms = raw_terms[:50]
     filtered = []
