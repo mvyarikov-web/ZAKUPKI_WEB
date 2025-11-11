@@ -17,7 +17,15 @@ def test_prune_policy(db, test_user, monkeypatch):
     db.execute(text("DELETE FROM documents"))
     db.commit()
     
-    # Установим малый лимит (2 KB) через env
+    # Установим малый лимит (2 KB) через app_settings (приоритет над env)
+    db.execute(text("""
+        INSERT INTO app_settings (key, value, updated_at)
+        VALUES ('DB_SIZE_LIMIT_BYTES', '2048', NOW())
+        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+    """))
+    db.commit()
+    
+    # Также обновим env для ConfigService fallback
     monkeypatch.setenv('DB_SIZE_LIMIT_BYTES', '2048')
     config = ConfigService()
     service = BlobStorageService(config)
@@ -40,9 +48,21 @@ def test_prune_policy(db, test_user, monkeypatch):
 
     # После создания должно быть применено prune - суммарный размер <= лимит
     total = db.execute(text("SELECT COALESCE(SUM(size_bytes),0) FROM documents WHERE blob IS NOT NULL")).scalar()
-    assert total <= config.db_size_limit_bytes, f"Размер {total} превышает лимит {config.db_size_limit_bytes}"
+    
+    # Читаем лимит из БД
+    limit_from_db = int(db.execute(text("SELECT value FROM app_settings WHERE key = 'DB_SIZE_LIMIT_BYTES'")).scalar())
+    
+    assert total <= limit_from_db, f"Размер {total} превышает лимит {limit_from_db}"
 
     # Проверим что были созданы документы, но не все 10 (т.к. prune ограничил)
     count = db.execute(text("SELECT COUNT(*) FROM documents WHERE blob IS NOT NULL")).scalar()
     assert count > 0, "Должен быть создан хотя бы один документ"
     assert count < len(contents), f"Ожидалось меньше {len(contents)} документов, получено {count}"
+    
+    # Восстанавливаем дефолтный лимит после теста
+    db.execute(text("""
+        UPDATE app_settings 
+        SET value = '10737418240' 
+        WHERE key = 'DB_SIZE_LIMIT_BYTES'
+    """))
+    db.commit()
