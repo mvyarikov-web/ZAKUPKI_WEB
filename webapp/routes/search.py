@@ -429,19 +429,15 @@ def search():
 
 @search_bp.route('/build_index', methods=['POST'])
 def build_index_route():
-    """Явная сборка индекса по папке uploads (спецификация 015).
+    """Переиндексация всех документов пользователя из БД. ИНКРЕМЕНТ 020 - Блок 9.
     
-    Индексация всегда происходит в БД с инкрементальностью.
-    Legacy файловый индекс больше не поддерживается.
+    Читает все документы пользователя из user_documents,
+    извлекает текст из blob и пересоздаёт chunks.
     """
-    uploads = current_app.config['UPLOAD_FOLDER']
-    if not os.path.exists(uploads):
-        return jsonify({'success': False, 'message': 'Папка uploads не найдена'}), 400
-    
     config = get_config()
     
     try:
-        current_app.logger.info("Запуск индексации в БД (increment-015)")
+        current_app.logger.info("Запуск переиндексации из БД (increment-020, Блок 9)")
         
         db = _get_db()
         try:
@@ -452,29 +448,78 @@ def build_index_route():
         # Получаем параметр force_rebuild из JSON-запроса
         force_rebuild = request.json.get('force_rebuild', False) if request.is_json else False
         
-        success, message, stats = build_db_index(
-            db=db,
-            owner_id=owner_id,
-            folder_path=uploads,
-            chunk_size_tokens=config.chunk_size_tokens,
-            chunk_overlap_tokens=config.chunk_overlap_tokens,
-            force_rebuild=force_rebuild
-        )
+        from webapp.db.models import Document, UserDocument, Chunk
+        from webapp.services.db_indexing import index_document_to_db
+        from sqlalchemy import and_
         
-        if not success:
-            current_app.logger.error(f"Ошибка индексации в БД: {message}")
-            return jsonify({'success': False, 'message': message}), 500
+        # Получаем все не удалённые документы пользователя
+        results = db.db.query(UserDocument, Document).join(
+            Document, Document.id == UserDocument.document_id
+        ).filter(
+            and_(
+                UserDocument.user_id == owner_id,
+                UserDocument.is_soft_deleted == False
+            )
+        ).all()
         
-        current_app.logger.info(f"Индексация в БД завершена: {message}")
+        stats = {
+            'total_docs': len(results),
+            'reindexed': 0,
+            'skipped_empty': 0,
+            'errors': 0
+        }
+        
+        current_app.logger.info(f"Найдено {len(results)} документов для переиндексации user_id={owner_id}")
+        
+        for user_doc, document in results:
+            if not document.blob:
+                current_app.logger.warning(f"Документ {document.id} без blob, пропускаем")
+                stats['skipped_empty'] += 1
+                continue
+            
+            try:
+                # Если force_rebuild=True, удаляем существующие chunks
+                if force_rebuild:
+                    db.db.query(Chunk).filter(Chunk.document_id == document.id).delete()
+                    db.db.commit()
+                
+                file_info = {
+                    'sha256': document.sha256,
+                    'size': document.size_bytes,
+                    'content_type': document.mime or 'application/octet-stream'
+                }
+                
+                doc_id, indexing_cost = index_document_to_db(
+                    db=db,
+                    file_path="",  # Пустой путь - чтение из blob
+                    file_info=file_info,
+                    user_id=owner_id,
+                    original_filename=user_doc.original_filename or 'document',
+                    user_path=user_doc.user_path or user_doc.original_filename,
+                    chunk_size_tokens=config.chunk_size_tokens,
+                    chunk_overlap_tokens=config.chunk_overlap_tokens
+                )
+                
+                stats['reindexed'] += 1
+                current_app.logger.info(f"Переиндексирован doc#{doc_id} ({indexing_cost:.3f}s)")
+                
+            except Exception as e:
+                current_app.logger.exception(f"Ошибка переиндексации документа {document.id}: {e}")
+                stats['errors'] += 1
+        
+        message = f"Переиндексировано {stats['reindexed']}/{stats['total_docs']} документов"
+        if stats['errors'] > 0:
+            message += f", ошибок: {stats['errors']}"
+        
+        current_app.logger.info(f"Переиндексация завершена: {message}")
         return jsonify({
             'success': True,
             'message': message,
             'stats': stats
         })
         
-    
     except Exception as e:
-        current_app.logger.exception("Ошибка при сборке индекса")
+        current_app.logger.exception("Ошибка при переиндексации")
         return jsonify({'success': False, 'message': str(e)}), 500
 
 

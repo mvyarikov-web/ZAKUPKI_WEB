@@ -199,20 +199,30 @@ def index_document_to_db(
     chunk_size_tokens: int = 800,
     chunk_overlap_tokens: int = 50
 ) -> Tuple[int, float]:
-    """Индексирует документ в БД: создаёт documents, user_documents и chunks.
+    """Индексирует документ в БД ТОЛЬКО ИЗ BLOB (инкремент 020, Блок 9).
+    
+    ⚠️ АРХИТЕКТУРА ПОСЛЕ ИНКРЕМЕНТА 020:
+    - Текст извлекается ТОЛЬКО из documents.blob
+    - file_path игнорируется (передавайте пустую строку "")
+    - Если blob отсутствует → ValueError (индексация невозможна)
+    - Дедупликация по file_info['sha256']
     
     Args:
         db: экземпляр RAGDatabase
-        file_path: путь к файлу
+        file_path: ИГНОРИРУЕТСЯ (backward compatibility, передавайте "")
         file_info: метаданные файла (sha256, size, content_type...)
         user_id: ID пользователя
         original_filename: исходное имя файла
-        user_path: путь пользователя (относительно uploads)
+        user_path: путь пользователя для отображения в UI
         chunk_size_tokens: размер чанка в токенах
         chunk_overlap_tokens: перекрытие между чанками (TODO)
     
     Returns:
         (document_id, indexing_cost_seconds)
+    
+    Raises:
+        ValueError: если blob отсутствует в БД
+```
     """
     start_time = time.time()
     
@@ -247,29 +257,25 @@ def index_document_to_db(
                     else:
                         current_app.logger.info(f'[INDEX] Документ {document_id} найден, но chunks отсутствуют - выполняем индексацию')
         
-        # 2. Извлекаем текст из blob (если есть) или из файла (fallback)
+        # 2. Извлекаем текст ТОЛЬКО из blob (NO FILESYSTEM)
         content = ""
+        
+        if not document_blob:
+            # КРИТИЧЕСКАЯ ОШИБКА: blob обязателен после инкремента 020
+            error_msg = f'[EXTRACT] ОШИБКА: blob отсутствует для документа SHA256={file_info["sha256"]}, индексация невозможна'
+            current_app.logger.error(error_msg)
+            raise ValueError(error_msg)
+        
         try:
-            if document_blob:
-                # Читаем из blob (преобразуем memoryview в bytes)
-                blob_bytes = bytes(document_blob) if not isinstance(document_blob, bytes) else document_blob
-                current_app.logger.info(f'[EXTRACT] Извлечение текста из blob, размер: {len(blob_bytes)} байт')
-                ext = os.path.splitext(original_filename)[1].lower().lstrip('.')
-                content = extract_text_from_bytes(blob_bytes, ext) or ""
-                current_app.logger.info(f'[EXTRACT] extract_text_from_bytes вернул {len(content)} символов')
-            else:
-                # Fallback: читаем из файловой системы (временная совместимость)
-                current_app.logger.warning(f'[EXTRACT] Blob отсутствует, fallback на чтение из файла: {file_path}')
-                if os.path.exists(file_path):
-                    with open(file_path, 'rb') as f:
-                        file_bytes = f.read()
-                    ext = os.path.splitext(file_path)[1].lower().lstrip('.')
-                    content = extract_text_from_bytes(file_bytes, ext) or ""
-                    current_app.logger.info(f'[EXTRACT] Извлечено {len(content)} символов из файла')
-                else:
-                    current_app.logger.error(f'[EXTRACT] Файл не найден и blob отсутствует: {file_path}')
+            # Читаем из blob (преобразуем memoryview в bytes)
+            blob_bytes = bytes(document_blob) if not isinstance(document_blob, bytes) else document_blob
+            current_app.logger.info(f'[EXTRACT] Извлечение текста из blob, размер: {len(blob_bytes)} байт')
+            ext = os.path.splitext(original_filename)[1].lower().lstrip('.')
+            content = extract_text_from_bytes(blob_bytes, ext) or ""
+            current_app.logger.info(f'[EXTRACT] extract_text_from_bytes вернул {len(content)} символов')
         except Exception as e:
-            current_app.logger.warning(f'Ошибка извлечения текста {original_filename}: {e}')
+            current_app.logger.exception(f'Ошибка извлечения текста из blob {original_filename}: {e}')
+            raise
         
         if not content:
             # Graceful degrade: создаём осмысленный placeholder, чтобы PDF не выглядел "пустым"
@@ -280,10 +286,10 @@ def index_document_to_db(
                 content = original_filename
         
     # 3. Чанкуем текст
-        current_app.logger.info(f'[CHUNK] Начинаем чанкование для {file_path}, size_tokens={chunk_size_tokens}')
+        current_app.logger.info(f'[CHUNK] Начинаем чанкование для {original_filename}, size_tokens={chunk_size_tokens}')
         chunks = chunk_document(
             content,
-            file_path=file_path,
+            file_path=original_filename,  # Используем имя файла вместо пути
             chunk_size_tokens=chunk_size_tokens,
             overlap_sentences=2  # TODO: использовать chunk_overlap_tokens
         )
