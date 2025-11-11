@@ -637,3 +637,137 @@ def server_restart():
     except Exception:
         current_app.logger.exception('Ошибка планирования перезагрузки')
         return jsonify({'error': 'Не удалось запланировать перезагрузку'}), 500
+
+
+@admin_bp.route('/settings', methods=['GET'])
+@require_role('admin')
+def admin_prune_settings():
+    """
+    Страница настроек автоматической очистки БД.
+    
+    Требует: роль 'admin'
+    
+    Показывает:
+    - Тумблер включения/отключения автоочистки
+    - Поле ввода лимита размера БД (в ГБ/МБ)
+    - Текущую статистику БД (размер, кол-во документов)
+    """
+    try:
+        db = _get_db()
+        config = get_config()
+        
+        # Читаем текущие настройки из app_settings
+        with db.db.connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT key, value FROM app_settings WHERE key IN ('AUTO_PRUNE_ENABLED', 'DB_SIZE_LIMIT_BYTES')")
+                settings_rows = cur.fetchall()
+        
+        settings_dict = {row[0]: row[1] for row in settings_rows}
+        auto_prune_enabled = settings_dict.get('AUTO_PRUNE_ENABLED', 'true').lower() == 'true'
+        db_size_limit_bytes = int(settings_dict.get('DB_SIZE_LIMIT_BYTES', str(10 * 1024**3)))
+        
+        # Конвертируем в ГБ для удобства отображения
+        size_limit_gb = round(db_size_limit_bytes / (1024**3), 2)
+        
+        # Получаем текущую статистику БД
+        from webapp.services.gc_service import get_storage_stats
+        stats = get_storage_stats(db)
+        
+        total_docs = stats.get('total_documents', 0)
+        total_size_bytes = stats.get('db_size_mb', 0) * 1024 * 1024  # конвертируем МБ → байты
+        total_size_mb = round(total_size_bytes / (1024**2), 2)
+        total_size_gb = round(total_size_bytes / (1024**3), 2)
+        usage_percent = round((total_size_bytes / db_size_limit_bytes * 100), 1) if db_size_limit_bytes > 0 else 0
+        
+        return render_template(
+            'admin_settings.html',
+            settings={
+                'auto_prune_enabled': auto_prune_enabled,
+                'size_limit_gb': size_limit_gb,
+                'size_limit_bytes': db_size_limit_bytes
+            },
+            stats={
+                'total_docs': total_docs,
+                'total_size_mb': total_size_mb,
+                'total_size_gb': total_size_gb,
+                'usage_percent': usage_percent
+            }
+        )
+    except Exception as e:
+        current_app.logger.exception('Ошибка отображения страницы настроек прунинга')
+        return f'Ошибка загрузки настроек: {str(e)}', 500
+
+
+@admin_bp.route('/settings/prune', methods=['POST'])
+@require_role('admin')
+def admin_save_prune_settings():
+    """
+    Сохранить настройки автоматической очистки БД.
+    
+    Требует: роль 'admin'
+    
+    Form data:
+    - auto_prune_enabled: checkbox (on/off)
+    - size_limit: float (число)
+    - size_unit: str ('gb' или 'mb')
+    
+    Сохраняет в app_settings таблицу:
+    - AUTO_PRUNE_ENABLED: 'true' / 'false'
+    - DB_SIZE_LIMIT_BYTES: int (конвертированный лимит)
+    """
+    try:
+        db = _get_db()
+        
+        # Получаем данные из формы
+        auto_prune_enabled = request.form.get('auto_prune_enabled') == 'on'
+        size_limit_str = request.form.get('size_limit', '10')
+        size_unit = request.form.get('size_unit', 'gb')
+        
+        # Валидация и конвертация размера
+        try:
+            size_limit = float(size_limit_str)
+            if size_limit <= 0:
+                raise ValueError("Размер должен быть положительным")
+        except (ValueError, TypeError) as e:
+            current_app.logger.warning(f'Некорректный размер лимита: {size_limit_str}')
+            return f'Ошибка: некорректное значение размера ({str(e)})', 400
+        
+        # Конвертируем в байты
+        if size_unit == 'mb':
+            size_limit_bytes = int(size_limit * 1024 * 1024)
+        else:  # gb
+            size_limit_bytes = int(size_limit * 1024 * 1024 * 1024)
+        
+        # Минимальный лимит: 100 МБ
+        if size_limit_bytes < 100 * 1024 * 1024:
+            return 'Ошибка: минимальный размер БД — 100 МБ', 400
+        
+        # Сохраняем в app_settings через UPSERT
+        with db.db.connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO app_settings (key, value)
+                    VALUES ('AUTO_PRUNE_ENABLED', %s)
+                    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+                """, ('true' if auto_prune_enabled else 'false',))
+                
+                cur.execute("""
+                    INSERT INTO app_settings (key, value)
+                    VALUES ('DB_SIZE_LIMIT_BYTES', %s)
+                    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+                """, (str(size_limit_bytes),))
+            conn.commit()
+        
+        current_app.logger.info(
+            f"Настройки прунинга обновлены администратором: "
+            f"enabled={auto_prune_enabled}, limit={size_limit_bytes} bytes"
+        )
+        
+        # Редирект обратно на страницу настроек с сообщением успеха
+        from flask import redirect, url_for, flash
+        flash('Настройки успешно сохранены', 'success')
+        return redirect(url_for('admin.admin_prune_settings'))
+        
+    except Exception as e:
+        current_app.logger.exception('Ошибка сохранения настроек прунинга')
+        return f'Ошибка сохранения настроек: {str(e)}', 500

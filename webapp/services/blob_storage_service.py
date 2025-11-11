@@ -174,18 +174,39 @@ class BlobStorageService:
         """
         from sqlalchemy import text
         
+        # 0. Проверяем, включён ли автоматический prune через app_settings
+        auto_prune_enabled_row = db.execute(
+            text("SELECT value FROM app_settings WHERE key = 'AUTO_PRUNE_ENABLED'")
+        ).fetchone()
+        
+        auto_prune_enabled = True  # По умолчанию включён
+        if auto_prune_enabled_row:
+            auto_prune_enabled = auto_prune_enabled_row[0].lower() == 'true'
+        
         # 1. Получить текущий объём
         current_size = db.execute(
             text("SELECT COALESCE(SUM(size_bytes), 0) FROM documents WHERE blob IS NOT NULL")
         ).scalar()
         
-        limit = self.config.db_size_limit_bytes
+        # 1.5. Читаем лимит из app_settings (если есть), иначе из конфига
+        db_size_limit_row = db.execute(
+            text("SELECT value FROM app_settings WHERE key = 'DB_SIZE_LIMIT_BYTES'")
+        ).fetchone()
+        
+        if db_size_limit_row:
+            limit = int(db_size_limit_row[0])
+        else:
+            limit = self.config.db_size_limit_bytes
         
         # 2. Проверить нужен ли prune
         if current_size + new_file_size <= limit:
             return True  # Места достаточно
         
-        # 3. Выполнить prune 30%
+        # 3. Если автоочистка отключена — сразу возвращаем False
+        if not auto_prune_enabled:
+            return False
+        
+        # 4. Выполнить prune 30%
         db.execute(text("""
             WITH ranked AS (
                 SELECT d.id,
@@ -210,7 +231,7 @@ class BlobStorageService:
         """))
         db.commit()
         
-        # 4. Проверить снова после удаления
+        # 5. Проверить снова после удаления
         new_current_size = db.execute(
             text("SELECT COALESCE(SUM(size_bytes), 0) FROM documents WHERE blob IS NOT NULL")
         ).scalar()
