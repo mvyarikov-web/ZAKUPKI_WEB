@@ -103,6 +103,11 @@ class BlobStorageService:
             
             return existing_doc, False  # Не новый
         
+        # 2.5. Проверяем лимит ДО добавления нового документа и при необходимости выполняем prune
+        ok = self.check_size_limit_and_prune(db, size_bytes)
+        if not ok:
+            raise RuntimeError('Недостаточно места в БД после prune')
+        
         # 3. Создать новый документ с blob
         new_doc = Document(
             sha256=sha256_hash,
@@ -167,9 +172,11 @@ class BlobStorageService:
         Returns:
             True если места достаточно (возможно после prune), False если не удалось освободить
         """
+        from sqlalchemy import text
+        
         # 1. Получить текущий объём
         current_size = db.execute(
-            "SELECT COALESCE(SUM(size_bytes), 0) FROM documents WHERE blob IS NOT NULL"
+            text("SELECT COALESCE(SUM(size_bytes), 0) FROM documents WHERE blob IS NOT NULL")
         ).scalar()
         
         limit = self.config.db_size_limit_bytes
@@ -179,7 +186,7 @@ class BlobStorageService:
             return True  # Места достаточно
         
         # 3. Выполнить prune 30%
-        db.execute("""
+        db.execute(text("""
             WITH ranked AS (
                 SELECT d.id,
                     (
@@ -200,12 +207,12 @@ class BlobStorageService:
             USING ranked r
             WHERE d.id = r.id
               AND r.rn <= FLOOR(0.3 * r.total)::BIGINT
-        """)
+        """))
         db.commit()
         
         # 4. Проверить снова после удаления
         new_current_size = db.execute(
-            "SELECT COALESCE(SUM(size_bytes), 0) FROM documents WHERE blob IS NOT NULL"
+            text("SELECT COALESCE(SUM(size_bytes), 0) FROM documents WHERE blob IS NOT NULL")
         ).scalar()
         
         return new_current_size + new_file_size <= limit
