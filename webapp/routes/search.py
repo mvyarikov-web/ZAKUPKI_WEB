@@ -13,17 +13,25 @@ from webapp.services.db_indexing import get_folder_index_status
 from webapp.models.rag_models import RAGDatabase
 from webapp.config.config_service import get_config
 from webapp.utils.path_utils import normalize_path
+from webapp.db.base import SessionLocal  # SQLAlchemy session для query()
 
 search_bp = Blueprint('search', __name__)
 
 
-def _get_db() -> RAGDatabase:
-    """Получить подключение к БД (кешируется в g)."""
-    if 'db' not in g:
+def _get_rag_db() -> RAGDatabase:
+    """Получить RAGDatabase (psycopg2 подключение для legacy кода)."""
+    if 'rag_db' not in g:
         config = get_config()
         dsn = config.database_url.replace('postgresql+psycopg2://', 'postgresql://')
-        g.db = RAGDatabase(dsn)
-    return g.db
+        g.rag_db = RAGDatabase(dsn)
+    return g.rag_db
+
+
+def _get_db():
+    """Получить SQLAlchemy сессию для query() операций."""
+    if 'db_session' not in g:
+        g.db_session = SessionLocal()
+    return g.db_session
 
 
 def required_user_id() -> int:
@@ -441,7 +449,8 @@ def build_index_route():
     try:
         current_app.logger.info("Запуск переиндексации из БД (increment-020, Блок 9)")
         
-        db = _get_db()
+        db = _get_db()  # SQLAlchemy session
+        rag_db = _get_rag_db()  # RAGDatabase для index_document_to_db
         try:
             owner_id = required_user_id()
         except ValueError:
@@ -454,8 +463,8 @@ def build_index_route():
         from webapp.services.db_indexing import index_document_to_db
         from sqlalchemy import and_
         
-        # Получаем все не удалённые документы пользователя
-        results = db.db.query(UserDocument, Document).join(
+        # Получаем все не удалённые документы пользователя (через SQLAlchemy)
+        results = db.query(UserDocument, Document).join(
             Document, Document.id == UserDocument.document_id
         ).filter(
             and_(
@@ -482,8 +491,8 @@ def build_index_route():
             try:
                 # Если force_rebuild=True, удаляем существующие chunks
                 if force_rebuild:
-                    db.db.query(Chunk).filter(Chunk.document_id == document.id).delete()
-                    db.db.commit()
+                    db.query(Chunk).filter(Chunk.document_id == document.id).delete()
+                    db.commit()
                 
                 file_info = {
                     'sha256': document.sha256,
@@ -492,7 +501,7 @@ def build_index_route():
                 }
                 
                 doc_id, indexing_cost = index_document_to_db(
-                    db=db,
+                    db=rag_db,  # RAGDatabase для индексации
                     file_path="",  # Пустой путь - чтение из blob
                     file_info=file_info,
                     user_id=owner_id,
@@ -532,7 +541,8 @@ def rebuild_index_route():
     Извлекает текст заново из blob и перезаписывает chunks в БД.
     """
     try:
-        db = _get_db()
+        db = _get_db()  # SQLAlchemy session
+        rag_db = _get_rag_db()  # RAGDatabase для index_document_to_db
         try:
             owner_id = required_user_id()
         except ValueError:
@@ -546,8 +556,8 @@ def rebuild_index_route():
         from webapp.services.db_indexing import index_document_to_db
         from sqlalchemy import and_
         
-        # Получаем все не удалённые документы пользователя
-        results = db.db.query(UserDocument, Document).join(
+        # Получаем все не удалённые документы пользователя (через SQLAlchemy)
+        results = db.query(UserDocument, Document).join(
             Document, Document.id == UserDocument.document_id
         ).filter(
             and_(
@@ -573,8 +583,8 @@ def rebuild_index_route():
             
             try:
                 # Удаляем существующие chunks (принудительная пересборка)
-                db.db.query(Chunk).filter(Chunk.document_id == document.id).delete()
-                db.db.commit()
+                db.query(Chunk).filter(Chunk.document_id == document.id).delete()
+                db.commit()
                 
                 file_info = {
                     'sha256': document.sha256,
@@ -583,7 +593,7 @@ def rebuild_index_route():
                 }
                 
                 doc_id, indexing_cost = index_document_to_db(
-                    db=db,
+                    db=rag_db,  # RAGDatabase для индексации
                     file_path="",  # Пустой путь - чтение из blob
                     file_info=file_info,
                     user_id=owner_id,
