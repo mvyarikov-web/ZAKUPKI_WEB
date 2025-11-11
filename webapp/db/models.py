@@ -139,7 +139,7 @@ class Document(Base):
     size_bytes = Column(Integer, nullable=False)
     mime = Column(String(127))  # тип файла
     parse_status = Column(Text)  # статус обработки: 'indexed', 'error', etc.
-    blob = Column(LargeBinary, nullable=True)  # Бинарное содержимое файла (PURE_DB_MODE)
+    blob = Column(LargeBinary, nullable=True)  # Бинарное содержимое файла (DB MODE)
     
     # Поля для расчёта ценности документа при GC
     access_count = Column(Integer, default=0, nullable=False)  # счётчик обращений

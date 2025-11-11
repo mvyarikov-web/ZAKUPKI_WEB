@@ -660,7 +660,7 @@ def index_status():
             except Exception as e:
                 current_app.logger.debug('Не удалось прочитать status.json: %s', e)
 
-        # 2) PURE_DB_MODE: Проверяем наличие документов в БД вместо сканирования uploads/
+        # 2) DB MODE: Проверяем наличие документов в БД вместо сканирования uploads/
         has_files = False
         rag_db = _get_rag_db()
         try:
@@ -692,7 +692,7 @@ def index_status():
         except ValueError:
             return jsonify({'error': 'Не указан идентификатор пользователя (X-User-ID)'}), 400
         try:
-            # PURE_DB_MODE: folder_path больше не используется (все файлы в БД)
+            # DB MODE: folder_path больше не используется (все файлы в БД)
             db_status = get_folder_index_status(db, owner_id, "")
         except Exception:
             current_app.logger.debug('Не удалось получить статус из БД для /index_status', exc_info=True)
@@ -757,7 +757,7 @@ def view_index():
     - raw=1: показать индекс как есть (с заголовками групп)
     - raw=0 (default): показать только записи документов (без служебных строк)
     """
-    # PURE_DB_MODE: Диагностический просмотр статуса индексации из БД
+    # DB MODE: Диагностический просмотр статуса индексации из БД
     try:
         # Загружаем прогресс статуса
         progress = None
@@ -933,7 +933,7 @@ def view_index():
             # folder_index_status
             db_status = None
             try:
-                # PURE_DB_MODE: folder_path больше не используется
+                # DB MODE: folder_path больше не используется
                 db_status = get_folder_index_status(db, owner_id, "")
             except Exception:
                 db_status = None

@@ -29,7 +29,7 @@ def index():
     files_by_folder = {}
     total_files = 0
     
-    current_app.logger.info("PURE_DB_MODE: Загрузка списка файлов из БД")
+    current_app.logger.info("DB MODE: Загрузка списка файлов из БД")
     
     use_db = current_app.config.get('use_database')
     if use_db:
@@ -88,7 +88,7 @@ def index():
         except Exception:
             current_app.logger.exception('Ошибка загрузки документов из БД для главной страницы')
     
-    # PURE_DB_MODE: Legacy код сканирования uploads/ удалён (инкремент 020)
+    # DB MODE: Legacy код сканирования uploads/ удалён (инкремент 020)
     # Все файлы хранятся в documents.blob, физическая папка не используется
     
     current_app.logger.info(f"Всего файлов для отображения: {total_files}, папок: {len(files_by_folder)}")

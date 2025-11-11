@@ -75,7 +75,7 @@ def create_app(config_name=None):
     app.config['WEB_VIEWABLE_EXTENSIONS'] = config_service.WEB_VIEWABLE_EXTENSIONS
     app.config['FERNET_ENCRYPTION_KEY'] = config_service.fernet_key.decode('utf-8')
     
-    # Создаем необходимые директории (PURE_DB_MODE: uploads не используется)
+    # Создаем необходимые директории (DB MODE: uploads не используется, файлы в blob)
     os.makedirs(app.config['INDEX_FOLDER'], exist_ok=True)
     os.makedirs(app.config['LOGS_DIR'], exist_ok=True)
     # PROMPTS_FOLDER больше не используется - промпты хранятся в БД

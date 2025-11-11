@@ -1,5 +1,5 @@
 """
-Сервис для работы с хранением файлов в documents.blob (PURE_DB_MODE).
+Сервис для работы с хранением файлов в documents.blob (DB MODE).
 Инкремент 020: полный отказ от файловой системы.
 """
 
@@ -54,7 +54,7 @@ class BlobStorageService:
         mime_type: Optional[str] = None
     ) -> Tuple[Document, bool]:
         """
-        Сохранить файл в documents.blob (PURE_DB_MODE).
+        Сохранить файл в documents.blob (DB MODE).
         
         Args:
             db: Сессия БД
