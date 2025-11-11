@@ -6,7 +6,7 @@ from flask import Blueprint, request, jsonify, current_app, send_file, Response,
 from urllib.parse import unquote, quote as url_quote
 from webapp.services.files import is_safe_subpath, safe_filename, allowed_file
 from webapp.services.file_search_state_service import FileSearchStateService
-from webapp.services.db_indexing import calculate_file_hash, handle_duplicate_upload
+# Legacy imports removed: calculate_file_hash, handle_duplicate_upload (Блок 10)
 from webapp.models.rag_models import RAGDatabase
 from webapp.config.config_service import get_config
 from webapp.utils.path_utils import normalize_path, get_relative_path

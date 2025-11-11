@@ -19,64 +19,12 @@ from document_processor.extractors.text_extractor import extract_text_from_bytes
 from webapp.utils.path_utils import normalize_path, get_relative_path
 
 
-def calculate_file_hash(file_path: str) -> str:
-    """
-    Вычисляет SHA256 хеш файла.
-    
-    Args:
-        file_path: Путь к файлу
-        
-    Returns:
-        Строка с SHA256 хешем (64 символа)
-    """
-    sha256 = hashlib.sha256()
-    try:
-        with open(file_path, 'rb') as f:
-            while chunk := f.read(8192):
-                sha256.update(chunk)
-    except Exception as e:
-        current_app.logger.warning(f'Ошибка хеширования {file_path}: {e}')
-        return ""
-    return sha256.hexdigest()
-
-
-def calculate_root_hash(folder_path: str) -> str:
-    """
-    Вычисляет root_hash для папки.
-    
-    Root hash = SHA256 от конкатенации (filename + mtime + size) всех файлов.
-    Используется для определения изменений в папке.
-    
-    Args:
-        folder_path: Путь к папке
-        
-    Returns:
-        Строка с SHA256 хешем папки
-    """
-    if not os.path.exists(folder_path):
-        return ""
-    
-    file_infos = []
-    try:
-        for root, _, files in os.walk(folder_path):
-            for filename in sorted(files):  # сортировка для детерминизма
-                file_path = os.path.join(root, filename)
-                try:
-                    stat = os.stat(file_path)
-                    # Относительный путь для стабильности
-                    rel_path = os.path.relpath(file_path, folder_path)
-                    info_str = f"{rel_path}|{stat.st_mtime}|{stat.st_size}"
-                    file_infos.append(info_str)
-                except Exception as e:
-                    current_app.logger.debug(f'Пропуск файла {file_path}: {e}')
-                    continue
-    except Exception as e:
-        current_app.logger.warning(f'Ошибка обхода папки {folder_path}: {e}')
-        return ""
-    
-    # Конкатенация и хеширование
-    combined = "\n".join(file_infos)
-    return hashlib.sha256(combined.encode('utf-8')).hexdigest()
+# ============================================================================
+# [DEPRECATED - ИНКРЕМЕНТ 020, Блок 10]
+# Функции calculate_file_hash() и calculate_root_hash() удалены.
+# Хеширование теперь происходит в BlobStorageService.calculate_sha256()
+# при сохранении файла в blob. Файловая система больше не используется.
+# ============================================================================
 
 
 def get_folder_index_status(
@@ -109,84 +57,19 @@ def get_folder_index_status(
     return None
 
 
-def update_folder_index_status(
-    db: RAGDatabase,
-    owner_id: int,
-    folder_path: str,
-    root_hash: str
-) -> None:
-    """
-    Обновляет статус индексации папки в БД.
-    
-    Args:
-        db: Подключение к БД
-        owner_id: ID владельца
-        folder_path: Путь к папке
-        root_hash: Новый root_hash папки
-    """
-    try:
-        with db.db.connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute("""
-                    INSERT INTO folder_index_status (owner_id, folder_path, root_hash, last_indexed_at)
-                    VALUES (%s, %s, %s, CURRENT_TIMESTAMP)
-                    ON CONFLICT (owner_id, folder_path)
-                    DO UPDATE SET
-                        root_hash = EXCLUDED.root_hash,
-                        last_indexed_at = CURRENT_TIMESTAMP;
-                """, (owner_id, folder_path, root_hash))
-            conn.commit()
-    except Exception as e:
-        current_app.logger.error(f'Ошибка обновления статуса индексации: {e}')
-        raise
+
+# ============================================================================
+# DEPRECATED: update_folder_index_status() — legacy функция для обновления folder_index_status
+# Работала с таблицей folder_index_status (root_hash для обнаружения изменений ФС).
+# Архитектура изменена (Блок 9): индексация через blob, инкрементальность не нужна.
+# ============================================================================
 
 
-def find_changed_files(
-    db: RAGDatabase,
-    owner_id: int,
-    folder_path: str,
-    current_files: Dict[str, Dict[str, Any]]
-) -> List[str]:
-    """Определяет список изменённых файлов для пользователя.
-
-    Новая модель: documents глобальные, видимость через user_documents.
-    Сравниваем sha256 текущих файлов с sha256 связанных документов пользователя.
-    """
-    changed_files = []
-    
-    try:
-        with db.db.connect() as conn:
-            with conn.cursor() as cur:
-                # Получаем связи пользователя -> документ + относительный путь
-                cur.execute("""
-                    SELECT ud.user_path, d.sha256
-                    FROM user_documents ud
-                    JOIN documents d ON d.id = ud.document_id
-                    WHERE ud.user_id = %s AND ud.is_soft_deleted = FALSE;
-                """, (owner_id,))
-                rows = cur.fetchall()
-                existing_hashes = {row[0]: row[1] for row in rows if row[0]}
-                current_app.logger.info(f'[CHANGED] В БД найдено {len(existing_hashes)} документов: {list(existing_hashes.keys())[:3]}...')
-        
-        # Сравниваем хеши
-        for file_path, file_info in current_files.items():
-            # Преобразуем абсолютный путь файла к относительному пути внутри папки индексации
-            try:
-                rel_path = os.path.relpath(file_path, folder_path)
-            except Exception:
-                rel_path = os.path.basename(file_path)
-            existing_hash = existing_hashes.get(rel_path)
-            current_hash = file_info.get('sha256')
-            
-            if existing_hash != current_hash:
-                changed_files.append(file_path)
-                
-    except Exception as e:
-        current_app.logger.error(f'Ошибка определения изменённых файлов: {e}')
-        # В случае ошибки индексируем все файлы
-        changed_files = list(current_files.keys())
-    
-    return changed_files
+# ============================================================================
+# DEPRECATED: find_changed_files() — legacy функция для обнаружения изменённых файлов
+# Сравнивала SHA256 файлов на диске с БД для инкрементальной индексации.
+# Архитектура изменена (Блок 9): индексация только при загрузке, файлы в blob.
+# ============================================================================
 
 
 def index_document_to_db(
@@ -432,113 +315,21 @@ def index_document_to_db(
         return 0, indexing_cost
 
 
-def build_db_index(
-    db: RAGDatabase,
-    owner_id: int,
-    folder_path: str,
-    chunk_size_tokens: int = 500,
-    chunk_overlap_tokens: int = 50,
-    force_rebuild: bool = False
-) -> Tuple[bool, str, Dict[str, int]]:
-    """Инкрементальная индексация папки c учётом глобальных документов.
+# ============================================================================
+# [DEPRECATED - ИНКРЕМЕНТ 020, Блок 10]
+# Функция build_db_index() удалена.
+# Индексация теперь происходит автоматически при загрузке файлов в blob
+# через BlobStorageService.save_file_to_db() + index_document_to_db().
+# Для переиндексации используйте endpoint /build_index, который работает
+# с документами из БД (без сканирования папок).
+# ============================================================================
 
-    root_hash остаётся пер-пользовательским (состояние папки пользователя).
-    Изменённые файлы определяются сравнением sha256 с теми документами, которые уже привязаны пользователю.
-    Новые файлы → индексируем глобально (если отсутствует sha256) + создаём user_documents связь.
-    """
-    try:
-        # 1. Вычисляем текущий root_hash
-        current_root_hash = calculate_root_hash(folder_path)
-        if not current_root_hash:
-            return False, f'Не удалось вычислить root_hash для {folder_path}', {}
-        
-        # 2. Проверяем статус индексации и количество документов
-        status = get_folder_index_status(db, owner_id, folder_path)
-        
-        # Проверяем наличие видимых документов через связь user_documents
-        with db.db.connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute("""
-                    SELECT COUNT(*) FROM user_documents WHERE user_id = %s AND is_soft_deleted = FALSE;
-                """, (owner_id,))
-                docs_count = cur.fetchone()[0]
-        
-        # Если есть статус, root_hash совпадает, НЕ force_rebuild И есть документы — пропускаем
-        if not force_rebuild and status and status['root_hash'] == current_root_hash and docs_count > 0:
-            current_app.logger.info(f'Папка {folder_path} не изменилась (root_hash совпадает, документов: {docs_count}), пропускаем индексацию')
-            return True, 'Индексация не требуется (папка не изменилась)', {}
-        
-        if force_rebuild:
-            current_app.logger.info(f'Принудительная пересборка индекса для {folder_path}')
-        if docs_count == 0:
-            current_app.logger.info(f'Документов нет в БД, принудительная индексация папки {folder_path}')
-        
-        # 3. Собираем информацию о всех файлах в папке
-        current_files = {}
-        for root, _, files in os.walk(folder_path):
-            for filename in files:
-                file_path = os.path.join(root, filename)
-                try:
-                    file_hash = calculate_file_hash(file_path)
-                    file_stat = os.stat(file_path)
-                    current_files[file_path] = {
-                        'sha256': file_hash,
-                        'size': file_stat.st_size,
-                        'mtime': file_stat.st_mtime,
-                        'content_type': 'text/plain'  # TODO: определение типа
-                    }
-                except Exception as e:
-                    current_app.logger.warning(f'Пропуск файла {file_path}: {e}')
-                    continue
-        
-        if not current_files:
-            return False, 'Нет файлов для индексации', {}
-        
-        # 4. Определяем изменённые файлы
-        changed_files = find_changed_files(db, owner_id, folder_path, current_files)
-        current_app.logger.info(f'[CHANGED] Обнаружено {len(changed_files)} изменённых файлов из {len(current_files)}')
-        
-        if not changed_files:
-            # Файлы не изменились, но root_hash изменился (возможно, переименование/перемещение)
-            update_folder_index_status(db, owner_id, folder_path, current_root_hash)
-            return True, 'Изменений в файлах не обнаружено', {}
-        
-        # 5. Индексируем изменённые файлы
-        stats = {
-            'total_files': len(current_files),
-            'changed_files': len(changed_files),
-            'indexed_documents': 0,
-            'total_cost_seconds': 0.0
-        }
-        
-        from .db_indexing import handle_duplicate_upload  # локальный импорт чтобы избежать циклов
-        for file_path in changed_files:
-            file_info = current_files[file_path]
-            sha256_hash = file_info['sha256']
-            doc_id, message, is_dup = handle_duplicate_upload(
-                db,
-                owner_id,
-                file_path,
-                sha256_hash,
-                chunk_size_tokens,
-                chunk_overlap_tokens
-            )
-            current_app.logger.info(f'[INDEX] {os.path.basename(file_path)}: doc_id={doc_id}, is_dup={is_dup}, msg={message}')
-            if doc_id > 0 and not is_dup:
-                stats['indexed_documents'] += 1
-            stats['total_cost_seconds'] += 0  # стоимость уже учтена внутри index_document_to_db
-        
-        # 6. Обновляем статус индексации папки
-        update_folder_index_status(db, owner_id, folder_path, current_root_hash)
-        
-        message = f"Проиндексировано {stats['indexed_documents']} из {stats['changed_files']} изменённых файлов"
-        current_app.logger.info(f'{message}, время: {stats["total_cost_seconds"]:.2f}с')
-        
-        return True, message, stats
-        
-    except Exception as e:
-        current_app.logger.exception('Ошибка индексации в БД')
-        return False, str(e), {}
+
+# ============================================================================
+# DEPRECATED: build_db_index() — legacy функция со сканированием ФС (os.walk)
+# Архитектура изменена (Блок 9): все операции через blob storage.
+# Индексация теперь выполняется через /build_index → index_document_to_db() с чтением из blob.
+# ============================================================================
 
 
 def check_document_exists_by_hash(db: RAGDatabase, sha256_hash: str) -> Optional[Dict[str, Any]]:
@@ -662,241 +453,17 @@ def ensure_user_binding(
         return False, 'Ошибка связывания'
 
 
-def handle_duplicate_upload(
-    db: RAGDatabase,
-    user_id: int,
-    file_path: str,
-    sha256_hash: str,
-    chunk_size_tokens: int = 500,
-    chunk_overlap_tokens: int = 50
-) -> Tuple[int, str, bool]:
-    """Глобальный дедуп: один документ на sha256, видимость через user_documents.
-
-    Возвращает (document_id, message, is_duplicate).
-    """
-    filename = os.path.basename(file_path)
-
-    # Относительный путь для user_path (в пределах uploads) с нормализацией
-    uploads_root = current_app.config.get('UPLOAD_FOLDER')
-    if uploads_root:
-        user_path = get_relative_path(file_path, uploads_root)
-    else:
-        user_path = normalize_path(os.path.basename(file_path))
-
-    # Проверяем существование глобального документа
-    with db.db.connect() as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT id FROM documents WHERE sha256 = %s;", (sha256_hash,))
-            row = cur.fetchone()
-            doc_id = row[0] if row else None
-
-    if not doc_id:
-        # Новый документ: индексируем (создаём документ + чанки)
-        file_info = {
-            'sha256': sha256_hash,
-            'size': os.path.getsize(file_path),
-            'content_type': 'text/plain'
-        }
-        doc_id, _ = index_document_to_db(
-            db,
-            file_path,
-            file_info,
-            user_id,
-            filename,
-            user_path,
-            chunk_size_tokens,
-            chunk_overlap_tokens
-        )
-        # user_documents связь уже создана внутри index_document_to_db
-        return doc_id, 'Документ создан и привязан к пользователю', False
-
-    # Документ существует глобально → создаём/обновляем связь
-    binding_new, bind_msg = ensure_user_binding(db, user_id, doc_id, filename, user_path)
-    return doc_id, bind_msg, True
+# ============================================================================
+# DEPRECATED: handle_duplicate_upload() — legacy функция со сканированием ФС
+# Вызывала calculate_file_hash() и работала с os.path
+# Архитектура изменена (Блок 9): дедупликация через BlobStorageService.
+# Эндпоинт /upload теперь проверяет существование документа по SHA256 через blob.
+# ============================================================================
 
 
-def rebuild_all_documents(
-    db: RAGDatabase,
-    owner_id: int,
-    folder_path: str,
-    chunk_size_tokens: int = 500,
-    chunk_overlap_tokens: int = 50
-) -> Tuple[bool, str, Dict[str, int]]:
-    """Полная пересборка индекса всех документов пользователя.
-    
-    Сканирует папку folder_path, находит документы в БД по SHA256,
-    перечитывает текст заново и перезаписывает chunks.
-    
-    Args:
-        db: Подключение к БД
-        owner_id: ID пользователя
-        folder_path: Корневая папка с файлами (uploads или подпапка)
-        chunk_size_tokens: Размер чанка
-        chunk_overlap_tokens: Перекрытие чанков
-    
-    Returns:
-        (success, message, stats)
-    """
-    try:
-        stats = {
-            'total_docs': 0,
-            'reindexed': 0,
-            'skipped_empty': 0,
-            'errors': 0
-        }
-        
-        # Сканируем папку и находим все файлы
-        files_to_process = []
-        for root, dirs, files in os.walk(folder_path):
-            for filename in files:
-                # Пропускаем служебные файлы
-                if filename.startswith('.') or filename.startswith('~$') or filename == '_search_index.txt':
-                    continue
-                file_path = os.path.join(root, filename)
-                files_to_process.append((file_path, filename))
-        
-        stats['total_docs'] = len(files_to_process)
-        current_app.logger.info(f"Пересборка индекса: найдено {len(files_to_process)} файлов в {folder_path} для user_id={owner_id}")
-        
-        for file_path, filename in files_to_process:
-            try:
-                # Вычисляем SHA256 файла
-                file_sha256 = calculate_file_hash(file_path)
-                if not file_sha256:
-                    current_app.logger.warning(f"Не удалось вычислить SHA256 для {filename}, пропускаем")
-                    stats['errors'] += 1
-                    continue
-                
-                # Ищем документ в БД по SHA256 и owner_id, получаем blob
-                document_blob = None
-                with db.db.connect() as conn:
-                    with conn.cursor() as cur:
-                        cur.execute("""
-                            SELECT ud.document_id, d.sha256, d.blob
-                            FROM user_documents ud
-                            JOIN documents d ON d.id = ud.document_id
-                            WHERE ud.user_id = %s AND d.sha256 = %s AND ud.is_soft_deleted = FALSE
-                            LIMIT 1;
-                        """, (owner_id, file_sha256))
-                        doc_row = cur.fetchone()
-                
-                if not doc_row:
-                    current_app.logger.debug(f"Документ {filename} (SHA256={file_sha256[:8]}...) не найден в БД, пропускаем")
-                    stats['errors'] += 1
-                    continue
-                
-                doc_id = doc_row[0]
-                document_blob = doc_row[2]
-                
-                # Извлекаем текст из blob или файла (fallback)
-                start = time.time()
-                text = ""
-                try:
-                    if document_blob:
-                        # Преобразуем memoryview в bytes
-                        blob_bytes = bytes(document_blob) if not isinstance(document_blob, bytes) else document_blob
-                        ext = os.path.splitext(filename)[1].lower().lstrip('.')
-                        text = extract_text_from_bytes(blob_bytes, ext) or ""
-                    else:
-                        # Fallback: чтение из файла
-                        current_app.logger.warning(f"Blob отсутствует для {filename}, fallback на файл")
-                        if os.path.exists(file_path):
-                            with open(file_path, 'rb') as f:
-                                file_bytes = f.read()
-                            ext = os.path.splitext(filename)[1].lower().lstrip('.')
-                            text = extract_text_from_bytes(file_bytes, ext) or ""
-                except Exception as e:
-                    current_app.logger.error(f"Ошибка извлечения текста для {filename}: {e}")
-                
-                extract_time = time.time() - start
-                
-                if not text or len(text.strip()) == 0:
-                    current_app.logger.warning(f"Пустой текст из {filename}, пропускаем")
-                    stats['skipped_empty'] += 1
-                    continue
-                
-                # Создаём чанки
-                chunks_data = chunk_document(
-                    text,
-                    file_path=filename,
-                    chunk_size_tokens=chunk_size_tokens,
-                    overlap_sentences=2
-                )
-                
-                if not chunks_data:
-                    current_app.logger.warning(f"Нет чанков для {filename}, пропускаем")
-                    stats['skipped_empty'] += 1
-                    continue
-                
-                # Удаляем старые чанки и вставляем новые
-                with db.db.connect() as conn:
-                    with conn.cursor() as cur:
-                        # Удаляем старые чанки
-                        cur.execute("DELETE FROM chunks WHERE document_id = %s;", (doc_id,))
-                        
-                        # Вставляем новые чанки
-                        for idx, chunk in enumerate(chunks_data):
-                            # chunk_document возвращает 'content', а не 'text'
-                            chunk_text = chunk.get('content', chunk.get('text', ''))
-                            cur.execute("""
-                                INSERT INTO chunks (document_id, chunk_idx, text, created_at)
-                                VALUES (%s, %s, %s, NOW());
-                            """, (doc_id, idx, chunk_text))
-                        
-                        # Обновляем метаданные документа
-                        cur.execute("""
-                            UPDATE documents
-                            SET indexing_cost_seconds = %s,
-                                last_accessed_at = NOW()
-                            WHERE id = %s;
-                        """, (extract_time, doc_id))
-                    conn.commit()
-                
-                # Обновляем search_index для этого документа
-                try:
-                    from webapp.db.repositories.search_index_repository import SearchIndexRepository
-                    with db.db.connect() as conn:
-                        search_repo = SearchIndexRepository(conn)
-                        # Удаляем старые записи search_index
-                        with conn.cursor() as cur:
-                            cur.execute("DELETE FROM search_index WHERE document_id = %s;", (doc_id,))
-                        conn.commit()
-                        
-                        # Создаём новые записи для каждого чанка
-                        for chunk in chunks_data:
-                            chunk_text = chunk.get('content', chunk.get('text', ''))
-                            search_repo.add_entry(
-                                user_id=owner_id,
-                                document_id=doc_id,
-                                content=chunk_text,
-                                metadata={
-                                    'filename': filename,
-                                    'file_path': file_path
-                                }
-                            )
-                        conn.commit()
-                except Exception as search_err:
-                    current_app.logger.warning(f"Ошибка обновления search_index для {filename}: {search_err}")
-                
-                stats['reindexed'] += 1
-                current_app.logger.info(f"Переиндексирован {filename}: {len(chunks_data)} чанков, {extract_time:.2f}с")
-                
-            except Exception as e:
-                current_app.logger.exception(f"Ошибка переиндексации {filename}: {e}")
-                stats['errors'] += 1
-                continue
-        
-        # Обновляем root_hash после полной пересборки
-        current_root_hash = calculate_root_hash(folder_path)
-        if current_root_hash:
-            update_folder_index_status(db, owner_id, folder_path, current_root_hash)
-        
-        message = (
-            f"Пересборка завершена: переиндексировано {stats['reindexed']} из {stats['total_docs']} документов, "
-            f"пропущено пустых: {stats['skipped_empty']}, ошибок: {stats['errors']}"
-        )
-        return True, message, stats
-        
-    except Exception as e:
-        current_app.logger.exception("Ошибка полной пересборки индекса")
-        return False, str(e), {}
+# ============================================================================
+# DEPRECATED: rebuild_all_documents() — legacy функция с os.walk() и calculate_file_hash()
+# Архитектура изменена (Блок 9): пересборка через /rebuild_index → чтение из blob.
+# См. routes/search.py:/rebuild_index для актуальной реализации.
+# ============================================================================
+

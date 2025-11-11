@@ -7,7 +7,9 @@ from datetime import datetime, timedelta
 from flask import Blueprint, request, jsonify, current_app, Response, g
 from webapp.services.files import allowed_file
 from webapp.services.file_search_state_service import FileSearchStateService
-from webapp.services.db_indexing import build_db_index, get_folder_index_status, rebuild_all_documents
+# Legacy imports removed: build_db_index, rebuild_all_documents (Блок 10)
+# get_folder_index_status оставлен для статусов
+from webapp.services.db_indexing import get_folder_index_status
 from webapp.models.rag_models import RAGDatabase
 from webapp.config.config_service import get_config
 from webapp.utils.path_utils import normalize_path
@@ -525,10 +527,9 @@ def build_index_route():
 
 @search_bp.post('/rebuild_index')
 def rebuild_index_route():
-    """Принудительная пересборка индекса для всех документов пользователя.
+    """Принудительная пересборка индекса из БД (аналогично /build_index). ИНКРЕМЕНТ 020 - Блок 10.
     
-    Извлекает текст заново из каждого файла и перезаписывает chunks в БД.
-    Если документ вернул 0 символов — пропускаем или помечаем ошибку.
+    Извлекает текст заново из blob и перезаписывает chunks в БД.
     """
     try:
         db = _get_db()
@@ -538,23 +539,72 @@ def rebuild_index_route():
             return jsonify({'success': False, 'message': 'Не указан идентификатор пользователя (X-User-ID)'}), 400
         
         config = get_config()
-        uploads = current_app.config['UPLOAD_FOLDER']
         
         current_app.logger.info(f"Запуск принудительной пересборки индекса для user_id={owner_id}")
         
-        success, message, stats = rebuild_all_documents(
-            db=db,
-            owner_id=owner_id,
-            folder_path=uploads,
-            chunk_size_tokens=config.chunk_size_tokens,
-            chunk_overlap_tokens=config.chunk_overlap_tokens
-        )
+        from webapp.db.models import Document, UserDocument, Chunk
+        from webapp.services.db_indexing import index_document_to_db
+        from sqlalchemy import and_
         
-        if not success:
-            current_app.logger.error(f"Ошибка пересборки индекса: {message}")
-            return jsonify({'success': False, 'message': message}), 500
+        # Получаем все не удалённые документы пользователя
+        results = db.db.query(UserDocument, Document).join(
+            Document, Document.id == UserDocument.document_id
+        ).filter(
+            and_(
+                UserDocument.user_id == owner_id,
+                UserDocument.is_soft_deleted == False
+            )
+        ).all()
         
-        current_app.logger.info(f"Пересборка индекса завершена: {message}")
+        stats = {
+            'total_docs': len(results),
+            'reindexed': 0,
+            'skipped_empty': 0,
+            'errors': 0
+        }
+        
+        current_app.logger.info(f"Найдено {len(results)} документов для пересборки user_id={owner_id}")
+        
+        for user_doc, document in results:
+            if not document.blob:
+                current_app.logger.warning(f"Документ {document.id} без blob, пропускаем")
+                stats['skipped_empty'] += 1
+                continue
+            
+            try:
+                # Удаляем существующие chunks (принудительная пересборка)
+                db.db.query(Chunk).filter(Chunk.document_id == document.id).delete()
+                db.db.commit()
+                
+                file_info = {
+                    'sha256': document.sha256,
+                    'size': document.size_bytes,
+                    'content_type': document.mime or 'application/octet-stream'
+                }
+                
+                doc_id, indexing_cost = index_document_to_db(
+                    db=db,
+                    file_path="",  # Пустой путь - чтение из blob
+                    file_info=file_info,
+                    user_id=owner_id,
+                    original_filename=user_doc.original_filename or 'document',
+                    user_path=user_doc.user_path or user_doc.original_filename,
+                    chunk_size_tokens=config.chunk_size_tokens,
+                    chunk_overlap_tokens=config.chunk_overlap_tokens
+                )
+                
+                stats['reindexed'] += 1
+                current_app.logger.info(f"Пересобран doc#{doc_id} ({indexing_cost:.3f}s)")
+                
+            except Exception as e:
+                current_app.logger.exception(f"Ошибка пересборки документа {document.id}: {e}")
+                stats['errors'] += 1
+        
+        message = f"Пересобрано {stats['reindexed']}/{stats['total_docs']} документов"
+        if stats['errors'] > 0:
+            message += f", ошибок: {stats['errors']}"
+        
+        current_app.logger.info(f"Пересборка завершена: {message}")
         return jsonify({
             'success': True,
             'message': message,
