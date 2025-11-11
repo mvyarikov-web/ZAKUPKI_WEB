@@ -118,3 +118,24 @@ def test_user(db):
     
     # Откатываем все изменения после теста
     db.rollback()
+
+
+@pytest.fixture()
+def client(app):
+    """Базовый тестовый клиент Flask.
+
+    Нужен для тестов, которые ожидают стандартный fixture 'client'.
+    """
+    return app.test_client()
+
+
+@pytest.fixture(scope="function")
+def db_session():
+    """Сессия SQLAlchemy (алиас для совместимости со старыми тестами)."""
+    from webapp.db.base import SessionLocal
+    session = SessionLocal()
+    try:
+        yield session
+    finally:
+        session.rollback()
+        session.close()
