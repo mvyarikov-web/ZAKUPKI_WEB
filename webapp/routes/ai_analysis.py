@@ -8,6 +8,8 @@ from webapp.config.config_service import get_config
 from webapp.models.rag_models import RAGDatabase
 from webapp.services.gpt_analysis import GPTAnalysisService
 from webapp.services.file_search_state_service import FileSearchStateService
+from webapp.services.prompt_service import PromptService
+from webapp.db.base import get_db
 
 
 ai_analysis_bp = Blueprint('ai_analysis', __name__, url_prefix='/ai_analysis')
@@ -553,4 +555,172 @@ def optimize_preview():
         return jsonify({
             'success': False,
             'message': f'Ошибка оптимизации: {str(e)}'
+        }), 500
+
+
+# ========== Эндпоинты для работы с промптами (через БД) ==========
+
+@ai_analysis_bp.route('/prompts/save', methods=['POST'])
+def save_prompt():
+    """Сохранить промпт в БД.
+    
+    Ожидает JSON:
+        {
+            "prompt": "текст промпта",
+            "filename": "имя_файла"  // без расширения
+        }
+    """
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'success': False, 'message': 'Нет данных'}), 400
+        
+        prompt_text = data.get('prompt', '').strip()
+        filename = data.get('filename', '').strip()
+        
+        if not prompt_text:
+            return jsonify({'success': False, 'message': 'Промпт пуст'}), 400
+        if not filename:
+            return jsonify({'success': False, 'message': 'Имя файла не указано'}), 400
+        
+        # TODO: получить реальный user_id из сессии
+        user_id = 1  # Заглушка
+        
+        db = next(get_db())
+        service = PromptService(db)
+        
+        try:
+            # Пытаемся создать новый промпт
+            result = service.create_prompt(user_id, filename, prompt_text, is_shared=False)
+            return jsonify({
+                'success': True,
+                'message': f'Промпт "{filename}" сохранён',
+                'prompt': result
+            }), 200
+        except ValueError:
+            # Промпт с таким именем существует - обновляем
+            existing = service.get_prompt_by_name(user_id, filename)
+            if existing:
+                updated = service.update_prompt(existing['id'], user_id, content=prompt_text)
+                return jsonify({
+                    'success': True,
+                    'message': f'Промпт "{filename}" обновлён',
+                    'prompt': updated
+                }), 200
+            else:
+                return jsonify({'success': False, 'message': 'Ошибка сохранения'}), 500
+        
+    except Exception as e:
+        current_app.logger.exception(f'Ошибка сохранения промпта: {e}')
+        return jsonify({
+            'success': False,
+            'message': f'Ошибка: {str(e)}'
+        }), 500
+
+
+@ai_analysis_bp.route('/prompts/load/<filename>', methods=['GET'])
+def load_prompt(filename: str):
+    """Загрузить промпт из БД по имени."""
+    try:
+        if not filename:
+            return jsonify({'success': False, 'message': 'Имя файла не указано'}), 400
+        
+        # TODO: получить реальный user_id из сессии
+        user_id = 1  # Заглушка
+        
+        db = next(get_db())
+        service = PromptService(db)
+        
+        prompt = service.get_prompt_by_name(user_id, filename)
+        
+        if not prompt:
+            return jsonify({
+                'success': False,
+                'message': f'Промпт "{filename}" не найден'
+            }), 404
+        
+        return jsonify({
+            'success': True,
+            'prompt': prompt['content'],
+            'filename': prompt['name'],
+            'created_at': prompt['created_at']
+        }), 200
+        
+    except Exception as e:
+        current_app.logger.exception(f'Ошибка загрузки промпта: {e}')
+        return jsonify({
+            'success': False,
+            'message': f'Ошибка: {str(e)}'
+        }), 500
+
+
+@ai_analysis_bp.route('/prompts/last', methods=['GET'])
+def get_last_prompt():
+    """Получить последний промпт пользователя."""
+    try:
+        # TODO: получить реальный user_id из сессии
+        user_id = 1  # Заглушка
+        
+        db = next(get_db())
+        service = PromptService(db)
+        
+        prompts = service.get_user_prompts(user_id, include_shared=False)
+        
+        if not prompts:
+            return jsonify({
+                'success': True,
+                'prompt': None,
+                'message': 'Нет сохранённых промптов'
+            }), 200
+        
+        # Берём последний по дате создания
+        last_prompt = max(prompts, key=lambda p: p['created_at'] or '')
+        
+        return jsonify({
+            'success': True,
+            'prompt': last_prompt['content'],
+            'filename': last_prompt['name'],
+            'created_at': last_prompt['created_at']
+        }), 200
+        
+    except Exception as e:
+        current_app.logger.exception(f'Ошибка получения последнего промпта: {e}')
+        return jsonify({
+            'success': False,
+            'message': f'Ошибка: {str(e)}'
+        }), 500
+
+
+@ai_analysis_bp.route('/prompts/list', methods=['GET'])
+def list_prompts():
+    """Получить список всех промптов пользователя."""
+    try:
+        # TODO: получить реальный user_id из сессии
+        user_id = 1  # Заглушка
+        
+        db = next(get_db())
+        service = PromptService(db)
+        
+        prompts = service.get_user_prompts(user_id, include_shared=True)
+        
+        # Форматируем для фронтенда
+        result = [
+            {
+                'filename': p['name'],
+                'created_at': p['created_at'],
+                'is_shared': p['is_shared']
+            }
+            for p in prompts
+        ]
+        
+        return jsonify({
+            'success': True,
+            'prompts': result
+        }), 200
+        
+    except Exception as e:
+        current_app.logger.exception(f'Ошибка получения списка промптов: {e}')
+        return jsonify({
+            'success': False,
+            'message': f'Ошибка: {str(e)}'
         }), 500
