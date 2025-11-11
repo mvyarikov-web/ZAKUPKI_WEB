@@ -1,8 +1,18 @@
 """
+[DEPRECATED - ИНКРЕМЕНТ 020, Блок 8]
+
 Планировщик автоматического запуска Garbage Collection.
 
-Использует APScheduler для периодического запуска GC.
-Конфигурируется через config_service.py.
+⚠️ УСТАРЕЛ: APScheduler для периодического GC больше не используется.
+
+Новая архитектура (инкремент 020):
+- Prune происходит автоматически при загрузке файлов (on-write enforcement)
+- Проверка лимита и удаление 30% в BlobStorageService.check_size_limit_and_prune()
+- Настройки: AUTO_PRUNE_ENABLED и DB_SIZE_LIMIT_BYTES в таблице app_settings
+- Админ-панель: /admin/settings для управления прунингом
+
+Этот файл оставлен для обратной совместимости, но функции не вызываются.
+Может быть полностью удалён в следующем инкременте.
 """
 
 from typing import Optional

@@ -166,26 +166,10 @@ def create_app(config_name=None):
         
         return response
     
-    # Инициализация планировщика (инкремент 15) отключена в тестовом режиме
-    if not app.config.get('TESTING', False):
-        try:
-            from webapp.services.scheduler import start_scheduler
-            start_scheduler(app)
-            app.logger.info('Планировщик задач инициализирован')
-        except Exception as e:
-            app.logger.error(f'Ошибка инициализации планировщика: {e}')
-
-        # Регистрируем очистку при завершении
-        import atexit
-        def cleanup_scheduler():
-            try:
-                from webapp.services.scheduler import stop_scheduler
-                stop_scheduler(app)
-            except Exception as e:
-                app.logger.error(f'Ошибка остановки планировщика: {e}')
-        atexit.register(cleanup_scheduler)
-    else:
-        app.logger.info('Планировщик отключён в тестовом режиме')
+    # [ИНКРЕМЕНТ 020 - Блок 8] APScheduler для периодического GC больше не используется.
+    # Prune происходит автоматически при загрузке файлов через BlobStorageService.check_size_limit_and_prune()
+    # (on-write enforcement). Планировщик удалён.
+    app.logger.info('Автоматическая очистка БД: on-write enforcement (без планировщика)')
 
     # Инициализация схемы БД для тестов/локальной разработки (без Alembic)
     try:
