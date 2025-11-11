@@ -401,7 +401,7 @@ def search():
 
     current_app.logger.info(f"Поиск в БД: terms='{','.join(filtered)}', exclude_mode={exclude_mode}")
     
-    db = _get_db()
+    rag_db = _get_rag_db()  # Используем RAGDatabase для поиска
     try:
         owner_id = required_user_id()
     except ValueError:
@@ -409,7 +409,7 @@ def search():
     
     try:
         # Поиск с фильтрацией по owner_id и is_visible=TRUE
-        results = _search_in_db(db, owner_id, filtered, exclude_mode)
+        results = _search_in_db(rag_db, owner_id, filtered, exclude_mode)
         
         # Логируем пути для отладки
         if results:
@@ -417,7 +417,7 @@ def search():
             current_app.logger.debug(f"Примеры путей в результатах поиска: {sample_paths}")
         
         # Обновляем метрики использования (access_count, last_accessed_at)
-        _update_document_access_metrics(db, results)
+        _update_document_access_metrics(rag_db, results)
         
         # Сохраняем последние поисковые термины для UI (/ и /view_index)
         try:

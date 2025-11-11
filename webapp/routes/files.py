@@ -10,17 +10,25 @@ from webapp.services.file_search_state_service import FileSearchStateService
 from webapp.models.rag_models import RAGDatabase
 from webapp.config.config_service import get_config
 from webapp.utils.path_utils import normalize_path, get_relative_path
+from webapp.db.base import SessionLocal
 
 files_bp = Blueprint('files', __name__)
 
 
-def _get_db() -> RAGDatabase:
-    """Получить подключение к БД (кешируется в g)."""
-    if 'db' not in g:
+def _get_rag_db() -> RAGDatabase:
+    """Получить RAGDatabase (psycopg2) для legacy-операций (кешируется в g)."""
+    if 'rag_db' not in g:
         config = get_config()
         dsn = config.database_url.replace('postgresql+psycopg2://', 'postgresql://')
-        g.db = RAGDatabase(dsn)
-    return g.db
+        g.rag_db = RAGDatabase(dsn)
+    return g.rag_db
+
+
+def _get_db():
+    """Получить SQLAlchemy сессию для query() операций (кешируется в g)."""
+    if 'db_session' not in g:
+        g.db_session = SessionLocal()
+    return g.db_session
 
 
 def required_user_id() -> int:
@@ -90,9 +98,10 @@ def upload_files():
         return jsonify({'error': 'Не указан идентификатор пользователя (X-User-ID)'}), 400
     
     # Инициализируем сервисы
+    config = get_config()
     db = _get_db()
     from webapp.services.blob_storage_service import BlobStorageService
-    blob_service = BlobStorageService()
+    blob_service = BlobStorageService(config)
     
     for file in files:
         if file and file.filename != '':
@@ -132,7 +141,7 @@ def upload_files():
                 if is_new:
                     from webapp.services.db_indexing import index_document_to_db
                     config = get_config()
-                    rag_db = _get_db()  # Используем уже существующую функцию получения DB
+                    rag_db = _get_rag_db()  # RAGDatabase для index_document_to_db
                     
                     try:
                         file_info = {
@@ -201,7 +210,7 @@ def delete_file(filepath):
         db = _get_db()
         
         # Ищем user_document по user_path
-        user_doc = db.db.query(UserDocument).filter(
+        user_doc = db.query(UserDocument).filter(
             and_(
                 UserDocument.user_id == user_id,
                 UserDocument.user_path == decoded_filepath,
@@ -216,13 +225,13 @@ def delete_file(filepath):
         # Мягкое удаление
         user_doc.is_soft_deleted = True
         user_doc.updated_at = datetime.utcnow()
-        db.db.commit()
+        db.commit()
         
         current_app.logger.info(f"Файл {decoded_filepath} помечен удалённым для user_id={user_id}")
         return jsonify({'success': True})
             
     except Exception as e:
-        db.db.rollback()
+        db.rollback()
         current_app.logger.exception(f"Ошибка при удалении файла: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
@@ -242,7 +251,7 @@ def delete_folder(folder_path):
         
         if decoded_folder_path == 'root':
             # Удаление всех файлов пользователя
-            user_docs = db.db.query(UserDocument).filter(
+            user_docs = db.query(UserDocument).filter(
                 and_(
                     UserDocument.user_id == user_id,
                     UserDocument.is_soft_deleted == False
@@ -254,7 +263,7 @@ def delete_folder(folder_path):
             # Удаление файлов в конкретной папке
             # user_path начинается с decoded_folder_path или равен ему
             pattern = f"{decoded_folder_path}/%"
-            user_docs = db.db.query(UserDocument).filter(
+            user_docs = db.query(UserDocument).filter(
                 and_(
                     UserDocument.user_id == user_id,
                     UserDocument.is_soft_deleted == False,
@@ -272,7 +281,7 @@ def delete_folder(folder_path):
             user_doc.is_soft_deleted = True
             user_doc.updated_at = datetime.utcnow()
         
-        db.db.commit()
+        db.commit()
         
         current_app.logger.info(message)
         
@@ -283,7 +292,7 @@ def delete_folder(folder_path):
         })
         
     except Exception as e:
-        db.db.rollback()
+        db.rollback()
         current_app.logger.exception(f"Ошибка при удалении папки: {str(e)}")
         return jsonify({'error': f'Ошибка удаления папки: {str(e)}'}), 500
 
@@ -302,7 +311,7 @@ def download_file(filepath: str):
         db = _get_db()
         
         # Ищем документ по user_path через JOIN
-        result = db.db.query(Document, UserDocument).join(
+        result = db.query(Document, UserDocument).join(
             UserDocument, UserDocument.document_id == Document.id
         ).filter(
             and_(
@@ -393,7 +402,7 @@ def clear_all():
         db = _get_db()
         
         # Помечаем все документы пользователя удалёнными
-        user_docs = db.db.query(UserDocument).filter(
+        user_docs = db.query(UserDocument).filter(
             and_(
                 UserDocument.user_id == user_id,
                 UserDocument.is_soft_deleted == False
@@ -406,7 +415,7 @@ def clear_all():
             user_doc.is_soft_deleted = True
             user_doc.updated_at = datetime.utcnow()
         
-        db.db.commit()
+        db.commit()
         
         current_app.logger.info(f"Очистка завершена: помечено удалёнными {deleted_count} документов для user_id={user_id}")
         
@@ -418,7 +427,7 @@ def clear_all():
         })
         
     except Exception as e:
-        db.db.rollback()
+        db.rollback()
         current_app.logger.exception('Ошибка при полной очистке')
         return jsonify({'success': False, 'error': str(e)}), 500
 
@@ -434,7 +443,7 @@ def files_json():
         db = _get_db()
         
         # Получаем все не удалённые документы пользователя
-        results = db.db.query(UserDocument, Document).join(
+        results = db.query(UserDocument, Document).join(
             Document, Document.id == UserDocument.document_id
         ).filter(
             and_(

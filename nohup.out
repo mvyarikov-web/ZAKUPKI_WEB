@@ -1,15 +1,2 @@
 /Users/maksimyarikov/Library/Python/3.9/lib/python/site-packages/urllib3/__init__.py:35: NotOpenSSLWarning: urllib3 v2 only supports OpenSSL 1.1.1+, currently the 'ssl' module is compiled with 'LibreSSL 2.8.3'. See: https://github.com/urllib3/urllib3/issues/3020
   warnings.warn(
-✓ OpenAI API ключ загружен из окружения
-Traceback (most recent call last):
-  File "/Users/maksimyarikov/Desktop/Автоматизация закупок/Код/web_interface/app.py", line 25, in <module>
-    app = create_app('dev')
-  File "/Users/maksimyarikov/Desktop/Автоматизация закупок/Код/web_interface/webapp/__init__.py", line 103, in create_app
-    from webapp.routes.ai_rag import ai_rag_bp
-  File "/Users/maksimyarikov/Desktop/Автоматизация закупок/Код/web_interface/webapp/routes/ai_rag.py", line 15, in <module>
-    from webapp.services.rag_service import get_rag_service
-  File "/Users/maksimyarikov/Desktop/Автоматизация закупок/Код/web_interface/webapp/services/rag_service.py", line 13, in <module>
-    from webapp.services.chunking import chunk_document, TextChunker
-  File "/Users/maksimyarikov/Desktop/Автоматизация закупок/Код/web_interface/webapp/services/chunking.py", line 8, in <module>
-    import tiktoken
-ModuleNotFoundError: No module named 'tiktoken'
