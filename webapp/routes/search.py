@@ -651,21 +651,19 @@ def index_status():
             except Exception as e:
                 current_app.logger.debug('Не удалось прочитать status.json: %s', e)
 
-        # 2) Есть ли вообще поддерживаемые файлы в uploads
-        uploads = current_app.config.get('UPLOAD_FOLDER', 'uploads')
+        # 2) PURE_DB_MODE: Проверяем наличие документов в БД вместо сканирования uploads/
         has_files = False
-        if os.path.exists(uploads):
-            for root, dirs, files in os.walk(uploads):
-                for fname in files:
-                    if fname == '_search_index.txt' or fname.startswith('~$') or fname.startswith('$'):
-                        continue
-                    if allowed_file(fname, current_app.config['ALLOWED_EXTENSIONS']):
-                        has_files = True
-                        break
-                if has_files:
-                    break
+        rag_db = _get_rag_db()
+        try:
+            with rag_db.db.connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT COUNT(*) FROM documents WHERE blob IS NOT NULL LIMIT 1;")
+                    count = cur.fetchone()[0]
+                    has_files = count > 0
+        except Exception as e:
+            current_app.logger.debug('Не удалось проверить наличие документов в БД: %s', e)
 
-        # Если нет файлов — индекса как такового быть не может
+        # Если нет документов — индекса как такового быть не может
         if not has_files:
             resp = {'exists': False, 'index_exists': False, 'status': 'idle'}
             if progress_data:
@@ -685,7 +683,8 @@ def index_status():
         except ValueError:
             return jsonify({'error': 'Не указан идентификатор пользователя (X-User-ID)'}), 400
         try:
-            db_status = get_folder_index_status(db, owner_id, uploads)
+            # PURE_DB_MODE: folder_path больше не используется (все файлы в БД)
+            db_status = get_folder_index_status(db, owner_id, "")
         except Exception:
             current_app.logger.debug('Не удалось получить статус из БД для /index_status', exc_info=True)
             db_status = None
@@ -749,8 +748,7 @@ def view_index():
     - raw=1: показать индекс как есть (с заголовками групп)
     - raw=0 (default): показать только записи документов (без служебных строк)
     """
-    # Диагностический просмотр: показываем только скелет по статусу групп + сводку БД
-    uploads = current_app.config.get('UPLOAD_FOLDER', 'uploads')
+    # PURE_DB_MODE: Диагностический просмотр статуса индексации из БД
     try:
         # Загружаем прогресс статуса
         progress = None
@@ -926,7 +924,8 @@ def view_index():
             # folder_index_status
             db_status = None
             try:
-                db_status = get_folder_index_status(db, owner_id, uploads)
+                # PURE_DB_MODE: folder_path больше не используется
+                db_status = get_folder_index_status(db, owner_id, "")
             except Exception:
                 db_status = None
             last_idx = db_status.get('last_indexed_at').strftime('%Y-%m-%d %H:%M:%S') if (db_status and db_status.get('last_indexed_at')) else '—'

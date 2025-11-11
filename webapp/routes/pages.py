@@ -87,48 +87,9 @@ def index():
                 total_files += 1
         except Exception:
             current_app.logger.exception('Ошибка загрузки документов из БД для главной страницы')
-    else:
-        if os.path.exists(current_app.config['UPLOAD_FOLDER']):
-            for root, dirs, files in os.walk(current_app.config['UPLOAD_FOLDER']):
-                for filename in files:
-                    if filename == '_search_index.txt' or filename.startswith('~$') or filename.startswith('$'):
-                        continue
-                    file_path = os.path.join(root, filename)
-                    relative_folder = os.path.relpath(root, current_app.config['UPLOAD_FOLDER'])
-                    if relative_folder == '.':
-                        folder_display_name = '📁 Загруженные файлы'
-                        folder_key = 'root'
-                    else:
-                        folder_parts = relative_folder.split(os.sep)
-                        original_folder_name = folder_parts[-1]
-                        folder_display_name = f'📂 {original_folder_name}'
-                        folder_key = relative_folder
-                    file_size = os.path.getsize(file_path)
-                    file_key = os.path.join(relative_folder, filename) if relative_folder != '.' else filename
-                    file_data = file_status.get(file_key, {})
-                    status = file_data.get('status', 'not_checked')
-                    if not allowed_file(filename, current_app.config['ALLOWED_EXTENSIONS']):
-                        status = 'unsupported'
-                        file_data = {**file_data, 'status': 'unsupported', 'error': 'Неподдерживаемый формат'}
-                        files_state.set_file_status(file_key, 'unsupported', {'error': 'Неподдерживаемый формат'})
-                    display_name = file_data.get('original_name', filename)
-                    file_info = {
-                        'name': display_name,
-                        'size': file_size,
-                        'status': status,
-                        'path': file_key,
-                        'relative_folder': relative_folder
-                    }
-                    if folder_key not in files_by_folder:
-                        files_by_folder[folder_key] = {
-                            'display_name': folder_display_name,
-                            'relative_path': relative_folder,
-                            'files': []
-                        }
-                    files_by_folder[folder_key]['files'].append(file_info)
-                    total_files += 1
-        else:
-            current_app.logger.warning('Папка uploads не существует')
+    
+    # PURE_DB_MODE: Legacy код сканирования uploads/ удалён (инкремент 020)
+    # Все файлы хранятся в documents.blob, физическая папка не используется
     
     current_app.logger.info(f"Всего файлов для отображения: {total_files}, папок: {len(files_by_folder)}")
     
