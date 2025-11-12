@@ -206,22 +206,15 @@ def view_file(filepath):
         # Собираем текст из чанков
         text = '\n\n'.join(chunks)
         
-        # Получаем ключевые слова из query параметра
+        # Получаем ключевые слова из query параметра (для передачи в JS)
         query = request.args.get('q', '')
         keywords = [k.strip() for k in query.split(',') if k.strip()] if query else []
         
-        # Подсветка ключевых слов
-        if keywords:
-            import re
-            for keyword in keywords:
-                pattern = re.compile(re.escape(keyword), re.IGNORECASE)
-                text = pattern.sub(lambda m: f'<mark>{m.group(0)}</mark>', text)
-        
-        # Экранируем HTML для безопасности (кроме наших mark)
-        # text уже содержит <mark>, поэтому используем Markup
-        safe_text = Markup(text.replace('<', '&lt;').replace('>', '&gt;')
-                          .replace('&lt;mark&gt;', '<mark>')
-                          .replace('&lt;/mark&gt;', '</mark>'))
+        # Экранируем HTML для безопасности
+        # Подсветка будет выполнена на фронтенде через JavaScript в view.html
+        import html
+        safe_text = html.escape(text)
+        safe_text = Markup(safe_text.replace('\n', '<br>'))
         
         return render_template(
             'view.html',

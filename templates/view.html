@@ -60,19 +60,24 @@
                     return NodeFilter.FILTER_ACCEPT;
                 }
             });
-                        const regexes = terms.map(t => new RegExp(t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'));
+                        // Создаём объединённое регулярное выражение для всех терминов
+            const escapedTerms = terms.map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+            const combinedRegex = new RegExp('(' + escapedTerms.join('|') + ')', 'gi');
+            
             const nodes = [];
             while (walker.nextNode()) nodes.push(walker.currentNode);
+            
             nodes.forEach(node => {
                 let text = node.nodeValue;
-                let replaced = false;
-                regexes.forEach(re => {
-                    if (re.test(text)) {
-                        text = text.replace(re, function(m) { return '<mark class="highlight">' + m + '</mark>'; });
-                        replaced = true;
-                    }
-                });
-                if (replaced) {
+                // Проверяем, есть ли хотя бы одно совпадение
+                if (combinedRegex.test(text)) {
+                    // Сбрасываем lastIndex для повторного поиска
+                    combinedRegex.lastIndex = 0;
+                    // Заменяем все совпадения
+                    text = text.replace(combinedRegex, function(match) {
+                        return '<mark class="highlight">' + match + '</mark>';
+                    });
+                    
                     const span = document.createElement('span');
                     span.innerHTML = text;
                     node.parentNode.replaceChild(span, node);
