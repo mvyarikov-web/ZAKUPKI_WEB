@@ -465,8 +465,8 @@ def build_index_route():
         except ValueError:
             return jsonify({'success': False, 'message': 'Не указан идентификатор пользователя (X-User-ID)'}), 400
         
-        # Получаем параметр force_rebuild из JSON-запроса
-        force_rebuild = request.json.get('force_rebuild', False) if request.is_json else False
+        # Получаем параметр force_rebuild из JSON-запроса (по умолчанию True)
+        force_rebuild = request.json.get('force_rebuild', True) if request.is_json else True
         
         from webapp.db.models import Document, UserDocument, Chunk
         from webapp.services.db_indexing import index_document_to_db
@@ -498,10 +498,13 @@ def build_index_route():
                 continue
             
             try:
-                # Если force_rebuild=True, удаляем существующие chunks
+                # Если force_rebuild=True, удаляем существующие chunks и search_index
                 if force_rebuild:
+                    from webapp.db.models import SearchIndex
                     db.query(Chunk).filter(Chunk.document_id == document.id).delete()
+                    db.query(SearchIndex).filter(SearchIndex.document_id == document.id).delete()
                     db.commit()
+                    current_app.logger.info(f"Удалены старые chunks и search_index для документа {document.id}")
                 
                 file_info = {
                     'sha256': document.sha256,
@@ -660,15 +663,22 @@ def index_status():
             except Exception as e:
                 current_app.logger.debug('Не удалось прочитать status.json: %s', e)
 
-        # 2) DB MODE: Проверяем наличие документов в БД вместо сканирования uploads/
-        has_files = False
-        rag_db = _get_rag_db()
+        # Получаем user_id
         try:
-            with rag_db.db.connect() as conn:
-                with conn.cursor() as cur:
-                    cur.execute("SELECT COUNT(*) FROM documents WHERE blob IS NOT NULL LIMIT 1;")
-                    count = cur.fetchone()[0]
-                    has_files = count > 0
+            owner_id = required_user_id()
+        except ValueError:
+            return jsonify({'error': 'Не указан идентификатор пользователя (X-User-ID)'}), 400
+
+        # 2) DB MODE: Проверяем наличие документов пользователя в БД
+        db = _get_db()
+        from webapp.db.models import UserDocument
+        has_files = False
+        try:
+            count = db.query(UserDocument).filter_by(
+                user_id=owner_id,
+                is_soft_deleted=False
+            ).count()
+            has_files = count > 0
         except Exception as e:
             current_app.logger.debug('Не удалось проверить наличие документов в БД: %s', e)
 
@@ -686,11 +696,7 @@ def index_status():
             return jsonify(resp)
 
         # 3) Статус из БД (increment-015): uploads как tracked folder
-        db = _get_db()
-        try:
-            owner_id = required_user_id()
-        except ValueError:
-            return jsonify({'error': 'Не указан идентификатор пользователя (X-User-ID)'}), 400
+        # db и owner_id уже получены выше
         try:
             # DB MODE: folder_path больше не используется (все файлы в БД)
             db_status = get_folder_index_status(db, owner_id, "")
@@ -701,19 +707,13 @@ def index_status():
         # 4) Количество документов, доступных пользователю (через user_documents)
         docs_count = 0
         try:
-            with db.db.connect() as conn:
-                with conn.cursor() as cur:
-                    cur.execute(
-                        """
-                        SELECT COUNT(*) FROM user_documents
-                        WHERE user_id = %s AND is_soft_deleted = FALSE;
-                        """,
-                        (owner_id,)
-                    )
-                    row = cur.fetchone()
-                    if row and isinstance(row[0], (int,)):
-                        docs_count = int(row[0])
-        except Exception:
+            from webapp.db.models import UserDocument
+            docs_count = db.query(UserDocument).filter_by(
+                user_id=owner_id,
+                is_soft_deleted=False
+            ).count()
+        except Exception as e:
+            current_app.logger.debug(f'Не удалось подсчитать документы пользователя: {e}')
             docs_count = 0
 
         # 5) Формируем ответ (DB-first) с совместимостью полей
@@ -783,13 +783,18 @@ def view_index():
         grp_status = (progress or {}).get('group_status', {}) if progress else {}
         
         # DB-first: формируем структуру документов из БД
-        db = _get_db()
+        from webapp.models.rag_models import RAGDatabase
+        from webapp.config.config_service import get_config as _gc
+        cfg = _gc()
+        dsn = cfg.database_url.replace('postgresql+psycopg2://', 'postgresql://')
+        db = RAGDatabase(dsn)
+        
         try:
             owner_id = required_user_id()
         except ValueError:
-            # Fallback: для просмотра индекса позволяем owner_id=1, чтобы не был пустой экран
-            owner_id = 1
-        
+            # Fallback: для просмотра индекса позволяем owner_id=512 (admin@localhost), чтобы не был пустой экран
+            owner_id = 512
+    
     # Загружаем все документы и их чанки для текущего пользователя через user_documents
         docs_by_group = {'fast': [], 'medium': [], 'slow': []}
         try:

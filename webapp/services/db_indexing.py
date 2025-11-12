@@ -124,21 +124,7 @@ def index_document_to_db(
                 if row:
                     document_id = row[0]
                     document_blob = row[1]
-                    
-                    # Проверяем есть ли chunks у этого документа
-                    cur.execute("""
-                        SELECT COUNT(*) FROM chunks WHERE document_id = %s;
-                    """, (document_id,))
-                    chunks_count = cur.fetchone()[0]
-                    has_chunks = chunks_count > 0
-                    
-                    if has_chunks:
-                        # Документ уже проиндексирован, возвращаем его ID
-                        indexing_cost = time.time() - start_time
-                        current_app.logger.info(f'[INDEX] Документ {document_id} уже проиндексирован ({chunks_count} chunks), пропускаем')
-                        return document_id, indexing_cost
-                    else:
-                        current_app.logger.info(f'[INDEX] Документ {document_id} найден, но chunks отсутствуют - выполняем индексацию')
+                    current_app.logger.info(f'[INDEX] Документ {document_id} найден по SHA256, продолжаем индексацию')
         
         # 2. Извлекаем текст ТОЛЬКО из blob (NO FILESYSTEM)
         content = ""
@@ -283,6 +269,8 @@ def index_document_to_db(
             from webapp.db.repositories.search_index_repository import SearchIndexRepository
             import json
             
+            current_app.logger.info(f'[SEARCH_INDEX] Попытка создать/обновить индекс для doc_id={doc_id}, user_id={user_id}')
+            
             with db.db.connect() as conn:
                 search_repo = SearchIndexRepository(conn)
                 metadata = {
@@ -292,16 +280,24 @@ def index_document_to_db(
                     'content_type': file_info.get('content_type', 'text/plain'),
                     'chunks_count': len(chunks)
                 }
-                search_repo.create_or_update_index(
+                
+                current_app.logger.debug(f'[SEARCH_INDEX] Вызов create_or_update_index: doc={doc_id}, user={user_id}, content_length={len(content)}')
+                
+                result_id = search_repo.create_or_update_index(
                     document_id=doc_id,
                     user_id=user_id,
                     content=content,
                     metadata=metadata
                 )
+                
+                current_app.logger.info(f'[SEARCH_INDEX] create_or_update_index вернул id={result_id}')
+                
                 conn.commit()
+                current_app.logger.info(f'[SEARCH_INDEX] Транзакция commit успешно выполнена')
+                
             current_app.logger.info(f'[SEARCH_INDEX] Добавлена запись для doc_id={doc_id}, user_id={user_id}')
         except Exception as e:
-            current_app.logger.warning(f'Ошибка добавления в search_index: {e}')
+            current_app.logger.exception(f'Ошибка добавления в search_index: {e}')
             # Не падаем, индексация документа уже прошла успешно
         
         current_app.logger.info(

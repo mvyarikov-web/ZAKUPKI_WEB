@@ -40,7 +40,7 @@ def index():
             cfg = _gc()
             dsn = cfg.database_url.replace('postgresql+psycopg2://', 'postgresql://')
             db = RAGDatabase(dsn)
-            owner_id = 1
+            owner_id = 512  # Fallback на admin@localhost
             try:
                 user = getattr(g, 'user', None)
                 if user and getattr(user, 'id', None):
