@@ -591,6 +591,21 @@ searchBtn.addEventListener('click', () => {
     performSearch(terms);
 });
 
+// Обработчик изменения текста в поле поиска
+if (searchInput) {
+    searchInput.addEventListener('input', () => {
+        const terms = searchInput.value.trim();
+        if (!terms) {
+            // Поле пустое - очищаем подсветку и скрываем результаты
+            clearHighlights();
+            document.querySelectorAll('.file-search-results').forEach(el => {
+                el.style.display = 'none';
+                el.innerHTML = '';
+            });
+        }
+    });
+}
+
 // Кнопка "Перестроить индекс" - принудительная пересборка всех документов
 const rebuildIndexBtn = document.getElementById('rebuildIndexBtn');
 if (rebuildIndexBtn) {
