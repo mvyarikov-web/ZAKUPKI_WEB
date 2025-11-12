@@ -519,6 +519,8 @@ function refreshSearchResultsIfActive() {
             el.style.display = 'none';
             el.innerHTML = '';
         });
+        // Очищаем подсветку при пустом запросе
+        clearHighlights();
         return;
     }
     // Если есть термины - перезапускаем поиск
@@ -987,6 +989,21 @@ function highlightSnippets(terms) {
     });
 }
 
+function clearHighlights() {
+    // Удаляем все <span class="highlight"> и восстанавливаем оригинальный текст
+    const snippets = document.querySelectorAll('.context-snippet');
+    snippets.forEach(sn => {
+        // Находим все .highlight внутри snippet и заменяем их содержимым
+        const highlights = sn.querySelectorAll('.highlight');
+        highlights.forEach(hl => {
+            const textNode = document.createTextNode(hl.textContent);
+            hl.parentNode.replaceChild(textNode, hl);
+        });
+        // Нормализуем текстовые ноды для чистоты
+        sn.normalize();
+    });
+}
+
 // --- Старая функция showMessage удалена, используется MessageManager ---
 // Обратная совместимость через message-manager.js: window.showMessage
 
@@ -1140,6 +1157,10 @@ document.addEventListener('DOMContentLoaded', function() {
     // Первая инициализация списка файлов через API
     updateFilesList().then(() => {
         applyQueryToViewLinks();
+        // Очищаем подсветку если поиск не был выполнен
+        if (!searchInput || !searchInput.value.trim()) {
+            clearHighlights();
+        }
     });
 });
 
