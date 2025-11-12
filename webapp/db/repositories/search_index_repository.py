@@ -93,6 +93,9 @@ class SearchIndexRepository:
         """
         Поиск по ключевым словам с использованием full-text search.
         
+        ИЗМЕНЕНИЕ: Используем ILIKE для гарантии полноты результатов,
+        а ts_rank как опциональный бонус для ранжирования.
+        
         Args:
             user_id: ID пользователя
             keywords: Список ключевых слов для поиска
@@ -104,41 +107,76 @@ class SearchIndexRepository:
         if not keywords:
             return []
         
-        # Формируем поисковый запрос для tsquery
-        search_query = ' | '.join(keywords)  # OR между словами
-        
         results = []
         
         with self.db.cursor() as cur:
-            cur.execute(
-                """
-                SELECT 
-                    si.id,
-                    si.document_id,
-                    si.content,
-                    si.metadata,
-                    ts_rank(si.search_vector, to_tsquery('russian', %s)) as rank,
-                    ts_headline('russian', si.content, to_tsquery('russian', %s), 
-                               'MaxWords=50, MinWords=30, ShortWord=3') as snippet
-                FROM search_index si
-                WHERE si.user_id = %s
-                  AND si.search_vector @@ to_tsquery('russian', %s)
-                ORDER BY rank DESC
-                LIMIT %s;
-                """,
-                (search_query, search_query, user_id, search_query, limit)
-            )
-            
-            for row in cur.fetchall():
-                # psycopg2 автоматически десериализует JSONB в dict
-                results.append({
-                    'id': row[0],
-                    'document_id': row[1],
-                    'content': row[2],
-                    'metadata': row[3] if row[3] else {},
-                    'rank': float(row[4]) if row[4] else 0.0,
-                    'snippet': row[5]
-                })
+            try:
+                # Формируем условие: (content ILIKE %kw1% OR content ILIKE %kw2% ...)
+                like_conditions = []
+                params = []
+                for kw in keywords:
+                    like_conditions.append("si.content ILIKE %s")
+                    params.append(f'%{kw}%')
+                
+                where_clause = " OR ".join(like_conditions)
+                
+                # Добавляем user_id и limit в параметры
+                params.insert(0, user_id)
+                params.append(limit)
+                
+                # Формируем поисковый запрос для tsquery (для ranking)
+                safe_keywords = []
+                for kw in keywords:
+                    safe_kw = ''.join(c for c in kw if c.isalnum() or c.isspace())
+                    if safe_kw.strip():
+                        safe_keywords.append(safe_kw.strip())
+                
+                search_query = ' | '.join(safe_keywords) if safe_keywords else ''
+                
+                # Запрос с ranking, но фильтрация через ILIKE для полноты
+                # ВАЖНО: фильтруем удалённые документы через JOIN с user_documents
+                cur.execute(
+                    f"""
+                    SELECT 
+                        si.id,
+                        si.document_id,
+                        si.content,
+                        si.metadata,
+                        CASE 
+                            WHEN si.search_vector IS NOT NULL AND %s != '' 
+                            THEN ts_rank(si.search_vector, to_tsquery('russian', %s))
+                            ELSE 0.0
+                        END as rank,
+                        CASE 
+                            WHEN si.search_vector IS NOT NULL AND %s != ''
+                            THEN ts_headline('russian', si.content, to_tsquery('russian', %s), 
+                                           'MaxWords=50, MinWords=30, ShortWord=3')
+                            ELSE LEFT(si.content, 200)
+                        END as snippet
+                    FROM search_index si
+                    JOIN user_documents ud ON ud.document_id = si.document_id AND ud.user_id = si.user_id
+                    WHERE si.user_id = %s
+                      AND ud.is_soft_deleted = FALSE
+                      AND ({where_clause})
+                    ORDER BY rank DESC, si.id
+                    LIMIT %s;
+                    """,
+                    [search_query, search_query, search_query, search_query, user_id] + params[1:]
+                )
+                
+                for row in cur.fetchall():
+                    results.append({
+                        'id': row[0],
+                        'document_id': row[1],
+                        'content': row[2],
+                        'metadata': row[3] if row[3] else {},
+                        'rank': float(row[4]) if row[4] else 0.0,
+                        'snippet': row[5]
+                    })
+            except Exception as e:
+                logger.error(f"Ошибка выполнения поискового запроса: {e}")
+                # Fallback: простой LIKE поиск
+                return self.simple_search(user_id, keywords, limit)
         
         logger.info(f"Поиск по {len(keywords)} ключевым словам: найдено {len(results)} результатов")
         return results
