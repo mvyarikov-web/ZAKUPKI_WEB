@@ -60,6 +60,41 @@ def required_user_id() -> int:
     return 1
 
 
+def _fetch_snippet_from_chunk(conn, document_id: int, term: str, context_chars: int = 100) -> tuple[str, int]:
+    """Фолбэк: найти первый chunk с термином и вернуть (сниппет, count_in_chunk).
+
+    Args:
+        conn: psycopg2 connection
+        document_id: ID документа
+        term: искомый термин
+        context_chars: ширина контекста для _make_snippet
+
+    Returns:
+        (snippet, count) или ("", 0), если не найдено
+    """
+    try:
+        with conn.cursor() as cur2:
+            cur2.execute(
+                """
+                SELECT text
+                FROM chunks
+                WHERE document_id = %s AND text ILIKE %s
+                ORDER BY chunk_idx
+                LIMIT 1;
+                """,
+                (document_id, f"%{term}%"),
+            )
+            row = cur2.fetchone()
+            if not row:
+                return "", 0
+            chunk_text = row[0] or ""
+            # Простой подсчёт вхождений подстроки в чанке
+            cnt = chunk_text.lower().count(term.lower())
+            return _make_snippet(chunk_text, [term], context_chars=context_chars), cnt
+    except Exception:
+        return "", 0
+
+
 def _make_snippet(text: str, keywords: list, context_chars: int = 100) -> str:
     """
     Создаёт сниппет с контекстом вокруг первого найденного ключевого слова.
@@ -101,6 +136,36 @@ def _make_snippet(text: str, keywords: list, context_chars: int = 100) -> str:
         snippet = snippet + '...'
     
     return snippet
+
+
+def _count_term_in_chunks(conn, document_id: int, term: str) -> int:
+    """
+    Подсчитывает количество вхождений термина во всех chunks документа.
+    
+    Args:
+        conn: Подключение к БД
+        document_id: ID документа
+        term: Термин для поиска
+        
+    Returns:
+        Количество вхождений термина
+    """
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT text FROM chunks
+            WHERE document_id = %s
+            ORDER BY chunk_idx
+        """, (document_id,))
+        rows = cur.fetchall()
+        
+        # Считаем во всех чанках
+        total_count = 0
+        term_lower = term.lower()
+        for row in rows:
+            chunk_text = row[0] or ''
+            total_count += chunk_text.lower().count(term_lower)
+        
+        return total_count
 
 
 def _search_in_db(db: RAGDatabase, owner_id: int, keywords: list, exclude_mode: bool = False) -> list:
@@ -145,19 +210,30 @@ def _search_in_db(db: RAGDatabase, owner_id: int, keywords: list, exclude_mode: 
                     user_path = metadata.get('user_path', filename)
                     normalized_path = normalize_path(user_path)
                     
-                    # Подсчёт совпадений по терминам
+                    # Подсчёт совпадений по терминам + корректные пер-термин сниппеты
                     per_term = []
-                    content_lower = sr.get('content', '').lower()
+                    content = sr.get('content', '') or ''
+                    content_lower = content.lower()
                     for term in keywords:
-                        pattern = re.compile(r"\b" + re.escape(term.lower()) + r"\w*\b", re.IGNORECASE)
-                        matches = pattern.findall(content_lower)
-                        count = len(matches)
+                        # ВАЖНО: считаем из chunks (полные данные), а не из search_index.content (может быть обрезан)
+                        count = _count_term_in_chunks(conn, sr['document_id'], term)
+                        
                         if count > 0:
-                            per_term.append({
-                                'term': term,
-                                'count': count,
-                                'snippets': [sr.get('snippet', _make_snippet(sr.get('content', ''), [term], 100))]
-                            })
+                            # Сниппет формируем из content, если там есть термин
+                            if content_lower.count(term.lower()) > 0:
+                                per_term.append({
+                                    'term': term,
+                                    'count': count,
+                                    'snippets': [_make_snippet(content, [term], 100)]
+                                })
+                            else:
+                                # Фолбэк: ищем чанк с термином и формируем сниппет оттуда
+                                fb_snip, _ = _fetch_snippet_from_chunk(conn, sr['document_id'], term, context_chars=100)
+                                per_term.append({
+                                    'term': term,
+                                    'count': count,
+                                    'snippets': [fb_snip if fb_snip else '...']
+                                })
                     
                     per_term.sort(key=lambda x: x['count'], reverse=True)
                     
@@ -169,8 +245,9 @@ def _search_in_db(db: RAGDatabase, owner_id: int, keywords: list, exclude_mode: 
                         'path': normalized_path,
                         'matches': [{
                             'chunk_idx': 0,
-                            'snippet': sr.get('snippet', ''),
-                            'text': sr.get('content', '')[:200]
+                            # Для совместимости оставляем общий сниппет, но он не влияет на per_term
+                            'snippet': sr.get('snippet', _make_snippet(content, keywords, 100)),
+                            'text': content[:200]
                         }],
                         'match_count': sum(pt['count'] for pt in per_term),
                         'doc_id': sr['document_id'],
@@ -293,10 +370,8 @@ LIMIT 500;
                             lower_text = text.lower()
                             for term in keywords:
                                 term_lower = term.lower()
-                                # Считаем вхождения по словоформам: слово + продолжение букв/цифр
-                                pattern = re.compile(r"\b" + re.escape(term_lower) + r"\w*\b", re.IGNORECASE)
-                                matches = pattern.findall(lower_text)
-                                cnt = len(matches)
+                                # Простой подсчёт подстроки
+                                cnt = lower_text.count(term_lower)
                                 if cnt > 0:
                                     entry = file_matches[filename]['_per_term'][term]
                                     entry['count'] += cnt
